@@ -1,7 +1,7 @@
 name: OasisCare
 
 options:
-  bundleIdPrefix: com.oasiscare
+  bundleIdPrefix: com.oasisrarecare
   deploymentTarget:
     iOS: "17.0"
   createIntermediateGroups: true
@@ -34,7 +34,7 @@ targets:
         CFBundleVersion: "$(CURRENT_PROJECT_VERSION)"
     settings:
       base:
-        PRODUCT_BUNDLE_IDENTIFIER: com.oasiscare.app
+        PRODUCT_BUNDLE_IDENTIFIER: com.oasisrarecare.app
         PRODUCT_NAME: OasisCare
         DEVELOPMENT_LANGUAGE: fr
 
@@ -48,7 +48,7 @@ targets:
       - target: OasisCare
     settings:
       base:
-        PRODUCT_BUNDLE_IDENTIFIER: com.oasiscare.app.uitests
+        PRODUCT_BUNDLE_IDENTIFIER: com.oasisrarecare.app.uitests
         DEVELOPMENT_LANGUAGE: fr
         GENERATE_INFOPLIST_FILE: "YES"
 
