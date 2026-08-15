@@ -61,7 +61,13 @@ jobs:
           mkdir -p ~/Library/MobileDevice/Provisioning\ Profiles
           echo "${{ secrets.APPLE_PROVISIONING_PROFILE }}" | base64 --decode > "$RUNNER_TEMP/profile.mobileprovision"
           echo "profile.mobileprovision size: $(wc -c < "$RUNNER_TEMP/profile.mobileprovision") bytes (expected ~12000)"
-          PROFILE_UUID=$(security cms -D -i "$RUNNER_TEMP/profile.mobileprovision" | /usr/libexec/PlistBuddy -c "Print :UUID" /dev/stdin)
+          # `security cms -D` verifies Apple's signature chain, which isn't
+          # trusted by default on a fresh CI keychain and fails with
+          # "Cannot parse a NULL or zero-length data" rather than a clearer
+          # trust error. The embedded plist is readable as plain text within
+          # the signed blob regardless, so pull the UUID directly from that.
+          PROFILE_UUID=$(grep -a -A1 '<key>UUID</key>' "$RUNNER_TEMP/profile.mobileprovision" | grep -o '[0-9A-Fa-f]\{8\}-[0-9A-Fa-f]\{4\}-[0-9A-Fa-f]\{4\}-[0-9A-Fa-f]\{4\}-[0-9A-Fa-f]\{12\}')
+          echo "Profile UUID: $PROFILE_UUID"
           cp "$RUNNER_TEMP/profile.mobileprovision" ~/Library/MobileDevice/Provisioning\ Profiles/"$PROFILE_UUID".mobileprovision
 
       - name: Archive
