@@ -131,6 +131,8 @@ struct PlantFormView: View {
                 zone: selectedZone
             )
             modelContext.insert(newPlant)
+            selectedGarden?.plants.append(newPlant)
+            selectedZone?.plants.append(newPlant)
         }
 
         dismiss()

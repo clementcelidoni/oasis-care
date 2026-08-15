@@ -31,6 +31,7 @@ enum CareScheduleEngine {
             product: product
         )
         context.insert(event)
+        plant.careEvents.append(event)
 
         if let schedule = plant.schedule(for: type) {
             schedule.lastCompletedDate = date
@@ -59,6 +60,7 @@ enum CareScheduleEngine {
         } else {
             let schedule = CareSchedule(plant: plant, type: type, frequencyDays: frequencyDays)
             context.insert(schedule)
+            plant.careSchedules.append(schedule)
         }
     }
 

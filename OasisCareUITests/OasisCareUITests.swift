@@ -100,10 +100,19 @@ final class OasisCareUITests: XCTestCase {
             saveScheduleButton.tap()
 
             // "À démarrer" is folded into the row button's combined accessibility
-            // label (icon + name + status), not a standalone staticText, so read
-            // the button's own label rather than searching for a separate element.
-            XCTAssertTrue(wateringRow.waitForExistence(timeout: 10))
-            XCTAssertTrue(wateringRow.label.contains("À démarrer"), "Label was: \(wateringRow.label)")
+            // label (icon + name + status), not a standalone staticText, so poll
+            // the button's own label rather than a one-shot read - the button
+            // always exists regardless of schedule state, so waitForExistence
+            // alone wouldn't wait for the label content itself to update.
+            let becameConfigured = XCTNSPredicateExpectation(
+                predicate: NSPredicate(format: "label CONTAINS[c] %@", "À démarrer"),
+                object: wateringRow
+            )
+            XCTAssertEqual(
+                XCTWaiter().wait(for: [becameConfigured], timeout: 10),
+                .completed,
+                "Label was: \(wateringRow.label)"
+            )
         }
 
         XCTContext.runActivity(named: "Arroser et vérifier la mise à jour de l'échéance") { _ in

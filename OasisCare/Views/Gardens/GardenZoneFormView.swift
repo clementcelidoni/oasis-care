@@ -56,6 +56,7 @@ struct GardenZoneFormView: View {
         } else {
             let newZone = GardenZone(name: trimmedName, notes: notes, garden: garden)
             modelContext.insert(newZone)
+            garden.zones.append(newZone)
         }
 
         dismiss()

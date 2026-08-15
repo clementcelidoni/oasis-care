@@ -15,6 +15,7 @@ enum DemoData {
         let terrace = GardenZone(name: "Terrasse", garden: home)
         context.insert(livingRoom)
         context.insert(terrace)
+        home.zones.append(contentsOf: [livingRoom, terrace])
 
         let monstera = Plant(
             customName: "Monstera du salon",
@@ -66,6 +67,9 @@ enum DemoData {
         for plant in [monstera, olivier, phoenix, alocasia] {
             context.insert(plant)
         }
+        home.plants.append(contentsOf: [monstera, olivier, phoenix, alocasia])
+        livingRoom.plants.append(contentsOf: [monstera, alocasia])
+        terrace.plants.append(contentsOf: [olivier, phoenix])
 
         let calendar = Calendar.current
         let threeDaysAgo = calendar.date(byAdding: .day, value: -3, to: .now) ?? .now
