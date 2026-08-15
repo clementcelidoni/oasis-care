@@ -35,3 +35,28 @@ targets:
         PRODUCT_BUNDLE_IDENTIFIER: com.oasiscare.app
         PRODUCT_NAME: OasisCare
         DEVELOPMENT_LANGUAGE: fr
+
+  OasisCareUITests:
+    type: bundle.ui-testing
+    platform: iOS
+    deploymentTarget: "17.0"
+    sources:
+      - path: OasisCareUITests
+    dependencies:
+      - target: OasisCare
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.oasiscare.app.uitests
+        DEVELOPMENT_LANGUAGE: fr
+
+schemes:
+  OasisCare:
+    build:
+      targets:
+        OasisCare: all
+        OasisCareUITests: [test]
+    test:
+      targets:
+        - OasisCareUITests
+    run:
+      config: Debug

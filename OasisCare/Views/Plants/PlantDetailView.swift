@@ -110,13 +110,13 @@ struct PlantDetailView: View {
 
     private var quickActions: some View {
         HStack(spacing: 12) {
-            ActionButton(title: "Arroser", icon: "drop.fill", tint: .blue) {
+            ActionButton(title: "Arroser", icon: "drop.fill", tint: .blue, identifier: "actionWater") {
                 CareScheduleEngine.recordCare(.watering, for: plant, in: modelContext)
             }
-            ActionButton(title: "Engrais", icon: "sparkles", tint: .green) {
+            ActionButton(title: "Engrais", icon: "sparkles", tint: .green, identifier: "actionFertilize") {
                 CareScheduleEngine.recordCare(.fertilizing, for: plant, in: modelContext)
             }
-            ActionButton(title: "Plus", icon: "plus", tint: .gray) {
+            ActionButton(title: "Plus", icon: "plus", tint: .gray, identifier: "actionMore") {
                 isPresentingAddEvent = true
             }
         }
@@ -168,6 +168,7 @@ struct PlantDetailView: View {
             .padding(.vertical, 8)
         }
         .buttonStyle(.plain)
+        .accessibilityIdentifier("scheduleRow-\(type.rawValue)")
     }
 
     private func scheduleLabel(_ schedule: CareSchedule) -> String {
@@ -224,6 +225,7 @@ private struct ActionButton: View {
     var title: String
     var icon: String
     var tint: Color
+    var identifier: String
     var action: () -> Void
 
     var body: some View {
@@ -240,6 +242,7 @@ private struct ActionButton: View {
             .foregroundStyle(tint)
         }
         .buttonStyle(.plain)
+        .accessibilityIdentifier(identifier)
     }
 }
 

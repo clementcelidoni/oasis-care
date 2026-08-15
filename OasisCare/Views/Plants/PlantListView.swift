@@ -43,6 +43,7 @@ struct PlantListView: View {
                             NavigationLink(value: plant) {
                                 PlantRow(plant: plant)
                             }
+                            .accessibilityIdentifier(plant.customName)
                         }
                     }
                     .listStyle(.plain)
@@ -72,6 +73,7 @@ struct PlantListView: View {
                     } label: {
                         Label("Ajouter", systemImage: "plus")
                     }
+                    .accessibilityIdentifier("addPlantButton")
                 }
             }
             .navigationDestination(for: Plant.self) { plant in

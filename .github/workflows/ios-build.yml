@@ -27,3 +27,22 @@ jobs:
             -project OasisCare.xcodeproj \
             -scheme OasisCare \
             -destination "generic/platform=iOS Simulator"
+
+      - name: Find an available iPhone simulator
+        id: destination
+        run: |
+          UDID=$(xcrun simctl list devices available | grep -m1 -E 'iPhone' | grep -Eo '[0-9A-Fa-f-]{36}')
+          if [ -z "$UDID" ]; then
+            echo "No available iPhone simulator found:"
+            xcrun simctl list devices available
+            exit 1
+          fi
+          echo "udid=$UDID" >> "$GITHUB_OUTPUT"
+          echo "Using simulator UDID: $UDID"
+
+      - name: Run UI tests (iOS Simulator)
+        run: |
+          xcodebuild test \
+            -project OasisCare.xcodeproj \
+            -scheme OasisCare \
+            -destination "id=${{ steps.destination.outputs.udid }}"

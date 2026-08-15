@@ -61,6 +61,7 @@ struct GardenDetailView: View {
                     Label("Ajouter", systemImage: "plus.circle.fill")
                         .labelStyle(.iconOnly)
                 }
+                .accessibilityIdentifier("addZoneButton")
             }
 
             if garden.zones.isEmpty {
@@ -87,6 +88,7 @@ struct GardenDetailView: View {
                             .padding(.vertical, 8)
                         }
                         .buttonStyle(.plain)
+                        .accessibilityIdentifier(zone.name)
                         if index < sortedZones.count - 1 {
                             Divider()
                         }

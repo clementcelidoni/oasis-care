@@ -20,6 +20,7 @@ struct GardenListView: View {
                             NavigationLink(value: garden) {
                                 GardenRow(garden: garden)
                             }
+                            .accessibilityIdentifier(garden.name)
                         }
                     }
                     .listStyle(.plain)
@@ -33,6 +34,7 @@ struct GardenListView: View {
                     } label: {
                         Label("Ajouter", systemImage: "plus")
                     }
+                    .accessibilityIdentifier("addGardenButton")
                 }
             }
             .navigationDestination(for: Garden.self) { garden in

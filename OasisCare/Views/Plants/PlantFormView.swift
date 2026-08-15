@@ -68,6 +68,9 @@ struct PlantFormView: View {
                             Text(garden.name).tag(Garden?.some(garden))
                         }
                     }
+                    .pickerStyle(.menu)
+                    .accessibilityIdentifier("gardenPicker")
+
                     if selectedGarden != nil {
                         Picker("Zone", selection: $selectedZone) {
                             Text("Aucune").tag(GardenZone?.none)
@@ -75,6 +78,8 @@ struct PlantFormView: View {
                                 Text(zone.name).tag(GardenZone?.some(zone))
                             }
                         }
+                        .pickerStyle(.menu)
+                        .accessibilityIdentifier("zonePicker")
                     }
                 }
 
