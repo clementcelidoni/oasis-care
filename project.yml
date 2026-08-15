@@ -48,6 +48,7 @@ targets:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: com.oasiscare.app.uitests
         DEVELOPMENT_LANGUAGE: fr
+        GENERATE_INFOPLIST_FILE: "YES"
 
 schemes:
   OasisCare:
