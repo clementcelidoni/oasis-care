@@ -43,10 +43,6 @@ struct PlantDetailView: View {
             ToolbarItem(placement: .topBarTrailing) {
                 Button("Modifier") { activeSheet = .edit }
             }
-            ToolbarItem(placement: .topBarLeading) {
-                Button("TestWatering") { activeSheet = .configureWatering }
-                    .accessibilityIdentifier("toolbarConfigureWatering")
-            }
         }
         .sheet(item: $activeSheet) { sheet in
             switch sheet {
@@ -254,6 +250,7 @@ private struct ScheduleRowButton: View {
             }
             .font(.subheadline)
             .padding(.vertical, 8)
+            .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
         .accessibilityIdentifier("scheduleRow-\(type.rawValue)")

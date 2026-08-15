@@ -86,7 +86,7 @@ final class OasisCareUITests: XCTestCase {
         }
 
         XCTContext.runActivity(named: "Ouvrir la fiche et définir la fréquence d'arrosage") { _ in
-            let wateringRow = app.buttons["toolbarConfigureWatering"]
+            let wateringRow = app.buttons["scheduleRow-watering"]
             XCTAssertTrue(wateringRow.waitForExistence(timeout: 10))
             wateringRow.tap()
 
@@ -99,15 +99,20 @@ final class OasisCareUITests: XCTestCase {
             XCTAssertTrue(saveScheduleButton.exists)
             saveScheduleButton.tap()
 
-            XCTAssertTrue(app.staticTexts["À démarrer"].waitForExistence(timeout: 10))
+            // "À démarrer" is folded into the row button's combined accessibility
+            // label (icon + name + status), not a standalone staticText, so read
+            // the button's own label rather than searching for a separate element.
+            XCTAssertTrue(wateringRow.waitForExistence(timeout: 10))
+            XCTAssertTrue(wateringRow.label.contains("À démarrer"), "Label was: \(wateringRow.label)")
         }
 
         XCTContext.runActivity(named: "Arroser et vérifier la mise à jour de l'échéance") { _ in
+            let wateringRow = app.buttons["scheduleRow-watering"]
             app.buttons["actionWater"].tap()
 
             let expectation = XCTNSPredicateExpectation(
-                predicate: NSPredicate(format: "exists == false"),
-                object: app.staticTexts["À démarrer"]
+                predicate: NSPredicate(format: "NOT (label CONTAINS[c] %@)", "À démarrer"),
+                object: wateringRow
             )
             XCTAssertEqual(XCTWaiter().wait(for: [expectation], timeout: 10), .completed)
 

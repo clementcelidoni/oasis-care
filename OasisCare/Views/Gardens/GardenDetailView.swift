@@ -99,6 +99,7 @@ struct GardenDetailView: View {
                                     .foregroundStyle(.tertiary)
                             }
                             .padding(.vertical, 8)
+                            .contentShape(Rectangle())
                         }
                         .buttonStyle(.plain)
                         .accessibilityIdentifier(zone.name)
