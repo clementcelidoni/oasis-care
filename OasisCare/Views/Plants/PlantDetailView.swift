@@ -2,7 +2,7 @@ import SwiftUI
 import SwiftData
 
 struct PlantDetailView: View {
-    private enum ActiveSheet: Identifiable {
+    private enum ActiveSheet: Identifiable, Equatable {
         case edit
         case addEvent
         case configureSchedule(CareEventType)
@@ -58,6 +58,9 @@ struct PlantDetailView: View {
             case .configureSchedule(let type):
                 ConfigureScheduleSheet(plant: plant, type: type)
             }
+        }
+        .onChange(of: activeSheet) { oldValue, newValue in
+            print("DEBUG: onChange activeSheet \(String(describing: oldValue)) -> \(String(describing: newValue))")
         }
     }
 
@@ -154,7 +157,9 @@ struct PlantDetailView: View {
     @ViewBuilder
     private func scheduleRow(for type: CareEventType) -> some View {
         Button {
+            print("DEBUG: scheduleRow tapped for \(type.rawValue)")
             activeSheet = .configureSchedule(type)
+            print("DEBUG: activeSheet is now \(String(describing: activeSheet))")
         } label: {
             HStack {
                 Image(systemName: type.icon)
