@@ -68,9 +68,24 @@ final class OasisCareUITests: XCTestCase {
             XCTAssertTrue(app.buttons[plantName].waitForExistence(timeout: 10))
         }
 
-        XCTContext.runActivity(named: "Ouvrir la fiche et définir la fréquence d'arrosage") { _ in
+        XCTContext.runActivity(named: "Vérifier que le bouton Modifier ouvre bien une feuille") { _ in
             app.buttons[plantName].tap()
 
+            let modifierButton = app.buttons["Modifier"]
+            XCTAssertTrue(modifierButton.waitForExistence(timeout: 10))
+            modifierButton.tap()
+
+            let cancelButton = app.buttons["Annuler"]
+            if !cancelButton.waitForExistence(timeout: 10) {
+                print("=== DEBUG: accessibility tree after tapping Modifier ===")
+                print(app.debugDescription)
+                print("=== END DEBUG (Modifier) ===")
+            }
+            XCTAssertTrue(cancelButton.exists, "Le bouton Modifier n'a pas ouvert de feuille")
+            cancelButton.tap()
+        }
+
+        XCTContext.runActivity(named: "Ouvrir la fiche et définir la fréquence d'arrosage") { _ in
             let wateringRow = app.buttons["scheduleRow-watering"]
             XCTAssertTrue(wateringRow.waitForExistence(timeout: 10))
             wateringRow.tap()
