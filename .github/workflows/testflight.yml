@@ -35,12 +35,16 @@ jobs:
           echo "${{ secrets.APPLE_DISTRIBUTION_PRIVATE_KEY }}" | base64 --decode > "$RUNNER_TEMP/key.pem"
           echo "${{ secrets.APPLE_DISTRIBUTION_CERTIFICATE_PEM }}" | base64 --decode > "$RUNNER_TEMP/cert.pem"
 
+          openssl version -a
+          openssl list -providers
+
           P12_PASSWORD=$(uuidgen)
           openssl pkcs12 -export \
             -out "$RUNNER_TEMP/distribution.p12" \
             -inkey "$RUNNER_TEMP/key.pem" \
             -in "$RUNNER_TEMP/cert.pem" \
-            -passout "pass:$P12_PASSWORD"
+            -passout "pass:$P12_PASSWORD" \
+            -certpbe PBE-SHA1-3DES -keypbe PBE-SHA1-3DES -macalg SHA1
 
           KEYCHAIN_PATH="$RUNNER_TEMP/signing.keychain-db"
           KEYCHAIN_PASSWORD=$(uuidgen)
