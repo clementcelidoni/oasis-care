@@ -29,11 +29,14 @@ jobs:
           # Strip any trailing newline/whitespace a copy-paste into the GitHub
           # secrets UI may have picked up - PKCS12 password checks are exact.
           P12_PASSWORD="$(printf '%s' "$P12_PASSWORD" | tr -d '\n\r')"
+          echo "P12_PASSWORD length: ${#P12_PASSWORD} (expected 32)"
 
           KEYCHAIN_PATH="$RUNNER_TEMP/signing.keychain-db"
           KEYCHAIN_PASSWORD=$(uuidgen)
 
           echo "${{ secrets.APPLE_DISTRIBUTION_CERTIFICATE_P12 }}" | base64 --decode > "$RUNNER_TEMP/distribution.p12"
+          echo "distribution.p12 size: $(wc -c < "$RUNNER_TEMP/distribution.p12") bytes (expected ~3200)"
+          openssl pkcs12 -info -in "$RUNNER_TEMP/distribution.p12" -passin "pass:$P12_PASSWORD" -noout && echo "openssl can read it with this password" || echo "openssl ALSO rejects this password - confirms password/file mismatch, not a macOS-specific issue"
 
           security create-keychain -p "$KEYCHAIN_PASSWORD" "$KEYCHAIN_PATH"
           security set-keychain-settings -lut 21600 "$KEYCHAIN_PATH"
