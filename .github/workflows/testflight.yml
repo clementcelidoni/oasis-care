@@ -23,20 +23,27 @@ jobs:
           echo "${{ secrets.APP_STORE_CONNECT_API_KEY_CONTENT }}" | base64 --decode > "$RUNNER_TEMP/private_keys/AuthKey_${{ secrets.APP_STORE_CONNECT_API_KEY_ID }}.p8"
 
       - name: Import signing certificate into a temporary keychain
-        env:
-          P12_PASSWORD: ${{ secrets.APPLE_DISTRIBUTION_CERTIFICATE_PASSWORD }}
         run: |
-          # Strip any trailing newline/whitespace a copy-paste into the GitHub
-          # secrets UI may have picked up - PKCS12 password checks are exact.
-          P12_PASSWORD="$(printf '%s' "$P12_PASSWORD" | tr -d '\n\r')"
-          echo "P12_PASSWORD length: ${#P12_PASSWORD} (expected 32)"
+          # The .p12 is built here, on the runner, with its own openssl -
+          # a .p12 built on Windows with OpenSSL 3.x's modern AES-256
+          # encryption round-trips fine through openssl itself but macOS's
+          # `security import` silently rejects it ("wrong password?" even
+          # with the correct one) since Keychain Services still expects the
+          # legacy RC2/3DES PKCS12 scheme. Building it here with the
+          # runner's own openssl avoids that mismatch, and the export
+          # password only needs to exist transiently within this step.
+          echo "${{ secrets.APPLE_DISTRIBUTION_PRIVATE_KEY }}" | base64 --decode > "$RUNNER_TEMP/key.pem"
+          echo "${{ secrets.APPLE_DISTRIBUTION_CERTIFICATE_PEM }}" | base64 --decode > "$RUNNER_TEMP/cert.pem"
+
+          P12_PASSWORD=$(uuidgen)
+          openssl pkcs12 -export \
+            -out "$RUNNER_TEMP/distribution.p12" \
+            -inkey "$RUNNER_TEMP/key.pem" \
+            -in "$RUNNER_TEMP/cert.pem" \
+            -passout "pass:$P12_PASSWORD"
 
           KEYCHAIN_PATH="$RUNNER_TEMP/signing.keychain-db"
           KEYCHAIN_PASSWORD=$(uuidgen)
-
-          echo "${{ secrets.APPLE_DISTRIBUTION_CERTIFICATE_P12 }}" | base64 --decode > "$RUNNER_TEMP/distribution.p12"
-          echo "distribution.p12 size: $(wc -c < "$RUNNER_TEMP/distribution.p12") bytes (expected ~3200)"
-          openssl pkcs12 -info -in "$RUNNER_TEMP/distribution.p12" -passin "pass:$P12_PASSWORD" -noout && echo "openssl can read it with this password" || echo "openssl ALSO rejects this password - confirms password/file mismatch, not a macOS-specific issue"
 
           security create-keychain -p "$KEYCHAIN_PASSWORD" "$KEYCHAIN_PATH"
           security set-keychain-settings -lut 21600 "$KEYCHAIN_PATH"
