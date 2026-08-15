@@ -59,9 +59,6 @@ struct PlantDetailView: View {
                 ConfigureScheduleSheet(plant: plant, type: type)
             }
         }
-        .onChange(of: activeSheet) { oldValue, newValue in
-            print("DEBUG: onChange activeSheet \(String(describing: oldValue)) -> \(String(describing: newValue))")
-        }
     }
 
     private var header: some View {
@@ -145,53 +142,15 @@ struct PlantDetailView: View {
 
             VStack(spacing: 0) {
                 ForEach(Array(CareEventType.schedulable.enumerated()), id: \.element) { index, type in
-                    scheduleRow(for: type)
+                    ScheduleRowButton(type: type, schedule: plant.schedule(for: type)) {
+                        activeSheet = .configureSchedule(type)
+                    }
                     if index < CareEventType.schedulable.count - 1 {
                         Divider()
                     }
                 }
             }
         }
-    }
-
-    @ViewBuilder
-    private func scheduleRow(for type: CareEventType) -> some View {
-        Button {
-            print("DEBUG: scheduleRow tapped for \(type.rawValue)")
-            activeSheet = .configureSchedule(type)
-            print("DEBUG: activeSheet is now \(String(describing: activeSheet))")
-        } label: {
-            HStack {
-                Image(systemName: type.icon)
-                    .foregroundStyle(.secondary)
-                    .frame(width: 24)
-
-                Text(type.displayName)
-                    .foregroundStyle(.primary)
-
-                Spacer()
-
-                if let schedule = plant.schedule(for: type), schedule.isActive {
-                    Text(scheduleLabel(schedule))
-                        .foregroundStyle(schedule.isOverdue ? .red : .secondary)
-                    Image(systemName: "chevron.right")
-                        .font(.caption2)
-                        .foregroundStyle(.tertiary)
-                } else {
-                    Text("Configurer")
-                        .foregroundStyle(Color.accentColor)
-                }
-            }
-            .font(.subheadline)
-            .padding(.vertical, 8)
-        }
-        .buttonStyle(.plain)
-        .accessibilityIdentifier("scheduleRow-\(type.rawValue)")
-    }
-
-    private func scheduleLabel(_ schedule: CareSchedule) -> String {
-        guard let nextDueDate = schedule.nextDueDate else { return "À démarrer" }
-        return DateFormatting.relativeDayLabel(for: nextDueDate)
     }
 
     private var notesSection: some View {
@@ -261,6 +220,47 @@ private struct ActionButton: View {
         }
         .buttonStyle(.plain)
         .accessibilityIdentifier(identifier)
+    }
+}
+
+private struct ScheduleRowButton: View {
+    var type: CareEventType
+    var schedule: CareSchedule?
+    var onTap: () -> Void
+
+    var body: some View {
+        Button(action: onTap) {
+            HStack {
+                Image(systemName: type.icon)
+                    .foregroundStyle(.secondary)
+                    .frame(width: 24)
+
+                Text(type.displayName)
+                    .foregroundStyle(.primary)
+
+                Spacer()
+
+                if let schedule, schedule.isActive {
+                    Text(dueLabel(schedule))
+                        .foregroundStyle(schedule.isOverdue ? .red : .secondary)
+                    Image(systemName: "chevron.right")
+                        .font(.caption2)
+                        .foregroundStyle(.tertiary)
+                } else {
+                    Text("Configurer")
+                        .foregroundStyle(Color.accentColor)
+                }
+            }
+            .font(.subheadline)
+            .padding(.vertical, 8)
+        }
+        .buttonStyle(.plain)
+        .accessibilityIdentifier("scheduleRow-\(type.rawValue)")
+    }
+
+    private func dueLabel(_ schedule: CareSchedule) -> String {
+        guard let nextDueDate = schedule.nextDueDate else { return "À démarrer" }
+        return DateFormatting.relativeDayLabel(for: nextDueDate)
     }
 }
 
