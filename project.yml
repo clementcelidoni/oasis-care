@@ -37,9 +37,6 @@ targets:
         PRODUCT_BUNDLE_IDENTIFIER: com.oasisrarecare.app
         PRODUCT_NAME: OasisCare
         DEVELOPMENT_LANGUAGE: fr
-      configs:
-        Release:
-          CODE_SIGN_IDENTITY: "Apple Distribution"
 
   OasisCareUITests:
     type: bundle.ui-testing
