@@ -2,13 +2,25 @@ import SwiftUI
 import SwiftData
 
 struct PlantDetailView: View {
+    private enum ActiveSheet: Identifiable {
+        case edit
+        case addEvent
+        case configureSchedule(CareEventType)
+
+        var id: String {
+            switch self {
+            case .edit: return "edit"
+            case .addEvent: return "addEvent"
+            case .configureSchedule(let type): return "configureSchedule-\(type.rawValue)"
+            }
+        }
+    }
+
     var plant: Plant
 
     @Environment(\.modelContext) private var modelContext
 
-    @State private var isPresentingEdit = false
-    @State private var isPresentingAddEvent = false
-    @State private var configuringScheduleType: CareEventType?
+    @State private var activeSheet: ActiveSheet?
     @State private var historyFilter: CareEventType?
 
     private var filteredHistory: [CareEvent] {
@@ -34,17 +46,18 @@ struct PlantDetailView: View {
         .navigationBarTitleDisplayMode(.inline)
         .toolbar {
             ToolbarItem(placement: .topBarTrailing) {
-                Button("Modifier") { isPresentingEdit = true }
+                Button("Modifier") { activeSheet = .edit }
             }
         }
-        .sheet(isPresented: $isPresentingEdit) {
-            PlantFormView(plant: plant)
-        }
-        .sheet(isPresented: $isPresentingAddEvent) {
-            AddCareEventSheet(plant: plant)
-        }
-        .sheet(item: $configuringScheduleType) { type in
-            ConfigureScheduleSheet(plant: plant, type: type)
+        .sheet(item: $activeSheet) { sheet in
+            switch sheet {
+            case .edit:
+                PlantFormView(plant: plant)
+            case .addEvent:
+                AddCareEventSheet(plant: plant)
+            case .configureSchedule(let type):
+                ConfigureScheduleSheet(plant: plant, type: type)
+            }
         }
     }
 
@@ -117,7 +130,7 @@ struct PlantDetailView: View {
                 CareScheduleEngine.recordCare(.fertilizing, for: plant, in: modelContext)
             }
             ActionButton(title: "Plus", icon: "plus", tint: .gray, identifier: "actionMore") {
-                isPresentingAddEvent = true
+                activeSheet = .addEvent
             }
         }
     }
@@ -141,7 +154,7 @@ struct PlantDetailView: View {
     @ViewBuilder
     private func scheduleRow(for type: CareEventType) -> some View {
         Button {
-            configuringScheduleType = type
+            activeSheet = .configureSchedule(type)
         } label: {
             HStack {
                 Image(systemName: type.icon)

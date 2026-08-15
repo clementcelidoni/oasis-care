@@ -2,11 +2,23 @@ import SwiftUI
 import SwiftData
 
 struct GardenDetailView: View {
+    private enum ActiveSheet: Identifiable {
+        case edit
+        case addZone
+        case editZone(GardenZone)
+
+        var id: String {
+            switch self {
+            case .edit: return "edit"
+            case .addZone: return "addZone"
+            case .editZone(let zone): return "editZone-\(zone.id.uuidString)"
+            }
+        }
+    }
+
     var garden: Garden
 
-    @State private var isPresentingEdit = false
-    @State private var isPresentingAddZone = false
-    @State private var editingZone: GardenZone?
+    @State private var activeSheet: ActiveSheet?
 
     var body: some View {
         ScrollView {
@@ -32,20 +44,21 @@ struct GardenDetailView: View {
         .navigationBarTitleDisplayMode(.inline)
         .toolbar {
             ToolbarItem(placement: .topBarTrailing) {
-                Button("Modifier") { isPresentingEdit = true }
+                Button("Modifier") { activeSheet = .edit }
             }
         }
         .navigationDestination(for: Plant.self) { plant in
             PlantDetailView(plant: plant)
         }
-        .sheet(isPresented: $isPresentingEdit) {
-            GardenFormView(garden: garden)
-        }
-        .sheet(isPresented: $isPresentingAddZone) {
-            GardenZoneFormView(garden: garden, zone: nil)
-        }
-        .sheet(item: $editingZone) { zone in
-            GardenZoneFormView(garden: garden, zone: zone)
+        .sheet(item: $activeSheet) { sheet in
+            switch sheet {
+            case .edit:
+                GardenFormView(garden: garden)
+            case .addZone:
+                GardenZoneFormView(garden: garden, zone: nil)
+            case .editZone(let zone):
+                GardenZoneFormView(garden: garden, zone: zone)
+            }
         }
     }
 
@@ -56,7 +69,7 @@ struct GardenDetailView: View {
                     .font(.headline)
                 Spacer()
                 Button {
-                    isPresentingAddZone = true
+                    activeSheet = .addZone
                 } label: {
                     Label("Ajouter", systemImage: "plus.circle.fill")
                         .labelStyle(.iconOnly)
@@ -73,7 +86,7 @@ struct GardenDetailView: View {
                 VStack(spacing: 0) {
                     ForEach(Array(sortedZones.enumerated()), id: \.element.id) { index, zone in
                         Button {
-                            editingZone = zone
+                            activeSheet = .editZone(zone)
                         } label: {
                             HStack {
                                 Text(zone.name)
