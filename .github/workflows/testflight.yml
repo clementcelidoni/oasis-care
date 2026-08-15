@@ -35,9 +35,6 @@ jobs:
           echo "${{ secrets.APPLE_DISTRIBUTION_PRIVATE_KEY }}" | base64 --decode > "$RUNNER_TEMP/key.pem"
           echo "${{ secrets.APPLE_DISTRIBUTION_CERTIFICATE_PEM }}" | base64 --decode > "$RUNNER_TEMP/cert.pem"
 
-          openssl version -a
-          openssl list -providers
-
           P12_PASSWORD=$(uuidgen)
           openssl pkcs12 -export \
             -out "$RUNNER_TEMP/distribution.p12" \
