@@ -86,7 +86,7 @@ final class OasisCareUITests: XCTestCase {
         }
 
         XCTContext.runActivity(named: "Ouvrir la fiche et définir la fréquence d'arrosage") { _ in
-            let wateringRow = app.buttons["scheduleRow-watering"]
+            let wateringRow = app.buttons["toolbarConfigureWatering"]
             XCTAssertTrue(wateringRow.waitForExistence(timeout: 10))
             wateringRow.tap()
 

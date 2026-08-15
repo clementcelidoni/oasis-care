@@ -43,6 +43,10 @@ struct PlantDetailView: View {
             ToolbarItem(placement: .topBarTrailing) {
                 Button("Modifier") { activeSheet = .edit }
             }
+            ToolbarItem(placement: .topBarLeading) {
+                Button("TestWatering") { activeSheet = .configureWatering }
+                    .accessibilityIdentifier("toolbarConfigureWatering")
+            }
         }
         .sheet(item: $activeSheet) { sheet in
             switch sheet {
@@ -51,7 +55,7 @@ struct PlantDetailView: View {
             case .addEvent:
                 AddCareEventSheet(plant: plant)
             case .configureWatering:
-                PlantFormView(plant: plant)
+                ConfigureScheduleSheet(plant: plant, type: .watering)
             case .configureFertilizing:
                 ConfigureScheduleSheet(plant: plant, type: .fertilizing)
             }
