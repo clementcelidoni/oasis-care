@@ -60,6 +60,7 @@ jobs:
         run: |
           mkdir -p ~/Library/MobileDevice/Provisioning\ Profiles
           echo "${{ secrets.APPLE_PROVISIONING_PROFILE }}" | base64 --decode > "$RUNNER_TEMP/profile.mobileprovision"
+          echo "profile.mobileprovision size: $(wc -c < "$RUNNER_TEMP/profile.mobileprovision") bytes (expected ~12000)"
           PROFILE_UUID=$(security cms -D -i "$RUNNER_TEMP/profile.mobileprovision" | /usr/libexec/PlistBuddy -c "Print :UUID" /dev/stdin)
           cp "$RUNNER_TEMP/profile.mobileprovision" ~/Library/MobileDevice/Provisioning\ Profiles/"$PROFILE_UUID".mobileprovision
 
