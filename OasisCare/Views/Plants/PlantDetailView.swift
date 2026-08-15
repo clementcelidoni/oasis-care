@@ -51,7 +51,7 @@ struct PlantDetailView: View {
             case .addEvent:
                 AddCareEventSheet(plant: plant)
             case .configureWatering:
-                ConfigureScheduleSheet(plant: plant, type: .watering)
+                PlantFormView(plant: plant)
             case .configureFertilizing:
                 ConfigureScheduleSheet(plant: plant, type: .fertilizing)
             }
