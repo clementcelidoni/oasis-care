@@ -41,8 +41,27 @@ jobs:
           echo "Using simulator UDID: $UDID"
 
       - name: Run UI tests (iOS Simulator)
+        id: uitest
         run: |
+          set -o pipefail
           xcodebuild test \
             -project OasisCare.xcodeproj \
             -scheme OasisCare \
-            -destination "id=${{ steps.destination.outputs.udid }}"
+            -destination "id=${{ steps.destination.outputs.udid }}" \
+            2>&1 | tee test-output.log
+
+      - name: Surface failure details
+        if: failure() && steps.uitest.outcome == 'failure'
+        run: |
+          echo "::group::Matching error/failure lines from the test log"
+          grep -E "error:|Assertion Failure|XCTAssert.*failed|\*\* TEST FAILED \*\*|\*\* BUILD FAILED \*\*|fatal error" test-output.log | tail -25 || echo "No matching lines found, see the full log artifact"
+          echo "::endgroup::"
+          SUMMARY=$(grep -E "error:|Assertion Failure|XCTAssert.*failed|\*\* TEST FAILED \*\*|\*\* BUILD FAILED \*\*|fatal error" test-output.log | tail -5 | tr '\n' ' ' | cut -c1-800)
+          echo "::error::${SUMMARY:-Test failed with no matched error lines - see the test-output-log artifact}"
+
+      - name: Upload full test log
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: test-output-log
+          path: test-output.log
