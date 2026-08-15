@@ -75,11 +75,9 @@ final class OasisCareUITests: XCTestCase {
             XCTAssertTrue(wateringRow.waitForExistence(timeout: 10))
             wateringRow.tap()
 
-            let incrementButton = app.steppers.firstMatch.buttons["Increment"]
-            XCTAssertTrue(incrementButton.waitForExistence(timeout: 10))
-            incrementButton.tap()
-
-            app.buttons["Enregistrer"].tap()
+            let saveScheduleButton = app.buttons["Enregistrer"]
+            XCTAssertTrue(saveScheduleButton.waitForExistence(timeout: 10))
+            saveScheduleButton.tap()
 
             XCTAssertTrue(app.staticTexts["À démarrer"].waitForExistence(timeout: 10))
         }
