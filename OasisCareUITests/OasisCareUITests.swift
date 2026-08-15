@@ -76,7 +76,12 @@ final class OasisCareUITests: XCTestCase {
             wateringRow.tap()
 
             let saveScheduleButton = app.buttons["Enregistrer"]
-            XCTAssertTrue(saveScheduleButton.waitForExistence(timeout: 10))
+            if !saveScheduleButton.waitForExistence(timeout: 10) {
+                print("=== DEBUG: accessibility tree after tapping scheduleRow-watering ===")
+                print(app.debugDescription)
+                print("=== END DEBUG ===")
+            }
+            XCTAssertTrue(saveScheduleButton.exists)
             saveScheduleButton.tap()
 
             XCTAssertTrue(app.staticTexts["À démarrer"].waitForExistence(timeout: 10))
