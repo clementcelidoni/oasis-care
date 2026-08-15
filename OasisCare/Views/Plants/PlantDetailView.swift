@@ -2,18 +2,13 @@ import SwiftUI
 import SwiftData
 
 struct PlantDetailView: View {
-    private enum ActiveSheet: Identifiable, Equatable {
+    private enum ActiveSheet: String, Identifiable, Equatable {
         case edit
         case addEvent
-        case configureSchedule(CareEventType)
+        case configureWatering
+        case configureFertilizing
 
-        var id: String {
-            switch self {
-            case .edit: return "edit"
-            case .addEvent: return "addEvent"
-            case .configureSchedule(let type): return "configureSchedule-\(type.rawValue)"
-            }
-        }
+        var id: String { rawValue }
     }
 
     var plant: Plant
@@ -55,8 +50,10 @@ struct PlantDetailView: View {
                 PlantFormView(plant: plant)
             case .addEvent:
                 AddCareEventSheet(plant: plant)
-            case .configureSchedule(let type):
-                ConfigureScheduleSheet(plant: plant, type: type)
+            case .configureWatering:
+                ConfigureScheduleSheet(plant: plant, type: .watering)
+            case .configureFertilizing:
+                ConfigureScheduleSheet(plant: plant, type: .fertilizing)
             }
         }
     }
@@ -143,7 +140,7 @@ struct PlantDetailView: View {
             VStack(spacing: 0) {
                 ForEach(Array(CareEventType.schedulable.enumerated()), id: \.element) { index, type in
                     ScheduleRowButton(type: type, schedule: plant.schedule(for: type)) {
-                        activeSheet = .configureSchedule(type)
+                        activeSheet = type == .watering ? .configureWatering : .configureFertilizing
                     }
                     if index < CareEventType.schedulable.count - 1 {
                         Divider()
