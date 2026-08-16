@@ -12,6 +12,11 @@ final class PlantPhoto {
     var date: Date
     var notes: String
     var plant: Plant?
+    /// Set when this photo was taken as part of a tree inspection
+    /// (spec §57's "Photos" field) — nullified, not cascade-deleted, if
+    /// the inspection is later removed: the photo stays valid plant
+    /// history either way.
+    var treeInspection: TreeInspection?
     var syncStatus: SyncStatus?
 
     init(plant: Plant?, imageData: Data, thumbnailData: Data, date: Date = .now, notes: String = "") {

@@ -57,6 +57,12 @@ final class Plant: Syncable {
     @Relationship(deleteRule: .cascade, inverse: \SmartTag.plant)
     var smartTags: [SmartTag] = []
 
+    @Relationship(deleteRule: .cascade, inverse: \PlantMeasurement.plant)
+    var measurements: [PlantMeasurement] = []
+
+    @Relationship(deleteRule: .cascade, inverse: \TreeInspection.plant)
+    var treeInspections: [TreeInspection] = []
+
     init(
         customName: String,
         commonName: String? = nil,
@@ -106,4 +112,17 @@ final class Plant: Syncable {
     }
 
     var hasMapPosition: Bool { latitude != nil && longitude != nil }
+
+    /// Gates the "Suivi arboricole" section (spec §54: "Pour arbres/palmiers").
+    var isTreeOrPalm: Bool { type == .tree || type == .palm }
+
+    /// Measurement history, most recent first.
+    var sortedMeasurements: [PlantMeasurement] {
+        measurements.sorted { $0.date > $1.date }
+    }
+
+    /// Inspection history, most recent first.
+    var sortedTreeInspections: [TreeInspection] {
+        treeInspections.sorted { $0.date > $1.date }
+    }
 }

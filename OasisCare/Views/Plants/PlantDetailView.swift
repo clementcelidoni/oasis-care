@@ -13,6 +13,11 @@ struct PlantDetailView: View {
         case placeOnMap
         case qrCode(SmartTag)
         case nfcAssociate
+        case addMeasurement
+        case measurementCharts
+        case addInspection
+        case editInspection(TreeInspection)
+        case photoComparison
 
         var id: String {
             switch self {
@@ -24,6 +29,11 @@ struct PlantDetailView: View {
             case .placeOnMap: return "placeOnMap"
             case .qrCode(let tag): return "qrCode-\(tag.id.uuidString)"
             case .nfcAssociate: return "nfcAssociate"
+            case .addMeasurement: return "addMeasurement"
+            case .measurementCharts: return "measurementCharts"
+            case .addInspection: return "addInspection"
+            case .editInspection(let inspection): return "editInspection-\(inspection.id.uuidString)"
+            case .photoComparison: return "photoComparison"
             }
         }
     }
@@ -77,6 +87,7 @@ struct PlantDetailView: View {
     @State private var isCameraPresented = false
     @State private var selectedPhoto: PlantPhoto?
     @State private var isDeleteConfirmationPresented = false
+    @State private var inspectionPendingDeletion: TreeInspection?
 
     private var filteredHistory: [CareEvent] {
         let events = plant.sortedCareEvents
@@ -91,6 +102,9 @@ struct PlantDetailView: View {
                 quickActions
                 aiSection
                 upcomingCare
+                if plant.isTreeOrPalm {
+                    treeTrackingSection
+                }
                 smartTagSection
                 if !plant.photos.isEmpty {
                     evolutionSection
@@ -130,6 +144,26 @@ struct PlantDetailView: View {
         } message: {
             Text("Cette action supprimera aussi son historique et ses photos. Cette action est irréversible.")
         }
+        .confirmationDialog(
+            "Supprimer cette inspection ?",
+            isPresented: Binding(
+                get: { inspectionPendingDeletion != nil },
+                set: { if !$0 { inspectionPendingDeletion = nil } }
+            ),
+            titleVisibility: .visible
+        ) {
+            Button("Supprimer", role: .destructive) {
+                if let inspection = inspectionPendingDeletion {
+                    DeletionService.delete(inspection, in: modelContext)
+                }
+                inspectionPendingDeletion = nil
+            }
+            Button("Annuler", role: .cancel) {
+                inspectionPendingDeletion = nil
+            }
+        } message: {
+            Text("Les photos associées seront conservées dans l'historique du végétal. Cette action est irréversible.")
+        }
         .sheet(item: $activeSheet) { sheet in
             switch sheet {
             case .edit:
@@ -148,6 +182,16 @@ struct PlantDetailView: View {
                 QRCodeSheet(plant: plant, tag: tag)
             case .nfcAssociate:
                 NFCAssociationSheet(plant: plant)
+            case .addMeasurement:
+                TreeMeasurementFormView(plant: plant)
+            case .measurementCharts:
+                TreeMeasurementChartsView(plant: plant)
+            case .addInspection:
+                TreeInspectionFormView(plant: plant, inspection: nil)
+            case .editInspection(let inspection):
+                TreeInspectionFormView(plant: plant, inspection: inspection)
+            case .photoComparison:
+                PhotoComparisonView(plant: plant)
             }
         }
         .onChange(of: selectedPhotoItem) { _, newItem in
@@ -465,6 +509,105 @@ struct PlantDetailView: View {
         }
     }
 
+    private var latestMeasurement: PlantMeasurement? {
+        plant.sortedMeasurements.first
+    }
+
+    /// Spec §54-60, gated to tree/palm plants only (§54: "Pour
+    /// arbres/palmiers"). Groups measurements, charts, inspections, and
+    /// before/after comparison — everything this plant type gets that
+    /// others don't — into one section rather than scattering them.
+    private var treeTrackingSection: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            Text("Suivi arboricole")
+                .font(.headline)
+
+            if let latest = latestMeasurement {
+                VStack(alignment: .leading, spacing: 4) {
+                    Text("Dernière mesure — \(DateFormatting.shortDate(latest.date))")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                    HStack(spacing: 16) {
+                        if let height = latest.height {
+                            Label("\(height.formatted()) m", systemImage: "arrow.up.and.down")
+                        }
+                        if let circumference = latest.trunkCircumference {
+                            Label("\(circumference.formatted()) cm", systemImage: "circle.dashed")
+                        }
+                        if let canopy = latest.canopyDiameter {
+                            Label("\(canopy.formatted()) m", systemImage: "tree")
+                        }
+                    }
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                }
+            } else {
+                Text("Aucune mesure enregistrée pour l'instant.")
+                    .font(.subheadline)
+                    .foregroundStyle(.secondary)
+            }
+
+            HStack(spacing: 12) {
+                Button {
+                    activeSheet = .addMeasurement
+                } label: {
+                    ActionButtonLabel(title: "Mesurer", icon: "ruler", tint: .green)
+                }
+                .buttonStyle(.plain)
+                .accessibilityIdentifier("addMeasurementButton")
+
+                Button {
+                    activeSheet = .measurementCharts
+                } label: {
+                    ActionButtonLabel(title: "Graphiques", icon: "chart.xyaxis.line", tint: .blue)
+                }
+                .buttonStyle(.plain)
+                .disabled(plant.measurements.isEmpty)
+
+                Button {
+                    activeSheet = .photoComparison
+                } label: {
+                    ActionButtonLabel(title: "Comparer", icon: "photo.on.rectangle.angled", tint: .indigo)
+                }
+                .buttonStyle(.plain)
+            }
+
+            if !plant.sortedTreeInspections.isEmpty {
+                VStack(spacing: 0) {
+                    ForEach(Array(plant.sortedTreeInspections.enumerated()), id: \.element.id) { index, inspection in
+                        TreeInspectionRow(inspection: inspection) {
+                            activeSheet = .editInspection(inspection)
+                        }
+                        .contextMenu {
+                            Button {
+                                activeSheet = .editInspection(inspection)
+                            } label: {
+                                Label("Modifier", systemImage: "pencil")
+                            }
+                            Button(role: .destructive) {
+                                inspectionPendingDeletion = inspection
+                            } label: {
+                                Label("Supprimer", systemImage: "trash")
+                            }
+                        }
+                        if index < plant.sortedTreeInspections.count - 1 {
+                            Divider()
+                        }
+                    }
+                }
+            }
+
+            Button {
+                activeSheet = .addInspection
+            } label: {
+                Label("Nouvelle inspection", systemImage: "checklist")
+                    .frame(maxWidth: .infinity)
+            }
+            .buttonStyle(.bordered)
+            .accessibilityIdentifier("addInspectionButton")
+        }
+    }
+
     private var qrTag: SmartTag? {
         plant.smartTags.first { $0.type == .qr && $0.active }
     }
@@ -750,5 +893,34 @@ private struct HistoryRow: View {
                 .foregroundStyle(.secondary)
                 .frame(width: 24)
         }
+    }
+}
+
+private struct TreeInspectionRow: View {
+    var inspection: TreeInspection
+    var onTap: () -> Void
+
+    var body: some View {
+        Button(action: onTap) {
+            HStack {
+                Circle()
+                    .fill(inspection.result.color)
+                    .frame(width: 10, height: 10)
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(inspection.result.displayName)
+                        .foregroundStyle(.primary)
+                    Text(DateFormatting.shortDate(inspection.date))
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+                Spacer()
+                Image(systemName: "chevron.right")
+                    .font(.caption2)
+                    .foregroundStyle(.tertiary)
+            }
+            .padding(.vertical, 6)
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
     }
 }

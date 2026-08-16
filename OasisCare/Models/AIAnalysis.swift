@@ -49,4 +49,14 @@ final class AIAnalysis {
         guard let json = structuredDataJSON?.data(using: .utf8) else { return nil }
         return try? JSONDecoder().decode(PlantDiagnosis.self, from: json)
     }
+
+    func decodedTreeInspectionAnalysis() -> TreeInspectionAnalysis? {
+        guard let json = structuredDataJSON?.data(using: .utf8) else { return nil }
+        return try? JSONDecoder().decode(TreeInspectionAnalysis.self, from: json)
+    }
+
+    func decodedTreePhotoComparison() -> TreePhotoComparison? {
+        guard let json = structuredDataJSON?.data(using: .utf8) else { return nil }
+        return try? JSONDecoder().decode(TreePhotoComparison.self, from: json)
+    }
 }

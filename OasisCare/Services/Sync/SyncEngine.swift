@@ -40,6 +40,8 @@ final class SyncEngine: ObservableObject {
             try await pushPlants(workspaceID: workspaceID, context: context)
             try await pushSchedules(context: context)
             try await pushEvents(context: context)
+            try await pushPlantMeasurements(workspaceID: workspaceID, context: context)
+            try await pushTreeInspections(workspaceID: workspaceID, context: context)
             try await pushPlantPhotos(workspaceID: workspaceID, context: context)
             try await pushAIAnalyses(context: context)
             try await pushSmartTags(workspaceID: workspaceID, context: context)
@@ -68,8 +70,11 @@ final class SyncEngine: ObservableObject {
         let irrigationZones = (try? context.fetch(FetchDescriptor<IrrigationZone>()))?.filter { $0.syncStatus != .synced }.count ?? 0
         let irrigationEvents = (try? context.fetch(FetchDescriptor<IrrigationEvent>()))?.filter { $0.syncStatus != .synced }.count ?? 0
         let smartTags = (try? context.fetch(FetchDescriptor<SmartTag>()))?.filter { $0.syncStatus != .synced }.count ?? 0
+        let measurements = (try? context.fetch(FetchDescriptor<PlantMeasurement>()))?.filter { $0.syncStatus != .synced }.count ?? 0
+        let inspections = (try? context.fetch(FetchDescriptor<TreeInspection>()))?.filter { $0.syncStatus != .synced }.count ?? 0
         let deletions = (try? context.fetchCount(FetchDescriptor<PendingDeletion>())) ?? 0
-        return gardens + zones + plants + schedules + events + photos + analyses + preferences + irrigationZones + irrigationEvents + smartTags + deletions
+        return gardens + zones + plants + schedules + events + photos + analyses + preferences + irrigationZones
+            + irrigationEvents + smartTags + measurements + inspections + deletions
     }
 
     private static let photoBucket = "plant-photos"
@@ -222,6 +227,38 @@ final class SyncEngine: ObservableObject {
             context.insert(event)
         }
 
+        let remoteMeasurements: [PlantMeasurementRow] = try await AuthService.client.from("plant_measurements").select().execute().value
+        for row in remoteMeasurements {
+            guard let plant = plantsByID[row.plantId] else { continue }
+            let measurement = PlantMeasurement(
+                plant: plant, date: row.date, height: row.height, trunkCircumference: row.trunkCircumference,
+                trunkDiameter: row.trunkDiameter, canopyDiameter: row.canopyDiameter,
+                estimatedAge: row.estimatedAge, notes: row.notes
+            )
+            measurement.id = row.id
+            measurement.syncStatus = .synced
+            context.insert(measurement)
+        }
+
+        // Restored before plant_photos: a photo can reference the
+        // inspection it was taken during, and that foreign key needs
+        // the inspection row to already exist locally.
+        let remoteInspections: [TreeInspectionRow] = try await AuthService.client.from("tree_inspections").select().execute().value
+        var treeInspectionsByID: [UUID: TreeInspection] = [:]
+        for row in remoteInspections {
+            guard let plant = plantsByID[row.plantId] else { continue }
+            let inspection = TreeInspection(
+                plant: plant, date: row.date, generalCondition: row.generalCondition, stability: row.stability,
+                deadWood: row.deadWood, cavities: row.cavities, fungi: row.fungi, parasites: row.parasites,
+                trunkDefects: row.trunkDefects, canopyNotes: row.canopyNotes, notes: row.notes, result: row.result
+            )
+            inspection.id = row.id
+            inspection.syncStatus = .synced
+            inspection.updatedAt = row.updatedAt
+            context.insert(inspection)
+            treeInspectionsByID[row.id] = inspection
+        }
+
         let remotePhotos: [PlantPhotoRow] = try await AuthService.client.from("plant_photos").select().execute().value
         for row in remotePhotos {
             guard let plant = plantsByID[row.plantId] else { continue }
@@ -229,6 +266,7 @@ final class SyncEngine: ObservableObject {
                   let thumbnailData = try? await downloadPhoto(path: row.thumbnailStoragePath) else { continue }
             let photo = PlantPhoto(plant: plant, imageData: imageData, thumbnailData: thumbnailData, date: row.date, notes: row.notes)
             photo.id = row.id
+            photo.treeInspection = row.treeInspectionId.flatMap { treeInspectionsByID[$0] }
             photo.syncStatus = .synced
             context.insert(photo)
         }
@@ -467,6 +505,58 @@ final class SyncEngine: ObservableObject {
         }
     }
 
+    private struct PlantMeasurementRow: Decodable {
+        var id: UUID
+        var plantId: UUID
+        var date: Date
+        var height: Double?
+        var trunkCircumference: Double?
+        var trunkDiameter: Double?
+        var canopyDiameter: Double?
+        var estimatedAge: Int?
+        var notes: String
+
+        enum CodingKeys: String, CodingKey {
+            case id
+            case plantId = "plant_id"
+            case date, height, notes
+            case trunkCircumference = "trunk_circumference"
+            case trunkDiameter = "trunk_diameter"
+            case canopyDiameter = "canopy_diameter"
+            case estimatedAge = "estimated_age"
+        }
+    }
+
+    private struct TreeInspectionRow: Decodable {
+        var id: UUID
+        var plantId: UUID
+        var date: Date
+        var generalCondition: String
+        var stability: String
+        var deadWood: String
+        var cavities: String
+        var fungi: String
+        var parasites: String
+        var trunkDefects: String
+        var canopyNotes: String
+        var notes: String
+        var result: TreeInspectionResult
+        var updatedAt: Date?
+
+        enum CodingKeys: String, CodingKey {
+            case id
+            case plantId = "plant_id"
+            case date, notes, result
+            case generalCondition = "general_condition"
+            case stability
+            case deadWood = "dead_wood"
+            case cavities, fungi, parasites
+            case trunkDefects = "trunk_defects"
+            case canopyNotes = "canopy_notes"
+            case updatedAt = "updated_at"
+        }
+    }
+
     private struct PlantPhotoRow: Decodable {
         var id: UUID
         var plantId: UUID
@@ -474,6 +564,7 @@ final class SyncEngine: ObservableObject {
         var thumbnailStoragePath: String
         var date: Date
         var notes: String
+        var treeInspectionId: UUID?
 
         enum CodingKeys: String, CodingKey {
             case id
@@ -481,6 +572,7 @@ final class SyncEngine: ObservableObject {
             case storagePath = "storage_path"
             case thumbnailStoragePath = "thumbnail_storage_path"
             case date, notes
+            case treeInspectionId = "tree_inspection_id"
         }
     }
 
@@ -867,6 +959,105 @@ final class SyncEngine: ObservableObject {
         for event in pending where event.plant != nil { event.syncStatus = .synced }
     }
 
+    // MARK: - Plant measurements
+
+    private struct PlantMeasurementDTO: Encodable {
+        var id: UUID
+        var workspaceId: UUID
+        var plantId: UUID
+        var date: Date
+        var height: Double?
+        var trunkCircumference: Double?
+        var trunkDiameter: Double?
+        var canopyDiameter: Double?
+        var estimatedAge: Int?
+        var notes: String
+
+        enum CodingKeys: String, CodingKey {
+            case id
+            case workspaceId = "workspace_id"
+            case plantId = "plant_id"
+            case date, height, notes
+            case trunkCircumference = "trunk_circumference"
+            case trunkDiameter = "trunk_diameter"
+            case canopyDiameter = "canopy_diameter"
+            case estimatedAge = "estimated_age"
+        }
+    }
+
+    private func pushPlantMeasurements(workspaceID: UUID, context: ModelContext) async throws {
+        let pending = try context.fetch(FetchDescriptor<PlantMeasurement>()).filter { $0.syncStatus != .synced }
+        guard !pending.isEmpty else { return }
+        let dtos = pending.compactMap { measurement -> PlantMeasurementDTO? in
+            guard let plantID = measurement.plant?.id else { return nil }
+            return PlantMeasurementDTO(
+                id: measurement.id, workspaceId: workspaceID, plantId: plantID, date: measurement.date,
+                height: measurement.height, trunkCircumference: measurement.trunkCircumference,
+                trunkDiameter: measurement.trunkDiameter, canopyDiameter: measurement.canopyDiameter,
+                estimatedAge: measurement.estimatedAge, notes: measurement.notes
+            )
+        }
+        guard !dtos.isEmpty else { return }
+        try await AuthService.client.from("plant_measurements").upsert(dtos).execute()
+        for measurement in pending where measurement.plant != nil { measurement.syncStatus = .synced }
+    }
+
+    // MARK: - Tree inspections
+    // Pushed before plant photos: a photo can reference the inspection
+    // it was taken during, and that foreign key needs the inspection
+    // row to already exist.
+
+    private struct TreeInspectionDTO: Encodable {
+        var id: UUID
+        var workspaceId: UUID
+        var plantId: UUID
+        var date: Date
+        var generalCondition: String
+        var stability: String
+        var deadWood: String
+        var cavities: String
+        var fungi: String
+        var parasites: String
+        var trunkDefects: String
+        var canopyNotes: String
+        var notes: String
+        var result: TreeInspectionResult
+        var updatedAt: Date
+
+        enum CodingKeys: String, CodingKey {
+            case id
+            case workspaceId = "workspace_id"
+            case plantId = "plant_id"
+            case date, notes, result
+            case generalCondition = "general_condition"
+            case stability
+            case deadWood = "dead_wood"
+            case cavities, fungi, parasites
+            case trunkDefects = "trunk_defects"
+            case canopyNotes = "canopy_notes"
+            case updatedAt = "updated_at"
+        }
+    }
+
+    private func pushTreeInspections(workspaceID: UUID, context: ModelContext) async throws {
+        let pending = try context.fetch(FetchDescriptor<TreeInspection>()).filter { $0.syncStatus != .synced }
+        guard !pending.isEmpty else { return }
+        let dtos = pending.compactMap { inspection -> TreeInspectionDTO? in
+            guard let plantID = inspection.plant?.id else { return nil }
+            return TreeInspectionDTO(
+                id: inspection.id, workspaceId: workspaceID, plantId: plantID, date: inspection.date,
+                generalCondition: inspection.generalCondition, stability: inspection.stability,
+                deadWood: inspection.deadWood, cavities: inspection.cavities, fungi: inspection.fungi,
+                parasites: inspection.parasites, trunkDefects: inspection.trunkDefects,
+                canopyNotes: inspection.canopyNotes, notes: inspection.notes, result: inspection.result,
+                updatedAt: inspection.updatedAt ?? .now
+            )
+        }
+        guard !dtos.isEmpty else { return }
+        try await AuthService.client.from("tree_inspections").upsert(dtos).execute()
+        for inspection in pending where inspection.plant != nil { inspection.syncStatus = .synced }
+    }
+
     // MARK: - Plant photos (Évolution gallery)
 
     private struct PlantPhotoDTO: Encodable {
@@ -876,6 +1067,7 @@ final class SyncEngine: ObservableObject {
         var thumbnailStoragePath: String
         var date: Date
         var notes: String
+        var treeInspectionId: UUID?
 
         enum CodingKeys: String, CodingKey {
             case id
@@ -883,6 +1075,7 @@ final class SyncEngine: ObservableObject {
             case storagePath = "storage_path"
             case thumbnailStoragePath = "thumbnail_storage_path"
             case date, notes
+            case treeInspectionId = "tree_inspection_id"
         }
     }
 
@@ -898,7 +1091,8 @@ final class SyncEngine: ObservableObject {
             try await uploadPhoto(photo.thumbnailData, path: thumbnailPath)
             dtos.append(PlantPhotoDTO(
                 id: photo.id, plantId: plantID, storagePath: path,
-                thumbnailStoragePath: thumbnailPath, date: photo.date, notes: photo.notes
+                thumbnailStoragePath: thumbnailPath, date: photo.date, notes: photo.notes,
+                treeInspectionId: photo.treeInspection?.id
             ))
         }
         guard !dtos.isEmpty else { return }
