@@ -1,0 +1,70 @@
+name: Check TestFlight Status
+
+on:
+  workflow_dispatch:
+
+jobs:
+  check:
+    runs-on: macos-latest
+
+    steps:
+      - name: Install PyJWT
+        run: pip3 install --quiet pyjwt cryptography
+
+      - name: Write query script
+        run: |
+          cat > "$RUNNER_TEMP/check_status.py" << 'PYEOF'
+          import jwt, time, json, os, urllib.request, urllib.error
+
+          key_id = os.environ["KEY_ID"]
+          issuer_id = os.environ["ISSUER_ID"]
+          key_path = os.environ["KEY_PATH"]
+
+          with open(key_path) as f:
+              private_key = f.read()
+
+          token = jwt.encode(
+              {
+                  "iss": issuer_id,
+                  "iat": int(time.time()),
+                  "exp": int(time.time()) + 1200,
+                  "aud": "appstoreconnect-v1",
+              },
+              private_key,
+              algorithm="ES256",
+              headers={"kid": key_id},
+          )
+
+          def api_get(path):
+              req = urllib.request.Request(
+                  f"https://api.appstoreconnect.apple.com/v1/{path}",
+                  headers={"Authorization": f"Bearer {token}"},
+              )
+              try:
+                  with urllib.request.urlopen(req) as resp:
+                      return json.loads(resp.read())
+              except urllib.error.HTTPError as e:
+                  print(f"HTTP {e.code}: {e.read().decode()}")
+                  raise
+
+          print("=== App ===")
+          apps = api_get("apps?filter[bundleId]=com.oasisrarecare.app")
+          print(json.dumps(apps, indent=2))
+
+          if apps.get("data"):
+              app_id = apps["data"][0]["id"]
+              print(f"\n=== Builds for app {app_id} ===")
+              builds = api_get(f"builds?filter[app]={app_id}&sort=-uploadedDate&limit=10")
+              print(json.dumps(builds, indent=2))
+          else:
+              print("No app found with that bundle ID.")
+          PYEOF
+
+      - name: Query App Store Connect
+        env:
+          KEY_ID: ${{ secrets.APP_STORE_CONNECT_API_KEY_ID }}
+          ISSUER_ID: ${{ secrets.APP_STORE_CONNECT_API_ISSUER_ID }}
+        run: |
+          echo "${{ secrets.APP_STORE_CONNECT_API_KEY_CONTENT }}" | base64 --decode > "$RUNNER_TEMP/AuthKey.p8"
+          export KEY_PATH="$RUNNER_TEMP/AuthKey.p8"
+          python3 "$RUNNER_TEMP/check_status.py"
