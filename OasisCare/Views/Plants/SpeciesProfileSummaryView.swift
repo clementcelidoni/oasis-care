@@ -81,7 +81,7 @@ struct SpeciesProfileSummaryView: View {
     }
 
     @ViewBuilder
-    private func group(_ title: String, confidence: String?, @ViewBuilder content: () -> some View) -> some View {
+    private func group(_ title: String, confidence: String?, @ViewBuilder content: @escaping () -> some View) -> some View {
         DisclosureGroup {
             VStack(alignment: .leading, spacing: 6) {
                 content()

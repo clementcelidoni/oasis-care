@@ -69,7 +69,7 @@ final class SyncEngine: ObservableObject {
     private func uploadPhoto(_ data: Data, path: String) async throws {
         try await AuthService.client.storage
             .from(Self.photoBucket)
-            .upload(path: path, file: data, options: FileOptions(contentType: "image/jpeg", upsert: true))
+            .upload(path, data: data, options: FileOptions(contentType: "image/jpeg", upsert: true))
     }
 
     private func downloadPhoto(path: String) async throws -> Data {
