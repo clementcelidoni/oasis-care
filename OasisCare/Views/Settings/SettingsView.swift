@@ -16,6 +16,10 @@ struct SettingsView: View {
     @State private var reminderTime = NotificationSettings.defaultReminderTimeToday()
     @State private var isPermissionDeniedAlertPresented = false
     @State private var isSignInPresented = false
+    @State private var isSignOutConfirmationPresented = false
+    @State private var isDeleteAccountConfirmationPresented = false
+    @State private var isDeletingAccount = false
+    @State private var deleteAccountError: String?
 
     var body: some View {
         Form {
@@ -26,7 +30,27 @@ struct SettingsView: View {
                         LabeledContent("E-mail", value: email)
                     }
                     Button("Se déconnecter", role: .destructive) {
-                        Task { await authState.signOut() }
+                        isSignOutConfirmationPresented = true
+                    }
+
+                    Button("Supprimer mon compte", role: .destructive) {
+                        deleteAccountError = nil
+                        isDeleteAccountConfirmationPresented = true
+                    }
+                    .disabled(isDeletingAccount)
+
+                    if isDeletingAccount {
+                        HStack {
+                            ProgressView()
+                            Text("Suppression en cours…")
+                                .foregroundStyle(.secondary)
+                        }
+                    }
+
+                    if let deleteAccountError {
+                        Text(deleteAccountError)
+                            .font(.caption)
+                            .foregroundStyle(.red)
                     }
                 case .guest, .loading:
                     Text("Non connecté — vos données restent uniquement sur cet appareil.")
@@ -78,6 +102,46 @@ struct SettingsView: View {
         .sheet(isPresented: $isSignInPresented) {
             EmailSignInView()
         }
+        .confirmationDialog(
+            "Se déconnecter ?",
+            isPresented: $isSignOutConfirmationPresented,
+            titleVisibility: .visible
+        ) {
+            Button("Se déconnecter", role: .destructive) {
+                Task { await authState.signOutClearingLocalData(context: modelContext) }
+            }
+            Button("Annuler", role: .cancel) {}
+        } message: {
+            if pendingSyncCount > 0 {
+                Text("\(pendingSyncCount) élément\(pendingSyncCount > 1 ? "s" : "") en attente de synchronisation \(pendingSyncCount > 1 ? "seront perdus" : "sera perdu") si vous vous déconnectez maintenant. Le reste de vos données restera disponible sur votre compte, mais sera retiré de cet appareil.")
+            } else {
+                Text("Vos données resteront disponibles sur votre compte cloud, mais seront retirées de cet appareil.")
+            }
+        }
+        .confirmationDialog(
+            "Supprimer mon compte ?",
+            isPresented: $isDeleteAccountConfirmationPresented,
+            titleVisibility: .visible
+        ) {
+            Button("Supprimer définitivement", role: .destructive) {
+                Task { await deleteAccount() }
+            }
+            Button("Annuler", role: .cancel) {}
+        } message: {
+            Text("Cela supprimera définitivement : vos jardins, vos végétaux, vos historiques, vos photos cloud et vos paramètres cloud. Cette action est irréversible.")
+        }
+    }
+
+    private func deleteAccount() async {
+        isDeletingAccount = true
+        deleteAccountError = nil
+        do {
+            try await AuthService.deleteAccount()
+            await authState.signOutClearingLocalData(context: modelContext)
+        } catch {
+            deleteAccountError = error.localizedDescription
+        }
+        isDeletingAccount = false
     }
 
     private var cloudSection: some View {
@@ -116,11 +180,14 @@ struct SettingsView: View {
         if syncEngine.isSyncing {
             return "Synchronisation en cours…"
         }
-        let pending = syncEngine.pendingCount(context: modelContext)
-        if pending > 0 {
-            return "\(pending) élément\(pending > 1 ? "s" : "") en attente"
+        if pendingSyncCount > 0 {
+            return "\(pendingSyncCount) élément\(pendingSyncCount > 1 ? "s" : "") en attente"
         }
         return "Synchronisé"
+    }
+
+    private var pendingSyncCount: Int {
+        syncEngine.pendingCount(context: modelContext)
     }
 
     private var statusFooter: String {

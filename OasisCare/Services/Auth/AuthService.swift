@@ -37,6 +37,18 @@ enum AuthService {
         try await client.auth.signOut()
     }
 
+    /// Calls the delete-account Edge Function — real, irreversible deletion
+    /// (Storage photos, all workspace data, the auth user itself), never a
+    /// soft deactivation. Deleting the auth user needs the service_role
+    /// key, which must never be in this app, hence the server-side
+    /// function; see supabase/functions/delete-account.
+    static func deleteAccount() async throws {
+        struct DeleteAccountResponse: Decodable {
+            var success: Bool
+        }
+        let _: DeleteAccountResponse = try await client.functions.invoke("delete-account")
+    }
+
     static var authStateChanges: AsyncStream<(event: AuthChangeEvent, session: Session?)> {
         get async {
             await client.auth.authStateChanges

@@ -1,5 +1,6 @@
 import Combine
 import Foundation
+import SwiftData
 import Supabase
 
 /// Global auth status — loading while the initial session is read from
@@ -35,7 +36,30 @@ final class AuthState: ObservableObject {
         }
     }
 
-    func signOut() async {
+    /// Signs out and wipes local synced data — a signed-out device must
+    /// never keep showing the previous account's plants/gardens/photos to
+    /// whoever uses the app next, per the spec's shared-device concern.
+    /// Callers are responsible for warning the user first if
+    /// SyncEngine.pendingCount is non-zero, since anything unsynced is
+    /// lost here, not just hidden.
+    func signOutClearingLocalData(context: ModelContext) async {
         try? await AuthService.signOut()
+        Self.clearLocalData(context: context)
+    }
+
+    private static func clearLocalData(context: ModelContext) {
+        do {
+            try context.delete(model: CareEvent.self)
+            try context.delete(model: CareSchedule.self)
+            try context.delete(model: PlantPhoto.self)
+            try context.delete(model: Plant.self)
+            try context.delete(model: GardenZone.self)
+            try context.delete(model: Garden.self)
+            try context.delete(model: PendingDeletion.self)
+            try context.save()
+        } catch {
+            // Best-effort: if this fails there's nothing more useful to do
+            // than leave local data as-is until the next attempt.
+        }
     }
 }
