@@ -1,0 +1,247 @@
+import SwiftUI
+import PhotosUI
+import UIKit
+
+/// Photo-based plant identification (spec §30-32, UX flow §53). Doubles
+/// as the "Scanner" tab root and as a sheet presented from the "+"
+/// chooser in PlantListView — both contexts work unmodified since this
+/// view only ever dismisses itself, never assumes who presented it.
+struct ScannerView: View {
+    /// Set only when presented from the "+" chooser, so choosing a
+    /// result and saving closes that whole chain in one go rather than
+    /// leaving the results list showing behind the saved plant's sheet.
+    /// Left nil for the Scanner tab, which has nothing to close.
+    var onSaved: (() -> Void)?
+
+    @ObservedObject private var authState = AuthState.shared
+
+    @State private var photos: [Data] = []
+    @State private var isAnalyzing = false
+    @State private var results: [PlantIdentificationResult]?
+    @State private var analysisError: String?
+    @State private var isPhotoSourceDialogPresented = false
+    @State private var isCameraPresented = false
+    @State private var isPhotosPickerPresented = false
+    @State private var selectedPhotoItem: PhotosPickerItem?
+    @State private var isSignInPresented = false
+    @State private var prefill: PlantPrefill?
+
+    var body: some View {
+        NavigationStack {
+            Group {
+                if case .authenticated = authState.status {
+                    content
+                } else {
+                    signInPrompt
+                }
+            }
+            .navigationTitle("Scanner une plante")
+            .navigationBarTitleDisplayMode(.inline)
+            .confirmationDialog("Ajouter une photo", isPresented: $isPhotoSourceDialogPresented, titleVisibility: .visible) {
+                if UIImagePickerController.isSourceTypeAvailable(.camera) {
+                    Button("Prendre une photo") { isCameraPresented = true }
+                }
+                Button("Choisir dans la photothèque") { isPhotosPickerPresented = true }
+                Button("Annuler", role: .cancel) {}
+            }
+            .photosPicker(isPresented: $isPhotosPickerPresented, selection: $selectedPhotoItem, matching: .images)
+            .fullScreenCover(isPresented: $isCameraPresented) {
+                CameraCaptureView(isPresented: $isCameraPresented) { data in
+                    photos.append(data)
+                }
+                .ignoresSafeArea()
+            }
+            .onChange(of: selectedPhotoItem) { _, newItem in
+                guard let newItem else { return }
+                Task {
+                    if let data = try? await newItem.loadTransferable(type: Data.self) {
+                        photos.append(data)
+                    }
+                    selectedPhotoItem = nil
+                }
+            }
+            .sheet(isPresented: $isSignInPresented) {
+                EmailSignInView()
+            }
+            .sheet(item: $prefill) { prefill in
+                PlantFormView(
+                    plant: nil,
+                    initialScientificName: prefill.scientificName,
+                    initialCommonName: prefill.commonName,
+                    onSaved: onSaved
+                )
+            }
+        }
+    }
+
+    @ViewBuilder
+    private var content: some View {
+        if isAnalyzing {
+            ProgressView("Analyse en cours…")
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
+        } else if let results {
+            resultsList(results)
+        } else {
+            captureView
+        }
+    }
+
+    private var captureView: some View {
+        ScrollView {
+            VStack(spacing: 20) {
+                if photos.isEmpty {
+                    VStack(spacing: 12) {
+                        Image(systemName: "camera.viewfinder")
+                            .font(.system(size: 56))
+                            .foregroundStyle(.secondary)
+                        Text("Prenez 1 à 5 photos de la plante à identifier : la plante entière, une feuille, une fleur…")
+                            .font(.subheadline)
+                            .foregroundStyle(.secondary)
+                            .multilineTextAlignment(.center)
+                            .padding(.horizontal, 32)
+                    }
+                    .padding(.top, 40)
+                } else {
+                    LazyVGrid(columns: [GridItem(.adaptive(minimum: 90), spacing: 8)], spacing: 8) {
+                        ForEach(Array(photos.enumerated()), id: \.offset) { index, data in
+                            thumbnail(data, index: index)
+                        }
+                    }
+                    .padding(.horizontal)
+                }
+
+                if photos.count < PlantIdentificationService.maxImages {
+                    Button {
+                        isPhotoSourceDialogPresented = true
+                    } label: {
+                        Label("Ajouter une photo", systemImage: "plus")
+                    }
+                    .buttonStyle(.bordered)
+                }
+
+                if let analysisError {
+                    Text(analysisError)
+                        .font(.caption)
+                        .foregroundStyle(.red)
+                        .multilineTextAlignment(.center)
+                        .padding(.horizontal, 32)
+                }
+
+                if !photos.isEmpty {
+                    Button {
+                        Task { await analyze() }
+                    } label: {
+                        Label("Analyser \(photos.count) photo\(photos.count > 1 ? "s" : "")", systemImage: "sparkles")
+                            .frame(maxWidth: .infinity)
+                    }
+                    .buttonStyle(.borderedProminent)
+                    .padding(.horizontal)
+                }
+            }
+            .padding(.vertical)
+        }
+    }
+
+    private func thumbnail(_ data: Data, index: Int) -> some View {
+        ZStack(alignment: .topTrailing) {
+            if let uiImage = UIImage(data: data) {
+                Image(uiImage: uiImage)
+                    .resizable()
+                    .scaledToFill()
+                    .frame(width: 90, height: 90)
+                    .clipShape(RoundedRectangle(cornerRadius: 10))
+            }
+            Button {
+                photos.remove(at: index)
+            } label: {
+                Image(systemName: "xmark.circle.fill")
+                    .foregroundStyle(.white, .black.opacity(0.6))
+            }
+            .padding(4)
+        }
+    }
+
+    private func resultsList(_ results: [PlantIdentificationResult]) -> some View {
+        List {
+            Section {
+                ForEach(results) { result in
+                    Button {
+                        prefill = PlantPrefill(scientificName: result.scientificName, commonName: result.commonNames.first)
+                    } label: {
+                        resultRow(result)
+                    }
+                    .buttonStyle(.plain)
+                }
+            } header: {
+                Text("Résultats")
+            } footer: {
+                Text("Choisissez la correspondance qui vous semble la plus probable. Vous pourrez toujours corriger le nom ensuite.")
+            }
+
+            Section {
+                Button("Reprendre des photos", role: .cancel) {
+                    self.results = nil
+                    photos = []
+                }
+            }
+        }
+    }
+
+    private func resultRow(_ result: PlantIdentificationResult) -> some View {
+        HStack {
+            VStack(alignment: .leading, spacing: 4) {
+                Text(result.scientificName)
+                    .font(.body.italic())
+                if let commonName = result.commonNames.first {
+                    Text(commonName)
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+                if let family = result.family {
+                    Text(family)
+                        .font(.caption2)
+                        .foregroundStyle(.secondary)
+                }
+            }
+            Spacer()
+            Text("\(result.scorePercent) %")
+                .font(.subheadline.weight(.semibold))
+                .foregroundStyle(result.scorePercent >= 60 ? .green : .orange)
+        }
+        .padding(.vertical, 4)
+    }
+
+    private var signInPrompt: some View {
+        VStack(spacing: 16) {
+            Image(systemName: "sparkles")
+                .font(.system(size: 48))
+                .foregroundStyle(.secondary)
+            Text("Identification par IA")
+                .font(.title3.weight(.semibold))
+            Text("Connectez-vous pour identifier vos plantes par photo. Vous pouvez continuer à utiliser Oasis Care sans compte pour tout le reste.")
+                .font(.subheadline)
+                .foregroundStyle(.secondary)
+                .multilineTextAlignment(.center)
+                .padding(.horizontal, 32)
+            Button("Se connecter") { isSignInPresented = true }
+                .buttonStyle(.borderedProminent)
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+    }
+
+    private func analyze() async {
+        isAnalyzing = true
+        analysisError = nil
+        do {
+            let captured = photos.map { PlantIdentificationService.CapturedPhoto(imageData: $0, organ: .auto) }
+            results = try await PlantIdentificationService.identify(captured)
+            if results?.isEmpty == true {
+                analysisError = "Aucune correspondance trouvée. Essayez avec d'autres photos, mieux cadrées ou mieux éclairées."
+                results = nil
+            }
+        } catch {
+            analysisError = error.localizedDescription
+        }
+        isAnalyzing = false
+    }
+}

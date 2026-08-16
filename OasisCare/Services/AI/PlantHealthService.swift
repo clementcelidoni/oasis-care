@@ -1,16 +1,14 @@
-import UIKit
+import Foundation
 
 /// Calls the diagnose-plant-problem Edge Function — spec §43-45.
 enum PlantHealthService {
     static let maxImages = 4
 
-    static func diagnose(images: [UIImage], context: PlantAIContext) async throws -> PlantDiagnosis {
+    /// `images` are raw JPEG bytes, as produced by CameraCaptureView.
+    static func diagnose(images: [Data], context: PlantAIContext) async throws -> PlantDiagnosis {
         var encoded: [String] = []
-        for image in images.prefix(maxImages) {
-            guard
-                let jpegData = image.jpegData(compressionQuality: 0.9),
-                let processed = ImageProcessing.prepareForStorage(jpegData)
-            else { continue }
+        for imageData in images.prefix(maxImages) {
+            guard let processed = ImageProcessing.prepareForStorage(imageData) else { continue }
             encoded.append(processed.detailData.base64EncodedString())
         }
         guard !encoded.isEmpty else { throw AIServiceError.noUsablePhoto }

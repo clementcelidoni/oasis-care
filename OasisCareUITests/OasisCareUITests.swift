@@ -58,6 +58,7 @@ final class OasisCareUITests: XCTestCase {
         XCTContext.runActivity(named: "Ajouter un végétal dans ce jardin et cette zone") { _ in
             app.tabBars.buttons["Végétaux"].tap()
             app.buttons["addPlantButton"].tap()
+            app.buttons["✏️ Saisie entièrement manuelle"].tap()
 
             let customNameField = app.textFields["Nom personnalisé"]
             XCTAssertTrue(customNameField.waitForExistence(timeout: 10))

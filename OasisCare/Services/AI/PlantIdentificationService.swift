@@ -1,4 +1,4 @@
-import UIKit
+import Foundation
 
 /// Calls the identify-plant Edge Function (Pl@ntNet) — spec §30-31.
 enum PlantIdentificationService {
@@ -9,7 +9,10 @@ enum PlantIdentificationService {
     }
 
     struct CapturedPhoto {
-        var image: UIImage
+        /// Raw JPEG bytes, as produced by CameraCaptureView — matches
+        /// ImageProcessing.prepareForStorage's input type directly, no
+        /// UIImage round-trip needed.
+        var imageData: Data
         var organ: Organ
     }
 
@@ -17,10 +20,7 @@ enum PlantIdentificationService {
         var images: [String] = []
         var organs: [String] = []
         for photo in photos.prefix(maxImages) {
-            guard
-                let jpegData = photo.image.jpegData(compressionQuality: 0.9),
-                let processed = ImageProcessing.prepareForStorage(jpegData)
-            else { continue }
+            guard let processed = ImageProcessing.prepareForStorage(photo.imageData) else { continue }
             images.append(processed.detailData.base64EncodedString())
             organs.append(photo.organ.rawValue)
         }

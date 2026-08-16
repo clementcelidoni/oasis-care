@@ -20,7 +20,7 @@ struct RootTabView: View {
                 GardenListView()
                     .tabItem { Label("Jardins", systemImage: "map.fill") }
 
-                ScannerPlaceholderView()
+                ScannerView()
                     .tabItem { Label("Scanner", systemImage: "camera.viewfinder") }
 
                 PlanningView()

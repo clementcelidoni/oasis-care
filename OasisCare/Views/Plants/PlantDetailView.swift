@@ -8,12 +8,16 @@ struct PlantDetailView: View {
         case edit
         case addEvent
         case configureSchedule(CareEventType)
+        case assistant
+        case diagnosis
 
         var id: String {
             switch self {
             case .edit: return "edit"
             case .addEvent: return "addEvent"
             case .configureSchedule(let type): return "configureSchedule-\(type.rawValue)"
+            case .assistant: return "assistant"
+            case .diagnosis: return "diagnosis"
             }
         }
     }
@@ -79,6 +83,7 @@ struct PlantDetailView: View {
             VStack(alignment: .leading, spacing: 24) {
                 header
                 quickActions
+                aiSection
                 upcomingCare
                 if !plant.photos.isEmpty {
                     evolutionSection
@@ -126,6 +131,10 @@ struct PlantDetailView: View {
                 AddCareEventSheet(plants: [plant])
             case .configureSchedule(let type):
                 ConfigureScheduleSheet(plant: plant, type: type)
+            case .assistant:
+                PlantAssistantView(plant: plant)
+            case .diagnosis:
+                PlantDiagnosisView(plant: plant)
             }
         }
         .onChange(of: selectedPhotoItem) { _, newItem in
@@ -379,6 +388,58 @@ struct PlantDetailView: View {
         }
     }
 
+    private var sortedAIAnalyses: [AIAnalysis] {
+        plant.aiAnalyses.sorted { $0.date > $1.date }
+    }
+
+    private var aiSection: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            Text("✨ Oasis AI")
+                .font(.headline)
+
+            HStack(spacing: 12) {
+                Button {
+                    activeSheet = .assistant
+                } label: {
+                    ActionButtonLabel(title: "Assistant", icon: "bubble.left.and.bubble.right", tint: .purple)
+                }
+                .buttonStyle(.plain)
+                .accessibilityIdentifier("actionAssistant")
+
+                Button {
+                    activeSheet = .diagnosis
+                } label: {
+                    ActionButtonLabel(title: "Diagnostiquer", icon: "stethoscope", tint: .orange)
+                }
+                .buttonStyle(.plain)
+                .accessibilityIdentifier("actionDiagnose")
+            }
+
+            if let speciesProfile = plant.speciesProfile, let payload = speciesProfile.decodedPayload() {
+                DisclosureGroup("Fiche espèce") {
+                    SpeciesProfileSummaryView(payload: payload)
+                        .padding(.top, 4)
+                }
+                .font(.subheadline.weight(.medium))
+            }
+
+            if !sortedAIAnalyses.isEmpty {
+                DisclosureGroup("Historique IA (\(sortedAIAnalyses.count))") {
+                    VStack(alignment: .leading, spacing: 0) {
+                        ForEach(Array(sortedAIAnalyses.prefix(10).enumerated()), id: \.element.id) { index, analysis in
+                            AIAnalysisRow(analysis: analysis)
+                            if index < min(sortedAIAnalyses.count, 10) - 1 {
+                                Divider()
+                            }
+                        }
+                    }
+                    .padding(.top, 4)
+                }
+                .font(.subheadline.weight(.medium))
+            }
+        }
+    }
+
     private var notesSection: some View {
         VStack(alignment: .leading, spacing: 8) {
             Text("Notes")
@@ -533,6 +594,34 @@ private struct PhotoEntryRow: View {
             .contentShape(Rectangle())
         }
         .buttonStyle(.plain)
+    }
+}
+
+private struct AIAnalysisRow: View {
+    var analysis: AIAnalysis
+
+    var body: some View {
+        HStack(alignment: .top, spacing: 12) {
+            Image(systemName: analysis.type.icon)
+                .foregroundStyle(.purple)
+                .frame(width: 24)
+
+            VStack(alignment: .leading, spacing: 2) {
+                Text(analysis.type.displayName)
+                    .font(.caption.weight(.medium))
+                Text(analysis.summary)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .lineLimit(3)
+            }
+
+            Spacer()
+
+            Text(DateFormatting.shortDate(analysis.date))
+                .font(.caption2)
+                .foregroundStyle(.secondary)
+        }
+        .padding(.vertical, 6)
     }
 }
 

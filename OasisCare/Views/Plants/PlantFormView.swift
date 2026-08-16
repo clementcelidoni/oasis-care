@@ -4,10 +4,16 @@ import SwiftData
 struct PlantFormView: View {
     @Environment(\.modelContext) private var modelContext
     @Environment(\.dismiss) private var dismiss
+    @ObservedObject private var authState = AuthState.shared
 
     @Query(sort: \Garden.name) private var gardens: [Garden]
+    @Query private var existingSpeciesProfiles: [SpeciesProfile]
 
     var plant: Plant?
+    /// Called after a successful save, in addition to dismissing this
+    /// view — lets ScannerView/PlantNameSearchView close their own
+    /// picker sheet too instead of leaving the user to dismiss twice.
+    var onSaved: (() -> Void)?
 
     @State private var customName: String
     @State private var commonName: String
@@ -18,11 +24,22 @@ struct PlantFormView: View {
     @State private var selectedGarden: Garden?
     @State private var selectedZone: GardenZone?
 
-    init(plant: Plant?) {
+    @State private var isCompletingProfile = false
+    @State private var completionError: String?
+    @State private var fetchedProfile: SpeciesProfilePayload?
+    @State private var fetchedProfileJSON: Data?
+    @State private var applySuggestedProgram = true
+    @State private var wateringDays: Int?
+    @State private var fertilizingDays: Int?
+    @State private var rotationDays: Int?
+    @State private var isSignInPresented = false
+
+    init(plant: Plant?, initialScientificName: String? = nil, initialCommonName: String? = nil, onSaved: (() -> Void)? = nil) {
         self.plant = plant
-        _customName = State(initialValue: plant?.customName ?? "")
-        _commonName = State(initialValue: plant?.commonName ?? "")
-        _scientificName = State(initialValue: plant?.scientificName ?? "")
+        self.onSaved = onSaved
+        _customName = State(initialValue: plant?.customName ?? initialCommonName ?? initialScientificName ?? "")
+        _commonName = State(initialValue: plant?.commonName ?? initialCommonName ?? "")
+        _scientificName = State(initialValue: plant?.scientificName ?? initialScientificName ?? "")
         _type = State(initialValue: plant?.type ?? .houseplant)
         _isIndoor = State(initialValue: plant?.isIndoor ?? true)
         _notes = State(initialValue: plant?.notes ?? "")
@@ -46,6 +63,19 @@ struct PlantFormView: View {
                     TextField("Nom commun", text: $commonName)
                     TextField("Nom scientifique", text: $scientificName)
                         .italic()
+                }
+
+                if plant == nil {
+                    aiCompletionSection
+                }
+
+                if let fetchedProfile {
+                    Section("Fiche espèce (IA)") {
+                        SpeciesProfileSummaryView(payload: fetchedProfile)
+                    }
+                    if hasSuggestedProgram {
+                        suggestedProgramSection
+                    }
                 }
 
                 Section("Catégorie") {
@@ -104,11 +134,109 @@ struct PlantFormView: View {
                     self.selectedZone = nil
                 }
             }
+            .sheet(isPresented: $isSignInPresented) {
+                EmailSignInView()
+            }
         }
     }
 
+    // MARK: - AI completion
+
+    private var hasSuggestedProgram: Bool {
+        wateringDays != nil || fertilizingDays != nil || rotationDays != nil
+    }
+
+    @ViewBuilder
+    private var aiCompletionSection: some View {
+        Section {
+            if isCompletingProfile {
+                HStack {
+                    ProgressView()
+                    Text("Complétion en cours…")
+                        .foregroundStyle(.secondary)
+                }
+            } else if fetchedProfile == nil {
+                Button {
+                    Task { await completeWithAI() }
+                } label: {
+                    Label("Compléter avec Oasis AI", systemImage: "sparkles")
+                }
+                .disabled(scientificName.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+            }
+            if let completionError {
+                Text(completionError)
+                    .font(.caption)
+                    .foregroundStyle(.red)
+            }
+        } footer: {
+            if fetchedProfile == nil {
+                Text("Renseignez un nom scientifique pour laisser l'IA proposer le reste de la fiche.")
+            }
+        }
+    }
+
+    private var suggestedProgramSection: some View {
+        Section {
+            Toggle("Appliquer le programme suggéré", isOn: $applySuggestedProgram)
+            if applySuggestedProgram {
+                if wateringDays != nil {
+                    Stepper(
+                        "💧 Arrosage : tous les \(wateringDays ?? 7) j",
+                        value: Binding(get: { wateringDays ?? 7 }, set: { wateringDays = $0 }),
+                        in: 1...90
+                    )
+                }
+                if fertilizingDays != nil {
+                    Stepper(
+                        "🧪 Fertilisation : tous les \(fertilizingDays ?? 21) j",
+                        value: Binding(get: { fertilizingDays ?? 21 }, set: { fertilizingDays = $0 }),
+                        in: 1...180
+                    )
+                }
+                if rotationDays != nil {
+                    Stepper(
+                        "🔄 Rotation : tous les \(rotationDays ?? 14) j",
+                        value: Binding(get: { rotationDays ?? 14 }, set: { rotationDays = $0 }),
+                        in: 1...90
+                    )
+                }
+            }
+        } header: {
+            Text("Programme de soins suggéré")
+        } footer: {
+            Text("Ces rappels pourront être modifiés à tout moment depuis la fiche du végétal.")
+        }
+    }
+
+    private func completeWithAI() async {
+        guard case .authenticated = authState.status else {
+            isSignInPresented = true
+            return
+        }
+        isCompletingProfile = true
+        completionError = nil
+        do {
+            let trimmedScientificName = scientificName.trimmingCharacters(in: .whitespacesAndNewlines)
+            let result = try await PlantInformationService.complete(scientificName: trimmedScientificName)
+            fetchedProfile = result.profile
+            fetchedProfileJSON = result.profileJSON
+            wateringDays = result.profile.suggestedCareProgram?.wateringFrequencyDays
+            fertilizingDays = result.profile.suggestedCareProgram?.fertilizingFrequencyDays
+            rotationDays = result.profile.suggestedCareProgram?.rotationFrequencyDays
+            if commonName.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty, let aiCommonName = result.profile.commonName {
+                commonName = aiCommonName
+            }
+        } catch {
+            completionError = error.localizedDescription
+        }
+        isCompletingProfile = false
+    }
+
+    // MARK: - Save
+
     private func save() {
         let trimmedName = customName.trimmingCharacters(in: .whitespacesAndNewlines)
+        let targetPlant: Plant
 
         if let plant {
             plant.customName = trimmedName
@@ -120,6 +248,7 @@ struct PlantFormView: View {
             plant.garden = selectedGarden
             plant.zone = selectedZone
             plant.markDirty()
+            targetPlant = plant
         } else {
             let newPlant = Plant(
                 customName: trimmedName,
@@ -134,8 +263,55 @@ struct PlantFormView: View {
             modelContext.insert(newPlant)
             selectedGarden?.plants.append(newPlant)
             selectedZone?.plants.append(newPlant)
+            targetPlant = newPlant
+        }
+
+        if let fetchedProfile, let fetchedProfileJSON {
+            attachSpeciesProfile(fetchedProfile, json: fetchedProfileJSON, to: targetPlant)
+            if applySuggestedProgram {
+                applySuggestedSchedules(to: targetPlant)
+            }
         }
 
         dismiss()
+        onSaved?()
+    }
+
+    private func attachSpeciesProfile(_ payload: SpeciesProfilePayload, json: Data, to plant: Plant) {
+        let name = payload.scientificName ?? scientificName
+        let normalized = SpeciesProfile.normalize(name)
+
+        let profile: SpeciesProfile
+        if let existing = existingSpeciesProfiles.first(where: { $0.normalizedName == normalized }) {
+            existing.profileJSON = json
+            existing.generatedAt = .now
+            profile = existing
+        } else {
+            let newProfile = SpeciesProfile(scientificName: name, normalizedName: normalized, profileJSON: json)
+            modelContext.insert(newProfile)
+            profile = newProfile
+        }
+        plant.speciesProfile = profile
+
+        let analysis = AIAnalysis(
+            plant: plant,
+            type: .profileCompletion,
+            summary: "Fiche complétée automatiquement pour \(name).",
+            provider: "openai",
+            confidence: .unknown
+        )
+        modelContext.insert(analysis)
+    }
+
+    private func applySuggestedSchedules(to plant: Plant) {
+        if let wateringDays {
+            CareScheduleEngine.setSchedule(.watering, frequencyDays: wateringDays, for: plant, in: modelContext)
+        }
+        if let fertilizingDays {
+            CareScheduleEngine.setSchedule(.fertilizing, frequencyDays: fertilizingDays, for: plant, in: modelContext)
+        }
+        if let rotationDays {
+            CareScheduleEngine.setSchedule(.rotating, frequencyDays: rotationDays, for: plant, in: modelContext)
+        }
     }
 }

@@ -2,6 +2,11 @@ import SwiftUI
 import SwiftData
 
 struct PlantListView: View {
+    private enum AddPlantSheet: Identifiable {
+        case scanner, search, manual
+        var id: Self { self }
+    }
+
     /// When set, the list is scoped to this garden's plants and starts
     /// pre-selected for bulk action — the entry point from GardenDetailView's
     /// "Sélectionner les plantes à arroser". When nil, this is the normal
@@ -16,7 +21,8 @@ struct PlantListView: View {
 
     @State private var searchText = ""
     @State private var selectedType: PlantType?
-    @State private var isPresentingAddPlant = false
+    @State private var isAddPlantChooserPresented = false
+    @State private var addPlantSheet: AddPlantSheet?
     @State private var editMode: EditMode
     @State private var selectedPlantIDs = Set<UUID>()
     @State private var isBulkAddEventPresented = false
@@ -125,7 +131,7 @@ struct PlantListView: View {
                     ToolbarItem(placement: .topBarTrailing) {
                         if !editMode.isEditing {
                             Button {
-                                isPresentingAddPlant = true
+                                isAddPlantChooserPresented = true
                             } label: {
                                 Label("Ajouter", systemImage: "plus")
                             }
@@ -137,8 +143,21 @@ struct PlantListView: View {
             .navigationDestination(for: Plant.self) { plant in
                 PlantDetailView(plant: plant)
             }
-            .sheet(isPresented: $isPresentingAddPlant) {
-                PlantFormView(plant: nil)
+            .confirmationDialog("Ajouter un végétal", isPresented: $isAddPlantChooserPresented, titleVisibility: .visible) {
+                Button("📸 Scanner avec l'IA") { addPlantSheet = .scanner }
+                Button("🔎 Rechercher par nom") { addPlantSheet = .search }
+                Button("✏️ Saisie entièrement manuelle") { addPlantSheet = .manual }
+                Button("Annuler", role: .cancel) {}
+            }
+            .sheet(item: $addPlantSheet) { sheet in
+                switch sheet {
+                case .scanner:
+                    ScannerView(onSaved: { addPlantSheet = nil })
+                case .search:
+                    PlantNameSearchView(onSaved: { addPlantSheet = nil })
+                case .manual:
+                    PlantFormView(plant: nil)
+                }
             }
             .sheet(isPresented: $isBulkAddEventPresented) {
                 AddCareEventSheet(plants: selectedPlants)
