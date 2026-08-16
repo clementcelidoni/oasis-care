@@ -84,7 +84,7 @@ Deno.serve(async (req: Request) => {
 
   const url =
     `https://my-api.plantnet.org/v2/identify/${PLANTNET_PROJECT}` +
-    `?api-key=${encodeURIComponent(plantnetKey)}&nb-results=3`;
+    `?api-key=${encodeURIComponent(plantnetKey)}&nb-results=3&lang=fr`;
 
   let plantnetResponse: Response;
   try {
