@@ -145,8 +145,6 @@ final class OasisCareUITests: XCTestCase {
 
             let libraryOption = app.buttons["Choisir dans la photothèque"]
             XCTAssertTrue(libraryOption.waitForExistence(timeout: 10))
-
-            app.buttons["Annuler"].tap()
         }
     }
 }
