@@ -7,6 +7,7 @@ import UIKit
 struct SettingsView: View {
     @Environment(\.modelContext) private var modelContext
     @ObservedObject private var authState = AuthState.shared
+    @ObservedObject private var syncEngine = SyncEngine.shared
 
     @AppStorage(NotificationSettings.notificationsEnabledKey) private var notificationsEnabled = false
     @AppStorage(NotificationSettings.remindOverdueKey) private var remindOverdue = true
@@ -36,6 +37,10 @@ struct SettingsView: View {
                     }
                     .accessibilityIdentifier("settingsSignInButton")
                 }
+            }
+
+            if case .authenticated = authState.status {
+                cloudSection
             }
 
             Section {
@@ -73,6 +78,49 @@ struct SettingsView: View {
         .sheet(isPresented: $isSignInPresented) {
             EmailSignInView()
         }
+    }
+
+    private var cloudSection: some View {
+        Section("Cloud") {
+            HStack {
+                Text("État")
+                Spacer()
+                Text(cloudStatusText)
+                    .foregroundStyle(.secondary)
+            }
+
+            if let lastSyncedAt = syncEngine.lastSyncedAt {
+                HStack {
+                    Text("Dernière synchronisation")
+                    Spacer()
+                    Text(lastSyncedAt, format: .dateTime.day().month().hour().minute())
+                        .foregroundStyle(.secondary)
+                }
+            }
+
+            if let error = syncEngine.lastSyncError {
+                Text(error)
+                    .font(.caption)
+                    .foregroundStyle(.red)
+            }
+
+            Button("Synchroniser maintenant") {
+                Task { await syncEngine.syncIfPossible(context: modelContext) }
+            }
+            .disabled(syncEngine.isSyncing)
+            .accessibilityIdentifier("syncNowButton")
+        }
+    }
+
+    private var cloudStatusText: String {
+        if syncEngine.isSyncing {
+            return "Synchronisation en cours…"
+        }
+        let pending = syncEngine.pendingCount(context: modelContext)
+        if pending > 0 {
+            return "\(pending) élément\(pending > 1 ? "s" : "") en attente"
+        }
+        return "Synchronisé"
     }
 
     private var statusFooter: String {

@@ -6,7 +6,11 @@ import SwiftUI
 /// routed back through Welcome just because they're signed out — per the
 /// spec, an accountless user keeps full access to local functionality.
 struct RootContainerView: View {
+    @Environment(\.modelContext) private var modelContext
+    @Environment(\.scenePhase) private var scenePhase
+
     @ObservedObject private var authState = AuthState.shared
+    @ObservedObject private var syncEngine = SyncEngine.shared
     @AppStorage("hasSeenWelcome") private var hasSeenWelcome = false
 
     var body: some View {
@@ -28,6 +32,14 @@ struct RootContainerView: View {
         }
         .task {
             authState.start()
+        }
+        .onChange(of: authState.status) { _, newStatus in
+            guard case .authenticated = newStatus else { return }
+            Task { await syncEngine.syncIfPossible(context: modelContext) }
+        }
+        .onChange(of: scenePhase) { _, newPhase in
+            guard newPhase == .active else { return }
+            Task { await syncEngine.syncIfPossible(context: modelContext) }
         }
     }
 }
