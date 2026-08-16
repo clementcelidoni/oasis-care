@@ -28,6 +28,7 @@ struct PlantListView: View {
     @State private var isBulkAddEventPresented = false
     @State private var isBulkChangeZonePresented = false
     @State private var plantPendingDeletion: Plant?
+    @State private var isNaturalLanguageSearchPresented = false
 
     private var isFocusedSelectionMode: Bool { gardenFilter != nil }
 
@@ -131,6 +132,16 @@ struct PlantListView: View {
                     ToolbarItem(placement: .topBarTrailing) {
                         if !editMode.isEditing {
                             Button {
+                                isNaturalLanguageSearchPresented = true
+                            } label: {
+                                Label("Recherche IA", systemImage: "sparkles")
+                            }
+                            .accessibilityIdentifier("naturalLanguageSearchEntryButton")
+                        }
+                    }
+                    ToolbarItem(placement: .topBarTrailing) {
+                        if !editMode.isEditing {
+                            Button {
                                 isAddPlantChooserPresented = true
                             } label: {
                                 Label("Ajouter", systemImage: "plus")
@@ -164,6 +175,9 @@ struct PlantListView: View {
             }
             .sheet(isPresented: $isBulkChangeZonePresented) {
                 BulkChangeZoneSheet(plants: selectedPlants)
+            }
+            .sheet(isPresented: $isNaturalLanguageSearchPresented) {
+                NaturalLanguageSearchSheet(plants: plants)
             }
             .onChange(of: isBulkAddEventPresented) { _, isPresented in
                 if !isPresented { finishBulkAction() }

@@ -11,6 +11,7 @@ struct HomeView: View {
     @Query private var allEvents: [CareEvent]
     @Query private var allPhotos: [PlantPhoto]
     @Query private var allIrrigationEvents: [IrrigationEvent]
+    @Query private var allIrrigationZones: [IrrigationZone]
     @Query(sort: \Garden.name) private var gardens: [Garden]
     @Query private var preferencesQuery: [DashboardPreferences]
 
@@ -49,6 +50,11 @@ struct HomeView: View {
         return allIrrigationEvents.filter { $0.zone?.garden?.id == selectedGarden.id }
     }
 
+    private var irrigationZones: [IrrigationZone] {
+        guard let selectedGarden else { return allIrrigationZones }
+        return allIrrigationZones.filter { $0.garden?.id == selectedGarden.id }
+    }
+
     private func scoped<T>(_ items: [T], plantID: (T) -> UUID?) -> [T] {
         guard selectedGarden != nil else { return items }
         let ids = Set(plants.map(\.id))
@@ -65,7 +71,9 @@ struct HomeView: View {
     private var dueSchedules: [CareSchedule] { schedules.filter { $0.isDue } }
     private var overdueSchedules: [CareSchedule] { schedules.filter { $0.isOverdue } }
     private var monitoredPlants: [Plant] { plants.filter { $0.healthStatus != .healthy } }
-    private var insights: [GardenInsightService.Insight] { GardenInsightService.insights(plants: plants) }
+    private var insights: [GardenInsightService.Insight] {
+        GardenInsightService.insights(plants: plants, irrigationZones: irrigationZones)
+    }
 
     private func dueCount(for type: CareEventType) -> Int {
         dueSchedules.filter { $0.type == type }.count
@@ -227,7 +235,8 @@ struct HomeView: View {
                         todaySchedules: dueSchedules,
                         overdueCount: overdueSchedules.count,
                         insights: insights,
-                        recentEvents: DashboardService.recentActivity(events: events, limit: 15)
+                        recentEvents: DashboardService.recentActivity(events: events, limit: 15),
+                        irrigationEvents: irrigationEvents
                     )
                 )
             }

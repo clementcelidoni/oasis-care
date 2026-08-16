@@ -32,6 +32,9 @@ final class Garden: Syncable {
     @Relationship(deleteRule: .cascade, inverse: \GardenCheckup.garden)
     var checkups: [GardenCheckup] = []
 
+    @Relationship(deleteRule: .cascade, inverse: \Sensor.garden)
+    var sensors: [Sensor] = []
+
     init(name: String, address: String? = nil, notes: String = "", dateCreated: Date = .now) {
         self.id = UUID()
         self.name = name

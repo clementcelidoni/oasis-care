@@ -29,10 +29,15 @@ const MAX_QUESTION_LENGTH = 2000;
 const SYSTEM_PROMPT =
   "Tu es Oasis AI, l'assistant intégré à l'application de jardinage Oasis Care. L'utilisateur te pose " +
   "une question sur l'ensemble d'un jardin (pas une seule plante) ; un résumé de ce jardin (nombre de " +
-  "végétaux par état de santé, tâches du jour, alertes principales, historique récent, météo si " +
-  "connue) t'est fourni ci-dessous. Réponds en français, de façon concise et actionnable — dis quoi " +
-  "faire, pas seulement ce qui existe. Appuie-toi sur le contexte fourni. Si une réponse certaine " +
-  "n'est pas possible avec les informations disponibles, dis-le plutôt que d'inventer.";
+  "végétaux par état de santé, tâches du jour, alertes principales, historique récent, météo, " +
+  "consommation d'eau et arbres/palmiers à inspecter si connus) t'est fourni ci-dessous. Tu dois " +
+  "notamment pouvoir répondre à des questions comme « Que dois-je faire cette semaine ? », « Quels " +
+  "arbres sont à inspecter ? », « Quelles plantes sont en retard ? », « Quels végétaux semblent " +
+  "malades ? » et « Combien d'eau ai-je consommé ? » à partir de ce contexte. Réponds en français, de " +
+  "façon concise et actionnable — dis quoi faire, pas seulement ce qui existe. Appuie-toi sur le " +
+  "contexte fourni. Si une réponse certaine n'est pas possible avec les informations disponibles, " +
+  "dis-le plutôt que d'inventer — par exemple si aucune donnée d'irrigation n'est fournie, dis que tu " +
+  "n'as pas cette information plutôt que de deviner une consommation d'eau.";
 
 interface GardenAIContextDTO {
   gardenName?: string | null;
@@ -46,6 +51,10 @@ interface GardenAIContextDTO {
   topInsights?: string[];
   recentEvents?: string[];
   weather?: { temperatureCelsius?: number | null; condition?: string | null } | null;
+  waterTodayLiters?: number | null;
+  waterWeekLiters?: number | null;
+  waterMonthLiters?: number | null;
+  treesNeedingInspection?: string[] | null;
 }
 interface AssistantRequestBody {
   question?: string;
@@ -125,6 +134,17 @@ function formatContext(context: GardenAIContextDTO | undefined): string {
 
   if (context.weather?.temperatureCelsius != null) {
     lines.push(`Météo : ${context.weather.temperatureCelsius} °C${context.weather.condition ? `, ${context.weather.condition}` : ""}`);
+  }
+
+  if (context.waterTodayLiters != null || context.waterWeekLiters != null || context.waterMonthLiters != null) {
+    lines.push(
+      `Consommation d'eau (irrigation) : ${context.waterTodayLiters ?? 0} L aujourd'hui, ` +
+        `${context.waterWeekLiters ?? 0} L cette semaine, ${context.waterMonthLiters ?? 0} L ce mois-ci`
+    );
+  }
+
+  if (context.treesNeedingInspection?.length) {
+    lines.push(`Arbres/palmiers à inspecter (jamais inspectés ou depuis plus de 6 mois) : ${context.treesNeedingInspection.join(", ")}`);
   }
 
   if (context.topInsights?.length) {

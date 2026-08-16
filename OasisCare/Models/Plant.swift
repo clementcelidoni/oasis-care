@@ -66,6 +66,9 @@ final class Plant: Syncable {
     @Relationship(deleteRule: .cascade, inverse: \GardenCheckupEntry.plant)
     var checkupEntries: [GardenCheckupEntry] = []
 
+    @Relationship(deleteRule: .cascade, inverse: \Sensor.plant)
+    var sensors: [Sensor] = []
+
     init(
         customName: String,
         commonName: String? = nil,
