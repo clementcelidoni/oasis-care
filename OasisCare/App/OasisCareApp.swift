@@ -28,7 +28,7 @@ struct OasisCareApp: App {
 
     var body: some Scene {
         WindowGroup {
-            RootTabView()
+            RootContainerView()
         }
         .modelContainer(sharedModelContainer)
     }

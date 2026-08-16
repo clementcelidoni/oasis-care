@@ -18,6 +18,13 @@ final class OasisCareUITests: XCTestCase {
         let zoneName = "Zone Test \(suffix)"
         let plantName = "Plante Test \(suffix)"
 
+        // A fresh install (every CI run) lands on Welcome first - Phase 3
+        // added accounts, but the app must stay fully usable without one.
+        let continueAsGuestButton = app.buttons["continueAsGuestButton"]
+        if continueAsGuestButton.waitForExistence(timeout: 10) {
+            continueAsGuestButton.tap()
+        }
+
         XCTAssertTrue(app.tabBars.buttons["Jardins"].waitForExistence(timeout: 10))
 
         XCTContext.runActivity(named: "Créer un jardin") { _ in

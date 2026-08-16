@@ -1,10 +1,12 @@
 import SwiftUI
 import SwiftData
+import Supabase
 import UserNotifications
 import UIKit
 
 struct SettingsView: View {
     @Environment(\.modelContext) private var modelContext
+    @ObservedObject private var authState = AuthState.shared
 
     @AppStorage(NotificationSettings.notificationsEnabledKey) private var notificationsEnabled = false
     @AppStorage(NotificationSettings.remindOverdueKey) private var remindOverdue = true
@@ -12,9 +14,30 @@ struct SettingsView: View {
     @State private var authorizationStatus: UNAuthorizationStatus = .notDetermined
     @State private var reminderTime = NotificationSettings.defaultReminderTimeToday()
     @State private var isPermissionDeniedAlertPresented = false
+    @State private var isSignInPresented = false
 
     var body: some View {
         Form {
+            Section("Mon compte") {
+                switch authState.status {
+                case .authenticated:
+                    if let email = authState.session?.user.email {
+                        LabeledContent("E-mail", value: email)
+                    }
+                    Button("Se déconnecter", role: .destructive) {
+                        Task { await authState.signOut() }
+                    }
+                case .guest, .loading:
+                    Text("Non connecté — vos données restent uniquement sur cet appareil.")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                    Button("Se connecter par e-mail") {
+                        isSignInPresented = true
+                    }
+                    .accessibilityIdentifier("settingsSignInButton")
+                }
+            }
+
             Section {
                 Toggle("Rappels activés", isOn: notificationsBinding)
                     .accessibilityIdentifier("notificationsEnabledToggle")
@@ -46,6 +69,9 @@ struct SettingsView: View {
             Button("Annuler", role: .cancel) {}
         } message: {
             Text("Autorisez les notifications pour Oasis Care dans Réglages pour recevoir vos rappels.")
+        }
+        .sheet(isPresented: $isSignInPresented) {
+            EmailSignInView()
         }
     }
 
