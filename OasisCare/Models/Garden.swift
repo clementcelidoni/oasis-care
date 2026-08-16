@@ -11,6 +11,15 @@ final class Garden: Syncable {
     var syncStatus: SyncStatus?
     var updatedAt: Date?
 
+    /// Spec §16 — optional, manual entry or "use my location" (never
+    /// requested automatically). weatherEnabled gates whether the
+    /// dashboard tries to show a weather card for this garden at all,
+    /// so a garden with coordinates set can still opt out.
+    var latitude: Double?
+    var longitude: Double?
+    var locationName: String?
+    var weatherEnabled: Bool
+
     @Relationship(deleteRule: .cascade, inverse: \GardenZone.garden)
     var zones: [GardenZone] = []
 
@@ -23,7 +32,10 @@ final class Garden: Syncable {
         self.address = address
         self.notes = notes
         self.dateCreated = dateCreated
+        self.weatherEnabled = false
         self.syncStatus = .pendingCreate
         self.updatedAt = .now
     }
+
+    var hasLocation: Bool { latitude != nil && longitude != nil }
 }

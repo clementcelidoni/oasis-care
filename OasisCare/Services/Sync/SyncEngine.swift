@@ -41,6 +41,7 @@ final class SyncEngine: ObservableObject {
             try await pushEvents(context: context)
             try await pushPlantPhotos(workspaceID: workspaceID, context: context)
             try await pushAIAnalyses(context: context)
+            try await pushDashboardPreferences(workspaceID: workspaceID, context: context)
             try await pushPendingDeletions(context: context)
             try context.save()
             lastSyncError = nil
@@ -60,8 +61,9 @@ final class SyncEngine: ObservableObject {
         let events = (try? context.fetch(FetchDescriptor<CareEvent>()))?.filter { $0.syncStatus != .synced }.count ?? 0
         let photos = (try? context.fetch(FetchDescriptor<PlantPhoto>()))?.filter { $0.syncStatus != .synced }.count ?? 0
         let analyses = (try? context.fetch(FetchDescriptor<AIAnalysis>()))?.filter { $0.syncStatus != .synced }.count ?? 0
+        let preferences = (try? context.fetch(FetchDescriptor<DashboardPreferences>()))?.filter { $0.syncStatus != .synced }.count ?? 0
         let deletions = (try? context.fetchCount(FetchDescriptor<PendingDeletion>())) ?? 0
-        return gardens + zones + plants + schedules + events + photos + analyses + deletions
+        return gardens + zones + plants + schedules + events + photos + analyses + preferences + deletions
     }
 
     private static let photoBucket = "plant-photos"
@@ -122,6 +124,10 @@ final class SyncEngine: ObservableObject {
         for row in remoteGardens {
             let garden = Garden(name: row.name, address: row.address, notes: row.notes, dateCreated: row.dateCreated)
             garden.id = row.id
+            garden.latitude = row.latitude
+            garden.longitude = row.longitude
+            garden.locationName = row.locationName
+            garden.weatherEnabled = row.weatherEnabled
             garden.syncStatus = .synced
             garden.updatedAt = row.updatedAt
             context.insert(garden)
@@ -211,6 +217,33 @@ final class SyncEngine: ObservableObject {
             context.insert(analysis)
         }
 
+        // Only pulled if this device has no local row yet — HomeView's
+        // own DashboardService.preferences(in:) fetch-or-create can run
+        // before this restore does, and skipping here (rather than
+        // risking a second local row) is fine: the unique workspace_id
+        // constraint means the next push just reconciles onto the same
+        // cloud row regardless of which device "wins".
+        let hasLocalPreferences = ((try? context.fetchCount(FetchDescriptor<DashboardPreferences>())) ?? 0) > 0
+        if !hasLocalPreferences {
+            let remotePreferences: [DashboardPreferencesRow] = try await AuthService.client.from("dashboard_preferences").select().execute().value
+            if let row = remotePreferences.first {
+                let prefs = DashboardPreferences()
+                prefs.id = row.id
+                prefs.showToday = row.showToday
+                prefs.showAlerts = row.showAlerts
+                prefs.showWeather = row.showWeather
+                prefs.showOasisAI = row.showOasisAI
+                prefs.showWater = row.showWater
+                prefs.showRecentActivity = row.showRecentActivity
+                prefs.showUpcoming = row.showUpcoming
+                prefs.showHealth = row.showHealth
+                prefs.showEvolution = row.showEvolution
+                prefs.syncStatus = .synced
+                prefs.updatedAt = row.updatedAt
+                context.insert(prefs)
+            }
+        }
+
         try context.save()
     }
 
@@ -225,11 +258,18 @@ final class SyncEngine: ObservableObject {
         var address: String?
         var notes: String
         var dateCreated: Date
+        var latitude: Double?
+        var longitude: Double?
+        var locationName: String?
+        var weatherEnabled: Bool
         var updatedAt: Date?
 
         enum CodingKeys: String, CodingKey {
             case id, name, address, notes
             case dateCreated = "date_created"
+            case latitude, longitude
+            case locationName = "location_name"
+            case weatherEnabled = "weather_enabled"
             case updatedAt = "updated_at"
         }
     }
@@ -367,6 +407,34 @@ final class SyncEngine: ObservableObject {
         }
     }
 
+    private struct DashboardPreferencesRow: Decodable {
+        var id: UUID
+        var showToday: Bool
+        var showAlerts: Bool
+        var showWeather: Bool
+        var showOasisAI: Bool
+        var showWater: Bool
+        var showRecentActivity: Bool
+        var showUpcoming: Bool
+        var showHealth: Bool
+        var showEvolution: Bool
+        var updatedAt: Date?
+
+        enum CodingKeys: String, CodingKey {
+            case id
+            case showToday = "show_today"
+            case showAlerts = "show_alerts"
+            case showWeather = "show_weather"
+            case showOasisAI = "show_oasis_ai"
+            case showWater = "show_water"
+            case showRecentActivity = "show_recent_activity"
+            case showUpcoming = "show_upcoming"
+            case showHealth = "show_health"
+            case showEvolution = "show_evolution"
+            case updatedAt = "updated_at"
+        }
+    }
+
     // MARK: - Gardens
 
     private struct GardenDTO: Encodable {
@@ -376,6 +444,10 @@ final class SyncEngine: ObservableObject {
         var address: String?
         var notes: String
         var dateCreated: Date
+        var latitude: Double?
+        var longitude: Double?
+        var locationName: String?
+        var weatherEnabled: Bool
         var updatedAt: Date
 
         enum CodingKeys: String, CodingKey {
@@ -383,6 +455,9 @@ final class SyncEngine: ObservableObject {
             case workspaceId = "workspace_id"
             case name, address, notes
             case dateCreated = "date_created"
+            case latitude, longitude
+            case locationName = "location_name"
+            case weatherEnabled = "weather_enabled"
             case updatedAt = "updated_at"
         }
     }
@@ -393,7 +468,8 @@ final class SyncEngine: ObservableObject {
         let dtos = pending.map {
             GardenDTO(
                 id: $0.id, workspaceId: workspaceID, name: $0.name, address: $0.address,
-                notes: $0.notes, dateCreated: $0.dateCreated, updatedAt: $0.updatedAt ?? .now
+                notes: $0.notes, dateCreated: $0.dateCreated, latitude: $0.latitude, longitude: $0.longitude,
+                locationName: $0.locationName, weatherEnabled: $0.weatherEnabled, updatedAt: $0.updatedAt ?? .now
             )
         }
         try await AuthService.client.from("gardens").upsert(dtos).execute()
@@ -661,6 +737,56 @@ final class SyncEngine: ObservableObject {
         guard !dtos.isEmpty else { return }
         try await AuthService.client.from("ai_analyses").upsert(dtos).execute()
         for analysis in pending where analysis.plant != nil { analysis.syncStatus = .synced }
+    }
+
+    // MARK: - Dashboard preferences
+
+    private struct DashboardPreferencesDTO: Encodable {
+        var id: UUID
+        var workspaceId: UUID
+        var showToday: Bool
+        var showAlerts: Bool
+        var showWeather: Bool
+        var showOasisAI: Bool
+        var showWater: Bool
+        var showRecentActivity: Bool
+        var showUpcoming: Bool
+        var showHealth: Bool
+        var showEvolution: Bool
+        var updatedAt: Date
+
+        enum CodingKeys: String, CodingKey {
+            case id
+            case workspaceId = "workspace_id"
+            case showToday = "show_today"
+            case showAlerts = "show_alerts"
+            case showWeather = "show_weather"
+            case showOasisAI = "show_oasis_ai"
+            case showWater = "show_water"
+            case showRecentActivity = "show_recent_activity"
+            case showUpcoming = "show_upcoming"
+            case showHealth = "show_health"
+            case showEvolution = "show_evolution"
+            case updatedAt = "updated_at"
+        }
+    }
+
+    /// Upserts on workspace_id (unique in the schema), not id — so no
+    /// matter which device pushes first, later pushes for the same
+    /// workspace update that one row instead of creating a duplicate.
+    private func pushDashboardPreferences(workspaceID: UUID, context: ModelContext) async throws {
+        let pending = try context.fetch(FetchDescriptor<DashboardPreferences>()).filter { $0.syncStatus != .synced }
+        guard !pending.isEmpty else { return }
+        let dtos = pending.map { prefs in
+            DashboardPreferencesDTO(
+                id: prefs.id, workspaceId: workspaceID, showToday: prefs.showToday, showAlerts: prefs.showAlerts,
+                showWeather: prefs.showWeather, showOasisAI: prefs.showOasisAI, showWater: prefs.showWater,
+                showRecentActivity: prefs.showRecentActivity, showUpcoming: prefs.showUpcoming,
+                showHealth: prefs.showHealth, showEvolution: prefs.showEvolution, updatedAt: prefs.updatedAt ?? .now
+            )
+        }
+        try await AuthService.client.from("dashboard_preferences").upsert(dtos, onConflict: "workspace_id").execute()
+        for prefs in pending { prefs.syncStatus = .synced }
     }
 
     // MARK: - Pending deletions

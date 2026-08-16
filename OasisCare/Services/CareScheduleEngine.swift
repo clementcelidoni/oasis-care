@@ -142,6 +142,18 @@ enum CareScheduleEngine {
         NotificationService.cancelReminder(for: schedule)
     }
 
+    /// Pushes a schedule's next due date forward by a number of days —
+    /// the only thing SmartWateringService's rain suggestion (spec §20)
+    /// is allowed to do, and only when the user explicitly taps
+    /// "Reporter". Never called automatically: "Ne jamais changer
+    /// silencieusement le planning."
+    static func postpone(_ schedule: CareSchedule, byDays days: Int, plant: Plant) {
+        let base = schedule.nextDueDate ?? .now
+        schedule.nextDueDate = Calendar.current.date(byAdding: .day, value: days, to: base)
+        schedule.markDirty()
+        NotificationService.scheduleReminder(for: schedule, plant: plant)
+    }
+
     /// Adds a photo to a plant's history and sets it as the current main
     /// photo, logging a `.photoUpdate` care event so it shows up in the
     /// timeline alongside watering/fertilizing. Image data is downsized and

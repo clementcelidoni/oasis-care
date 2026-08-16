@@ -46,6 +46,7 @@ targets:
         CFBundleIconName: AppIcon
         ITSAppUsesNonExemptEncryption: false
         NSCameraUsageDescription: "Oasis Care a besoin de l'appareil photo pour prendre des photos de vos végétaux."
+        NSLocationWhenInUseUsageDescription: "Oasis Care peut utiliser votre position pour afficher la météo d'un jardin. Vous pouvez toujours saisir une position manuellement."
         CFBundleURLTypes:
           - CFBundleURLSchemes:
               - com.oasisrarecare.app

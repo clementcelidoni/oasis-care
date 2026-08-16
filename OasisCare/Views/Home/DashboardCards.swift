@@ -181,12 +181,154 @@ struct InsightRow: View {
     }
 }
 
-// MARK: - Météo (spec §7 — shell; réel en Phase 4B)
+// MARK: - Météo (spec §7, §19-21)
 
 struct WeatherCard: View {
     var garden: Garden?
+    var plants: [Plant]
+
+    @State private var weather: WeatherService.WeatherData?
+    @State private var isLoading = false
+    @State private var errorMessage: String?
+    @State private var isShowingCachedFallback = false
+    @State private var isRainDialogPresented = false
 
     var body: some View {
+        Group {
+            if let garden, garden.weatherEnabled, garden.hasLocation {
+                content(for: garden)
+            } else {
+                placeholder
+            }
+        }
+        .task(id: garden?.id) {
+            await loadWeather()
+        }
+    }
+
+    @ViewBuilder
+    private func content(for garden: Garden) -> some View {
+        VStack(alignment: .leading, spacing: 12) {
+            if let weather {
+                weatherSummary(garden: garden, weather: weather)
+
+                if isShowingCachedFallback {
+                    Text("Dernière mise à jour : \(weather.fetchedAt.formatted(.relative(presentation: .named)))")
+                        .font(.caption2)
+                        .foregroundStyle(.orange)
+                }
+
+                if let rain = SmartWateringService.rainSuggestion(plants: plants, weather: weather) {
+                    rainBanner(rain)
+                }
+
+                if let heatwave = SmartWateringService.heatwaveAlert(plants: plants, weather: weather) {
+                    heatwaveBanner(heatwave)
+                }
+            } else if isLoading {
+                ProgressView()
+                    .frame(maxWidth: .infinity, alignment: .center)
+            } else if let errorMessage {
+                Text(errorMessage)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+        }
+        .padding()
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(Color(.secondarySystemGroupedBackground), in: RoundedRectangle(cornerRadius: 16, style: .continuous))
+    }
+
+    private func weatherSummary(garden: Garden, weather: WeatherService.WeatherData) -> some View {
+        VStack(alignment: .leading, spacing: 8) {
+            HStack {
+                VStack(alignment: .leading, spacing: 2) {
+                    Label(garden.locationName?.isEmpty == false ? garden.locationName! : garden.name, systemImage: weather.conditionSymbol)
+                        .font(.headline)
+                    Text(weather.conditionDescription)
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+                Spacer()
+                Text("\(Int(weather.temperatureCelsius.rounded()))°C")
+                    .font(.system(size: 30, weight: .semibold, design: .rounded))
+            }
+            HStack(spacing: 16) {
+                if let max = weather.temperatureMaxCelsius {
+                    Label("\(Int(max.rounded()))°", systemImage: "thermometer.high")
+                }
+                if let humidity = weather.humidityPercent {
+                    Label("\(Int(humidity)) %", systemImage: "humidity.fill")
+                }
+                if let wind = weather.windSpeedKmh {
+                    Label("\(Int(wind)) km/h", systemImage: "wind")
+                }
+                if let precip = weather.dailyForecast.first?.precipitationMm {
+                    Label("\(Int(precip)) mm", systemImage: "cloud.rain")
+                }
+            }
+            .font(.caption)
+            .foregroundStyle(.secondary)
+        }
+    }
+
+    private func rainBanner(_ suggestion: SmartWateringService.RainSuggestion) -> some View {
+        let count = suggestion.plants.count
+        let plantsWord = count > 1 ? "végétaux extérieurs sont programmés" : "végétal extérieur est programmé"
+        return VStack(alignment: .leading, spacing: 8) {
+            Text("🌧️ \(Int(suggestion.rainAmountMm)) mm prévus \(suggestion.dayLabel)")
+                .font(.subheadline.weight(.medium))
+            Text("\(count) \(plantsWord) à l'arrosage. Reporter ?")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+            HStack(spacing: 8) {
+                NavigationLink(
+                    "Voir les \(count)",
+                    value: PlantCategoryFilter(title: "Arrosage à reporter", plants: suggestion.plants.map { $0.plant })
+                )
+                .font(.caption.weight(.medium))
+                Spacer()
+                Button("Reporter") { isRainDialogPresented = true }
+                    .buttonStyle(.borderedProminent)
+                    .controlSize(.small)
+                Button("Maintenir") {}
+                    .buttonStyle(.bordered)
+                    .controlSize(.small)
+            }
+        }
+        .padding(10)
+        .background(Color.blue.opacity(0.1), in: RoundedRectangle(cornerRadius: 10, style: .continuous))
+        .confirmationDialog("Reporter l'arrosage ?", isPresented: $isRainDialogPresented, titleVisibility: .visible) {
+            Button("Reporter de 2 jours") {
+                for entry in suggestion.plants {
+                    CareScheduleEngine.postpone(entry.schedule, byDays: 2, plant: entry.plant)
+                }
+                Haptics.success()
+            }
+            Button("Annuler", role: .cancel) {}
+        } message: {
+            Text("\(count) programme\(count > 1 ? "s" : "") d'arrosage seront reportés de 2 jours.")
+        }
+    }
+
+    private func heatwaveBanner(_ alert: SmartWateringService.HeatwaveAlert) -> some View {
+        VStack(alignment: .leading, spacing: 4) {
+            Text("☀️ Forte chaleur")
+                .font(.subheadline.weight(.medium))
+            Text("\(Int(alert.maxTemperatureCelsius))°C prévus pendant \(alert.dayCount) jours.")
+                .font(.caption)
+            if !alert.youngPlants.isEmpty {
+                let count = alert.youngPlants.count
+                Text("\(count) jeune\(count > 1 ? "s" : "") plantation\(count > 1 ? "s" : "") nécessite\(count > 1 ? "nt" : "") une surveillance accrue.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+        }
+        .padding(10)
+        .background(Color.orange.opacity(0.1), in: RoundedRectangle(cornerRadius: 10, style: .continuous))
+    }
+
+    private var placeholder: some View {
         VStack(alignment: .leading, spacing: 6) {
             Label("Météo", systemImage: "cloud.sun.fill")
                 .font(.headline)
@@ -197,6 +339,67 @@ struct WeatherCard: View {
         .padding()
         .frame(maxWidth: .infinity, alignment: .leading)
         .background(Color(.secondarySystemGroupedBackground), in: RoundedRectangle(cornerRadius: 16, style: .continuous))
+    }
+
+    private func loadWeather() async {
+        guard let garden, garden.weatherEnabled, let lat = garden.latitude, let lng = garden.longitude else { return }
+        let cached = WeatherCache.load(for: garden.id)
+        weather = cached
+        isShowingCachedFallback = cached != nil
+        isLoading = cached == nil
+        errorMessage = nil
+        do {
+            let fresh = try await WeatherService.fetch(latitude: lat, longitude: lng)
+            weather = fresh
+            isShowingCachedFallback = false
+            WeatherCache.save(fresh, for: garden.id)
+        } catch {
+            if weather == nil {
+                errorMessage = error.localizedDescription
+            }
+        }
+        isLoading = false
+    }
+}
+
+// MARK: - Apprentissage arrosage (spec §22)
+
+struct FrequencySuggestionCard: View {
+    var suggestions: [SmartWateringService.FrequencySuggestion]
+    var onApply: (SmartWateringService.FrequencySuggestion) -> Void
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            Label("Suggestion Oasis AI", systemImage: "sparkles")
+                .font(.headline)
+                .foregroundStyle(.purple)
+
+            VStack(spacing: 10) {
+                ForEach(suggestions) { suggestion in
+                    row(suggestion)
+                }
+            }
+        }
+        .padding()
+        .background(Color.purple.opacity(0.08), in: RoundedRectangle(cornerRadius: 16, style: .continuous))
+    }
+
+    private func row(_ suggestion: SmartWateringService.FrequencySuggestion) -> some View {
+        VStack(alignment: .leading, spacing: 6) {
+            Text(suggestion.plant.customName)
+                .font(.subheadline.weight(.medium))
+            Text("Fréquence actuelle : \(suggestion.configuredDays) j — Moyenne réelle : \(suggestion.actualAverageDays) j")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+            HStack {
+                Button("Passer à \(suggestion.actualAverageDays) j") { onApply(suggestion) }
+                    .buttonStyle(.borderedProminent)
+                    .controlSize(.small)
+                Button("Garder \(suggestion.configuredDays) j") {}
+                    .buttonStyle(.bordered)
+                    .controlSize(.small)
+            }
+        }
     }
 }
 

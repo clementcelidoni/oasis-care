@@ -49,6 +49,13 @@ struct HomeView: View {
         return items.filter { plantID($0).map(ids.contains) ?? false }
     }
 
+    /// When viewing "Tous mes jardins", the weather card still needs
+    /// one garden to represent — the first one actually configured for
+    /// weather, matching the mockup's single "☀️ Jardin Maison" card.
+    private var weatherGarden: Garden? {
+        selectedGarden ?? gardens.first { $0.weatherEnabled && $0.hasLocation }
+    }
+
     private var dueSchedules: [CareSchedule] { schedules.filter { $0.isDue } }
     private var overdueSchedules: [CareSchedule] { schedules.filter { $0.isOverdue } }
     private var monitoredPlants: [Plant] { plants.filter { $0.healthStatus != .healthy } }
@@ -116,7 +123,20 @@ struct HomeView: View {
                             }
 
                             if preferences.showWeather {
-                                WeatherCard(garden: selectedGarden)
+                                WeatherCard(garden: weatherGarden, plants: plants)
+                            }
+
+                            let frequencySuggestions = SmartWateringService.frequencySuggestions(plants: plants)
+                            if !frequencySuggestions.isEmpty {
+                                FrequencySuggestionCard(suggestions: frequencySuggestions) { suggestion in
+                                    CareScheduleEngine.setSchedule(
+                                        .watering,
+                                        frequencyDays: suggestion.actualAverageDays,
+                                        for: suggestion.plant,
+                                        in: modelContext
+                                    )
+                                    Haptics.success()
+                                }
                             }
 
                             if preferences.showUpcoming {
