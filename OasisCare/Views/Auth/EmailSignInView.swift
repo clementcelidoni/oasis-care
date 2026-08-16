@@ -131,7 +131,7 @@ struct EmailSignInView: View {
             step = .enterCode
             resendAvailableAt = Calendar.current.date(byAdding: .second, value: 30, to: .now) ?? .now
         } catch {
-            errorMessage = "Impossible d'envoyer le code. Vérifiez votre adresse e-mail et réessayez."
+            errorMessage = error.localizedDescription
         }
     }
 
@@ -143,7 +143,7 @@ struct EmailSignInView: View {
             try await AuthService.verifyEmailCode(email: email, code: code)
             dismiss()
         } catch {
-            errorMessage = "Code invalide ou expiré. Réessayez ou demandez un nouveau code."
+            errorMessage = error.localizedDescription
         }
     }
 }
