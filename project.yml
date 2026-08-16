@@ -46,6 +46,14 @@ targets:
         CFBundleIconName: AppIcon
         ITSAppUsesNonExemptEncryption: false
         NSCameraUsageDescription: "Oasis Care a besoin de l'appareil photo pour prendre des photos de vos végétaux."
+        CFBundleURLTypes:
+          - CFBundleURLSchemes:
+              - com.oasisrarecare.app
+    entitlements:
+      path: Generated/OasisCare.entitlements
+      properties:
+        com.apple.developer.applesignin:
+          - Default
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: com.oasisrarecare.app

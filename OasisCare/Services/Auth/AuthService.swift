@@ -1,23 +1,9 @@
 import Foundation
 import Supabase
 
-enum AuthServiceError: LocalizedError {
-    case notConfigured(String)
-
-    var errorDescription: String? {
-        switch self {
-        case .notConfigured(let feature):
-            return "\(feature) n'est pas encore configuré."
-        }
-    }
-}
-
 /// Single entry point for every Supabase Auth call — views never talk to
 /// SupabaseClient directly (mirrors CareScheduleEngine's "one path in" shape
-/// from earlier phases). Google sign-in is stubbed until its Google Cloud
-/// OAuth client exists; Apple sign-in works today but needs the Sign in
-/// with Apple capability enabled on the App ID (and the provisioning
-/// profile regenerated) before a Release archive can use it.
+/// from earlier phases).
 enum AuthService {
     static let client = SupabaseClient(supabaseURL: SupabaseConfig.url, supabaseKey: SupabaseConfig.publishableKey)
 
@@ -35,8 +21,16 @@ enum AuthService {
         )
     }
 
+    /// Uses Supabase's OAuth flow (ASWebAuthenticationSession under the
+    /// hood) rather than the native GoogleSignIn SDK — one fewer
+    /// third-party dependency, and Supabase handles the OAuth exchange
+    /// server-side. The redirect scheme must also be allow-listed in the
+    /// Supabase dashboard under Authentication → URL Configuration.
     static func signInWithGoogle() async throws {
-        throw AuthServiceError.notConfigured("La connexion Google")
+        try await client.auth.signInWithOAuth(
+            provider: .google,
+            redirectTo: URL(string: "com.oasisrarecare.app://")
+        ) { _ in }
     }
 
     static func signOut() async throws {
