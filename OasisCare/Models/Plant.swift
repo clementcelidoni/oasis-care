@@ -13,6 +13,8 @@ final class Plant {
     var dateAdded: Date
     var healthStatus: HealthStatus
     var isArchived: Bool
+    var photoData: Data?
+    var thumbnailData: Data?
 
     var garden: Garden?
     var zone: GardenZone?
@@ -22,6 +24,9 @@ final class Plant {
 
     @Relationship(deleteRule: .cascade, inverse: \CareSchedule.plant)
     var careSchedules: [CareSchedule] = []
+
+    @Relationship(deleteRule: .cascade, inverse: \PlantPhoto.plant)
+    var photos: [PlantPhoto] = []
 
     init(
         customName: String,
@@ -33,7 +38,9 @@ final class Plant {
         dateAdded: Date = .now,
         healthStatus: HealthStatus = .healthy,
         garden: Garden? = nil,
-        zone: GardenZone? = nil
+        zone: GardenZone? = nil,
+        photoData: Data? = nil,
+        thumbnailData: Data? = nil
     ) {
         self.id = UUID()
         self.customName = customName
@@ -47,11 +54,18 @@ final class Plant {
         self.isArchived = false
         self.garden = garden
         self.zone = zone
+        self.photoData = photoData
+        self.thumbnailData = thumbnailData
     }
 
     /// Care history, most recent first.
     var sortedCareEvents: [CareEvent] {
         careEvents.sorted { $0.date > $1.date }
+    }
+
+    /// Photo history, most recent first.
+    var sortedPhotos: [PlantPhoto] {
+        photos.sorted { $0.date > $1.date }
     }
 
     func schedule(for type: CareEventType) -> CareSchedule? {

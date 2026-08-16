@@ -1,15 +1,12 @@
 import SwiftUI
+import UIKit
 
 struct PlantRow: View {
     var plant: Plant
 
     var body: some View {
         HStack(spacing: 12) {
-            Image(systemName: plant.type.icon)
-                .font(.title3)
-                .foregroundStyle(.white)
-                .frame(width: 40, height: 40)
-                .background(plant.healthStatus.color.gradient, in: RoundedRectangle(cornerRadius: 10, style: .continuous))
+            thumbnail
 
             VStack(alignment: .leading, spacing: 2) {
                 Text(plant.customName)
@@ -36,5 +33,22 @@ struct PlantRow: View {
     private var locationText: String? {
         let parts = [plant.garden?.name, plant.zone?.name].compactMap { $0 }
         return parts.isEmpty ? nil : parts.joined(separator: " · ")
+    }
+
+    @ViewBuilder
+    private var thumbnail: some View {
+        if let photoData = plant.thumbnailData ?? plant.photoData, let uiImage = UIImage(data: photoData) {
+            Image(uiImage: uiImage)
+                .resizable()
+                .scaledToFill()
+                .frame(width: 40, height: 40)
+                .clipShape(RoundedRectangle(cornerRadius: 10, style: .continuous))
+        } else {
+            Image(systemName: plant.type.icon)
+                .font(.title3)
+                .foregroundStyle(.white)
+                .frame(width: 40, height: 40)
+                .background(plant.healthStatus.color.gradient, in: RoundedRectangle(cornerRadius: 10, style: .continuous))
+        }
     }
 }

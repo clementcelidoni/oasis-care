@@ -134,5 +134,19 @@ final class OasisCareUITests: XCTestCase {
             XCTAssertTrue(app.staticTexts["Engrais"].firstMatch.waitForExistence(timeout: 10))
             XCTAssertFalse(app.staticTexts["Aucune intervention enregistrée."].exists)
         }
+
+        XCTContext.runActivity(named: "Vérifier que le bouton Photo propose la photothèque") { _ in
+            // PHPicker runs out-of-process and isn't reliably drivable from
+            // XCUITest in CI, so this only checks the dialog wiring, not an
+            // actual photo selection.
+            let photoButton = app.buttons["actionPhoto"]
+            XCTAssertTrue(photoButton.waitForExistence(timeout: 10))
+            photoButton.tap()
+
+            let libraryOption = app.buttons["Choisir dans la photothèque"]
+            XCTAssertTrue(libraryOption.waitForExistence(timeout: 10))
+
+            app.buttons["Annuler"].tap()
+        }
     }
 }

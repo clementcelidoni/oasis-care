@@ -37,6 +37,7 @@ targets:
         CFBundleVersion: "$(CURRENT_PROJECT_VERSION)"
         CFBundleIconName: AppIcon
         ITSAppUsesNonExemptEncryption: false
+        NSCameraUsageDescription: "Oasis Care a besoin de l'appareil photo pour prendre des photos de vos végétaux."
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: com.oasisrarecare.app
@@ -63,15 +64,33 @@ targets:
         DEVELOPMENT_LANGUAGE: fr
         GENERATE_INFOPLIST_FILE: "YES"
 
+  OasisCareTests:
+    type: bundle.unit-test
+    platform: iOS
+    deploymentTarget: "17.0"
+    sources:
+      - path: OasisCareTests
+    dependencies:
+      - target: OasisCare
+    settings:
+      base:
+        PRODUCT_BUNDLE_IDENTIFIER: com.oasisrarecare.app.tests
+        DEVELOPMENT_LANGUAGE: fr
+        GENERATE_INFOPLIST_FILE: "YES"
+        TEST_HOST: "$(BUILT_PRODUCTS_DIR)/OasisCare.app/OasisCare"
+        BUNDLE_LOADER: "$(TEST_HOST)"
+
 schemes:
   OasisCare:
     build:
       targets:
         OasisCare: all
         OasisCareUITests: [test]
+        OasisCareTests: [test]
     test:
       targets:
         - OasisCareUITests
+        - OasisCareTests
     run:
       config: Debug
     archive:

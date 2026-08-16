@@ -13,6 +13,10 @@ final class CareSchedule {
     var lastCompletedDate: Date?
     var nextDueDate: Date?
     var notes: String
+    /// Only the hour/minute components matter; the date portion is
+    /// arbitrary. Nil means "use the global default from Réglages".
+    var preferredTime: Date?
+    var reminderEnabled: Bool
     var plant: Plant?
 
     init(
@@ -20,7 +24,9 @@ final class CareSchedule {
         type: CareEventType,
         frequencyDays: Int,
         isActive: Bool = true,
-        notes: String = ""
+        notes: String = "",
+        preferredTime: Date? = nil,
+        reminderEnabled: Bool = true
     ) {
         self.id = UUID()
         self.plant = plant
@@ -28,6 +34,8 @@ final class CareSchedule {
         self.isActive = isActive
         self.frequencyDays = frequencyDays
         self.notes = notes
+        self.preferredTime = preferredTime
+        self.reminderEnabled = reminderEnabled
     }
 
     /// True once this schedule needs attention: never completed yet, or its
@@ -41,5 +49,11 @@ final class CareSchedule {
     var isOverdue: Bool {
         guard isActive, let nextDueDate else { return false }
         return nextDueDate < Calendar.current.startOfDay(for: .now)
+    }
+
+    var status: CareStatus {
+        if isOverdue { return .overdue }
+        guard let nextDueDate else { return .dueToday }
+        return Calendar.current.isDateInToday(nextDueDate) ? .dueToday : .upcoming
     }
 }

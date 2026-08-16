@@ -19,8 +19,10 @@ enum CareScheduleEngine {
         quantity: Double? = nil,
         unit: String? = nil,
         product: String? = nil,
+        photoData: Data? = nil,
         in context: ModelContext
     ) -> CareEvent {
+        let processedPhotoData = photoData.flatMap { ImageProcessing.prepareForStorage($0)?.detailData } ?? photoData
         let event = CareEvent(
             plant: plant,
             type: type,
@@ -28,7 +30,8 @@ enum CareScheduleEngine {
             notes: notes,
             quantity: quantity,
             unit: unit,
-            product: product
+            product: product,
+            photoData: processedPhotoData
         )
         context.insert(event)
         plant.careEvents.append(event)
@@ -36,6 +39,7 @@ enum CareScheduleEngine {
         if let schedule = plant.schedule(for: type) {
             schedule.lastCompletedDate = date
             schedule.nextDueDate = Calendar.current.date(byAdding: .day, value: schedule.frequencyDays, to: date)
+            NotificationService.scheduleReminder(for: schedule, plant: plant)
         }
 
         return event
@@ -48,23 +52,116 @@ enum CareScheduleEngine {
     static func setSchedule(
         _ type: CareEventType,
         frequencyDays: Int,
+        preferredTime: Date? = nil,
+        reminderEnabled: Bool = true,
         for plant: Plant,
         in context: ModelContext
     ) {
+        let schedule: CareSchedule
         if let existing = plant.schedule(for: type) {
             existing.frequencyDays = frequencyDays
             existing.isActive = true
+            existing.preferredTime = preferredTime
+            existing.reminderEnabled = reminderEnabled
             if let last = existing.lastCompletedDate {
                 existing.nextDueDate = Calendar.current.date(byAdding: .day, value: frequencyDays, to: last)
             }
+            schedule = existing
         } else {
-            let schedule = CareSchedule(plant: plant, type: type, frequencyDays: frequencyDays)
-            context.insert(schedule)
-            plant.careSchedules.append(schedule)
+            let newSchedule = CareSchedule(
+                plant: plant,
+                type: type,
+                frequencyDays: frequencyDays,
+                preferredTime: preferredTime,
+                reminderEnabled: reminderEnabled
+            )
+            context.insert(newSchedule)
+            plant.careSchedules.append(newSchedule)
+            schedule = newSchedule
         }
+        NotificationService.scheduleReminder(for: schedule, plant: plant)
+    }
+
+    struct BulkCareResult {
+        var events: [CareEvent]
+        var undo: () -> Void
+    }
+
+    /// Records the same care type for several plants, each getting its own
+    /// CareEvent and its own schedule recalculation — never one shared event
+    /// across plants, so per-plant history stays accurate. Returns an undo
+    /// closure that deletes the created events and restores every touched
+    /// schedule's prior lastCompletedDate/nextDueDate.
+    @discardableResult
+    static func recordCareForMultiple(
+        _ type: CareEventType,
+        plants: [Plant],
+        on date: Date = .now,
+        in context: ModelContext
+    ) -> BulkCareResult {
+        struct PriorScheduleState {
+            var schedule: CareSchedule
+            var lastCompletedDate: Date?
+            var nextDueDate: Date?
+        }
+
+        var priorStates: [PriorScheduleState] = []
+        var createdEvents: [CareEvent] = []
+
+        for plant in plants {
+            if let schedule = plant.schedule(for: type) {
+                priorStates.append(PriorScheduleState(schedule: schedule, lastCompletedDate: schedule.lastCompletedDate, nextDueDate: schedule.nextDueDate))
+            }
+            createdEvents.append(recordCare(type, for: plant, on: date, in: context))
+        }
+
+        let undo = {
+            for event in createdEvents {
+                event.plant?.careEvents.removeAll { $0.id == event.id }
+                context.delete(event)
+            }
+            for prior in priorStates {
+                prior.schedule.lastCompletedDate = prior.lastCompletedDate
+                prior.schedule.nextDueDate = prior.nextDueDate
+                if let plant = prior.schedule.plant {
+                    NotificationService.scheduleReminder(for: prior.schedule, plant: plant)
+                }
+            }
+        }
+
+        return BulkCareResult(events: createdEvents, undo: undo)
     }
 
     static func deactivateSchedule(_ type: CareEventType, for plant: Plant) {
-        plant.schedule(for: type)?.isActive = false
+        guard let schedule = plant.schedule(for: type) else { return }
+        schedule.isActive = false
+        NotificationService.cancelReminder(for: schedule)
+    }
+
+    /// Adds a photo to a plant's history and sets it as the current main
+    /// photo, logging a `.photoUpdate` care event so it shows up in the
+    /// timeline alongside watering/fertilizing. Image data is downsized and
+    /// compressed before storage.
+    @discardableResult
+    static func addPhoto(
+        imageData: Data,
+        for plant: Plant,
+        on date: Date = .now,
+        notes: String = "",
+        in context: ModelContext
+    ) -> PlantPhoto {
+        let processed = ImageProcessing.prepareForStorage(imageData)
+        let detailData = processed?.detailData ?? imageData
+        let thumbnailData = processed?.thumbnailData ?? imageData
+
+        let photo = PlantPhoto(plant: plant, imageData: detailData, thumbnailData: thumbnailData, date: date, notes: notes)
+        context.insert(photo)
+        plant.photos.append(photo)
+        plant.photoData = detailData
+        plant.thumbnailData = thumbnailData
+
+        recordCare(.photoUpdate, for: plant, on: date, notes: notes, in: context)
+
+        return photo
     }
 }

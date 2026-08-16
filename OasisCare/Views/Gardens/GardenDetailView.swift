@@ -19,6 +19,11 @@ struct GardenDetailView: View {
     var garden: Garden
 
     @State private var activeSheet: ActiveSheet?
+    @State private var isBulkWaterSheetPresented = false
+
+    private var plantsDueForWatering: [Plant] {
+        garden.plants.filter { $0.schedule(for: .watering)?.isDue ?? false }
+    }
 
     var body: some View {
         ScrollView {
@@ -33,6 +38,10 @@ struct GardenDetailView: View {
                     Text(garden.notes)
                         .font(.subheadline)
                         .foregroundStyle(.secondary)
+                }
+
+                if !plantsDueForWatering.isEmpty {
+                    quickWaterBanner
                 }
 
                 zonesSection
@@ -60,6 +69,29 @@ struct GardenDetailView: View {
                 GardenZoneFormView(garden: garden, zone: zone)
             }
         }
+        .sheet(isPresented: $isBulkWaterSheetPresented) {
+            PlantListView(gardenFilter: garden)
+        }
+    }
+
+    private var quickWaterBanner: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Text("\(plantsDueForWatering.count) plante\(plantsDueForWatering.count > 1 ? "s" : "") à arroser")
+                .font(.subheadline.weight(.medium))
+
+            Button {
+                isBulkWaterSheetPresented = true
+            } label: {
+                Label("Sélectionner les plantes à arroser", systemImage: "drop.fill")
+                    .font(.subheadline.weight(.medium))
+                    .frame(maxWidth: .infinity)
+            }
+            .buttonStyle(.borderedProminent)
+            .tint(.blue)
+            .accessibilityIdentifier("selectPlantsToWaterButton")
+        }
+        .padding()
+        .background(Color.blue.opacity(0.08), in: RoundedRectangle(cornerRadius: 14, style: .continuous))
     }
 
     private var zonesSection: some View {

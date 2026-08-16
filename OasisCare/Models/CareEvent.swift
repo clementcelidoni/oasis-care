@@ -14,6 +14,10 @@ final class CareEvent {
     var quantity: Double?
     var unit: String?
     var product: String?
+    /// A photo documenting this specific intervention (e.g. pest damage
+    /// before a treatment) — distinct from PlantPhoto's growth-tracking
+    /// gallery, which is about the plant over time, not one event.
+    var photoData: Data?
     var plant: Plant?
 
     init(
@@ -23,7 +27,8 @@ final class CareEvent {
         notes: String = "",
         quantity: Double? = nil,
         unit: String? = nil,
-        product: String? = nil
+        product: String? = nil,
+        photoData: Data? = nil
     ) {
         self.id = UUID()
         self.plant = plant
@@ -34,5 +39,6 @@ final class CareEvent {
         self.quantity = quantity
         self.unit = unit
         self.product = product
+        self.photoData = photoData
     }
 }

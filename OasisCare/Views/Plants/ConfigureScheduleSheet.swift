@@ -10,6 +10,8 @@ struct ConfigureScheduleSheet: View {
 
     @State private var frequencyDays: Int
     @State private var isActive: Bool
+    @State private var reminderEnabled: Bool
+    @State private var preferredTime: Date
 
     init(plant: Plant, type: CareEventType) {
         self.plant = plant
@@ -17,6 +19,8 @@ struct ConfigureScheduleSheet: View {
         let existing = plant.schedule(for: type)
         _frequencyDays = State(initialValue: existing?.frequencyDays ?? 7)
         _isActive = State(initialValue: existing?.isActive ?? true)
+        _reminderEnabled = State(initialValue: existing?.reminderEnabled ?? true)
+        _preferredTime = State(initialValue: existing?.preferredTime ?? NotificationSettings.defaultReminderTimeToday())
     }
 
     var body: some View {
@@ -33,6 +37,15 @@ struct ConfigureScheduleSheet: View {
                             Spacer()
                             Text("\(frequencyDays) jour\(frequencyDays > 1 ? "s" : "")")
                                 .foregroundStyle(.secondary)
+                        }
+                    }
+                }
+
+                if isActive {
+                    Section("Notification") {
+                        Toggle("Recevoir une notification", isOn: $reminderEnabled)
+                        if reminderEnabled {
+                            DatePicker("Heure", selection: $preferredTime, displayedComponents: .hourAndMinute)
                         }
                     }
                 }
@@ -58,7 +71,14 @@ struct ConfigureScheduleSheet: View {
     }
 
     private func save() {
-        CareScheduleEngine.setSchedule(type, frequencyDays: frequencyDays, for: plant, in: modelContext)
+        CareScheduleEngine.setSchedule(
+            type,
+            frequencyDays: frequencyDays,
+            preferredTime: preferredTime,
+            reminderEnabled: reminderEnabled,
+            for: plant,
+            in: modelContext
+        )
         if !isActive {
             CareScheduleEngine.deactivateSchedule(type, for: plant)
         }

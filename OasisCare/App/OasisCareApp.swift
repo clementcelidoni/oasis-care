@@ -1,5 +1,6 @@
 import SwiftUI
 import SwiftData
+import UserNotifications
 
 @main
 struct OasisCareApp: App {
@@ -9,7 +10,8 @@ struct OasisCareApp: App {
             Garden.self,
             GardenZone.self,
             CareEvent.self,
-            CareSchedule.self
+            CareSchedule.self,
+            PlantPhoto.self
         ])
         let configuration = ModelConfiguration(schema: schema)
 
@@ -19,6 +21,10 @@ struct OasisCareApp: App {
             fatalError("Impossible de créer le conteneur SwiftData : \(error)")
         }
     }()
+
+    init() {
+        UNUserNotificationCenter.current().delegate = NotificationRouter.shared
+    }
 
     var body: some Scene {
         WindowGroup {

@@ -59,6 +59,10 @@ enum CareEventType: String, Codable, CaseIterable, Identifiable {
         }
     }
 
-    /// Types Phase 1 tracks on a recurring schedule (quick-action buttons + due-date logic).
-    static var schedulable: [CareEventType] { [.watering, .fertilizing] }
+    /// Types that can carry a recurring CareSchedule + reminder. Excludes
+    /// inherently one-off log entries (planting, pest/disease observation,
+    /// photo updates) that wouldn't make sense on a repeating frequency.
+    static var schedulable: [CareEventType] {
+        [.watering, .fertilizing, .pruning, .trimming, .repotting, .treatment, .inspection, .misting, .cleaning, .rotating, .custom]
+    }
 }
