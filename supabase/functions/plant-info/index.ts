@@ -186,11 +186,14 @@ const speciesProfileSchema = obj({
 const suggestionsSchema = obj({
   suggestions: {
     type: "array",
+    // No maxItems: not confirmed as part of OpenAI's supported strict
+    // structured-output schema subset, and getting that wrong would
+    // reject every request with a schema error. The system prompt's
+    // "jusqu'à 5" instruction is enough here.
     items: obj({
       scientificName: { type: "string" },
       commonName: nullableString(),
     }),
-    maxItems: 6,
   },
 });
 
