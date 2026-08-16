@@ -37,6 +37,11 @@ final class Plant: Syncable {
     var mapPositionY: Double?
     var positionSource: String?
 
+    /// Spec §34 — per-plant emitters within its irrigation zone.
+    var irrigationZone: IrrigationZone?
+    var emitterCount: Int?
+    var emitterFlowRate: Double?
+
     @Relationship(deleteRule: .cascade, inverse: \CareEvent.plant)
     var careEvents: [CareEvent] = []
 

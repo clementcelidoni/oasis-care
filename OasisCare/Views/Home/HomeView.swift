@@ -10,6 +10,7 @@ struct HomeView: View {
     @Query private var allSchedules: [CareSchedule]
     @Query private var allEvents: [CareEvent]
     @Query private var allPhotos: [PlantPhoto]
+    @Query private var allIrrigationEvents: [IrrigationEvent]
     @Query(sort: \Garden.name) private var gardens: [Garden]
     @Query private var preferencesQuery: [DashboardPreferences]
 
@@ -41,6 +42,11 @@ struct HomeView: View {
 
     private var photos: [PlantPhoto] {
         scoped(allPhotos) { $0.plant?.id }
+    }
+
+    private var irrigationEvents: [IrrigationEvent] {
+        guard let selectedGarden else { return allIrrigationEvents }
+        return allIrrigationEvents.filter { $0.zone?.garden?.id == selectedGarden.id }
     }
 
     private func scoped<T>(_ items: [T], plantID: (T) -> UUID?) -> [T] {
@@ -154,7 +160,7 @@ struct HomeView: View {
                             }
 
                             if preferences.showWater {
-                                WaterCard()
+                                WaterCard(events: irrigationEvents)
                             }
 
                             if preferences.showEvolution {

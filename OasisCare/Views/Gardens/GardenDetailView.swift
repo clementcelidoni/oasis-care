@@ -6,12 +6,47 @@ struct GardenDetailView: View {
         case edit
         case addZone
         case editZone(GardenZone)
+        case addIrrigationZone
+        case editIrrigationZone(IrrigationZone)
 
         var id: String {
             switch self {
             case .edit: return "edit"
             case .addZone: return "addZone"
             case .editZone(let zone): return "editZone-\(zone.id.uuidString)"
+            case .addIrrigationZone: return "addIrrigationZone"
+            case .editIrrigationZone(let zone): return "editIrrigationZone-\(zone.id.uuidString)"
+            }
+        }
+    }
+
+    private enum ZoneDeletionTarget: Identifiable {
+        case gardenZone(GardenZone)
+        case irrigationZone(IrrigationZone)
+
+        var id: String {
+            switch self {
+            case .gardenZone(let zone): return "gardenZone-\(zone.id.uuidString)"
+            case .irrigationZone(let zone): return "irrigationZone-\(zone.id.uuidString)"
+            }
+        }
+
+        var name: String {
+            switch self {
+            case .gardenZone(let zone): return zone.name
+            case .irrigationZone(let zone): return zone.name
+            }
+        }
+
+        /// Irrigation zones cascade-delete their IrrigationEvent history
+        /// (unlike GardenZone, which only nullifies its plants' zone),
+        /// so the warning has to say so explicitly.
+        var message: String {
+            switch self {
+            case .gardenZone:
+                return "Les végétaux de cette zone seront conservés, sans zone associée. Cette action est irréversible."
+            case .irrigationZone:
+                return "Les végétaux de cette zone seront conservés, sans zone associée. L'historique des cycles d'irrigation de cette zone sera définitivement supprimé."
             }
         }
     }
@@ -33,7 +68,7 @@ struct GardenDetailView: View {
 
     @State private var activeSheet: ActiveSheet?
     @State private var isBulkWaterSheetPresented = false
-    @State private var zonePendingDeletion: GardenZone?
+    @State private var zonePendingDeletion: ZoneDeletionTarget?
     @State private var viewMode: ViewMode = .list
 
     private var plantsDueForWatering: [Plant] {
@@ -76,6 +111,10 @@ struct GardenDetailView: View {
                 GardenZoneFormView(garden: garden, zone: nil)
             case .editZone(let zone):
                 GardenZoneFormView(garden: garden, zone: zone)
+            case .addIrrigationZone:
+                IrrigationZoneFormView(garden: garden, zone: nil)
+            case .editIrrigationZone(let zone):
+                IrrigationZoneFormView(garden: garden, zone: zone)
             }
         }
         .sheet(isPresented: $isBulkWaterSheetPresented) {
@@ -87,19 +126,21 @@ struct GardenDetailView: View {
                 get: { zonePendingDeletion != nil },
                 set: { if !$0 { zonePendingDeletion = nil } }
             ),
-            titleVisibility: .visible
-        ) {
+            titleVisibility: .visible,
+            presenting: zonePendingDeletion
+        ) { target in
             Button("Supprimer", role: .destructive) {
-                if let zone = zonePendingDeletion {
-                    DeletionService.delete(zone, in: modelContext)
+                switch target {
+                case .gardenZone(let zone): DeletionService.delete(zone, in: modelContext)
+                case .irrigationZone(let zone): DeletionService.delete(zone, in: modelContext)
                 }
                 zonePendingDeletion = nil
             }
             Button("Annuler", role: .cancel) {
                 zonePendingDeletion = nil
             }
-        } message: {
-            Text("Les végétaux de cette zone seront conservés, sans zone associée. Cette action est irréversible.")
+        } message: { target in
+            Text(target.message)
         }
     }
 
@@ -123,6 +164,7 @@ struct GardenDetailView: View {
                 }
 
                 zonesSection
+                irrigationSection
                 plantsSection
             }
             .padding()
@@ -197,7 +239,57 @@ struct GardenDetailView: View {
                                 Label("Modifier", systemImage: "pencil")
                             }
                             Button(role: .destructive) {
-                                zonePendingDeletion = zone
+                                zonePendingDeletion = .gardenZone(zone)
+                            } label: {
+                                Label("Supprimer", systemImage: "trash")
+                            }
+                        }
+                        if index < sortedZones.count - 1 {
+                            Divider()
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    private var irrigationSection: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            HStack {
+                Text("Irrigation")
+                    .font(.headline)
+                Spacer()
+                Button {
+                    activeSheet = .addIrrigationZone
+                } label: {
+                    Label("Ajouter", systemImage: "plus.circle.fill")
+                        .labelStyle(.iconOnly)
+                }
+                .accessibilityIdentifier("addIrrigationZoneButton")
+            }
+
+            if garden.irrigationZones.isEmpty {
+                Text("Aucune zone d'irrigation pour l'instant.")
+                    .font(.subheadline)
+                    .foregroundStyle(.secondary)
+            } else {
+                let sortedZones = garden.irrigationZones.sorted { $0.name < $1.name }
+                VStack(spacing: 0) {
+                    ForEach(Array(sortedZones.enumerated()), id: \.element.id) { index, zone in
+                        IrrigationZoneRow(zone: zone) {
+                            IrrigationController.logCycle(for: zone, in: modelContext)
+                            Haptics.success()
+                        }
+                        .contentShape(Rectangle())
+                        .onTapGesture { activeSheet = .editIrrigationZone(zone) }
+                        .contextMenu {
+                            Button {
+                                activeSheet = .editIrrigationZone(zone)
+                            } label: {
+                                Label("Modifier", systemImage: "pencil")
+                            }
+                            Button(role: .destructive) {
+                                zonePendingDeletion = .irrigationZone(zone)
                             } label: {
                                 Label("Supprimer", systemImage: "trash")
                             }
@@ -234,5 +326,39 @@ struct GardenDetailView: View {
                 }
             }
         }
+    }
+}
+
+private struct IrrigationZoneRow: View {
+    var zone: IrrigationZone
+    var onLogCycle: () -> Void
+
+    var body: some View {
+        HStack {
+            Image(systemName: zone.type.icon)
+                .foregroundStyle(zone.active ? Color.blue : Color.secondary)
+                .frame(width: 24)
+            VStack(alignment: .leading, spacing: 2) {
+                Text(zone.name)
+                    .foregroundStyle(.primary)
+                Text(subtitle)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+            Spacer()
+            Button("Cycle", action: onLogCycle)
+                .buttonStyle(.bordered)
+                .controlSize(.small)
+        }
+        .padding(.vertical, 6)
+    }
+
+    private var subtitle: String {
+        let plantsWord = zone.plants.count > 1 ? "végétaux" : "végétal"
+        var parts: [String] = ["\(zone.plants.count) \(plantsWord)"]
+        if let flowRate = zone.flowRate {
+            parts.insert("\(flowRate.formatted()) \(zone.flowRateUnit)", at: 0)
+        }
+        return parts.joined(separator: " · ")
     }
 }

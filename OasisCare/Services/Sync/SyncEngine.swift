@@ -36,11 +36,13 @@ final class SyncEngine: ObservableObject {
             try await restoreFromCloudIfNeeded(context: context)
             try await pushGardens(workspaceID: workspaceID, context: context)
             try await pushZones(context: context)
+            try await pushIrrigationZones(workspaceID: workspaceID, context: context)
             try await pushPlants(workspaceID: workspaceID, context: context)
             try await pushSchedules(context: context)
             try await pushEvents(context: context)
             try await pushPlantPhotos(workspaceID: workspaceID, context: context)
             try await pushAIAnalyses(context: context)
+            try await pushIrrigationEvents(context: context)
             try await pushDashboardPreferences(workspaceID: workspaceID, context: context)
             try await pushPendingDeletions(context: context)
             try context.save()
@@ -62,8 +64,10 @@ final class SyncEngine: ObservableObject {
         let photos = (try? context.fetch(FetchDescriptor<PlantPhoto>()))?.filter { $0.syncStatus != .synced }.count ?? 0
         let analyses = (try? context.fetch(FetchDescriptor<AIAnalysis>()))?.filter { $0.syncStatus != .synced }.count ?? 0
         let preferences = (try? context.fetch(FetchDescriptor<DashboardPreferences>()))?.filter { $0.syncStatus != .synced }.count ?? 0
+        let irrigationZones = (try? context.fetch(FetchDescriptor<IrrigationZone>()))?.filter { $0.syncStatus != .synced }.count ?? 0
+        let irrigationEvents = (try? context.fetch(FetchDescriptor<IrrigationEvent>()))?.filter { $0.syncStatus != .synced }.count ?? 0
         let deletions = (try? context.fetchCount(FetchDescriptor<PendingDeletion>())) ?? 0
-        return gardens + zones + plants + schedules + events + photos + analyses + preferences + deletions
+        return gardens + zones + plants + schedules + events + photos + analyses + preferences + irrigationZones + irrigationEvents + deletions
     }
 
     private static let photoBucket = "plant-photos"
@@ -146,6 +150,21 @@ final class SyncEngine: ObservableObject {
             zonesByID[row.id] = zone
         }
 
+        let remoteIrrigationZones: [IrrigationZoneRow] = try await AuthService.client.from("irrigation_zones").select().execute().value
+        var irrigationZonesByID: [UUID: IrrigationZone] = [:]
+        for row in remoteIrrigationZones {
+            guard let garden = gardensByID[row.gardenId] else { continue }
+            let zone = IrrigationZone(
+                name: row.name, type: row.type, flowRate: row.flowRate, flowRateUnit: row.flowRateUnit,
+                durationMinutes: row.durationMinutes, active: row.active, notes: row.notes, garden: garden
+            )
+            zone.id = row.id
+            zone.syncStatus = .synced
+            zone.updatedAt = row.updatedAt
+            context.insert(zone)
+            irrigationZonesByID[row.id] = zone
+        }
+
         let remotePlants: [PlantRow] = try await AuthService.client.from("plants").select().execute().value
         var plantsByID: [UUID: Plant] = [:]
         for row in remotePlants {
@@ -162,6 +181,9 @@ final class SyncEngine: ObservableObject {
             plant.mapPositionX = row.mapPositionX
             plant.mapPositionY = row.mapPositionY
             plant.positionSource = row.positionSource
+            plant.irrigationZone = row.irrigationZoneId.flatMap { irrigationZonesByID[$0] }
+            plant.emitterCount = row.emitterCount
+            plant.emitterFlowRate = row.emitterFlowRate
             plant.syncStatus = .synced
             plant.updatedAt = row.updatedAt
             if let path = row.photoStoragePath { plant.photoData = try? await downloadPhoto(path: path) }
@@ -220,6 +242,18 @@ final class SyncEngine: ObservableObject {
             analysis.id = row.id
             analysis.syncStatus = .synced
             context.insert(analysis)
+        }
+
+        let remoteIrrigationEvents: [IrrigationEventRow] = try await AuthService.client.from("irrigation_events").select().execute().value
+        for row in remoteIrrigationEvents {
+            guard let zone = irrigationZonesByID[row.zoneId] else { continue }
+            let event = IrrigationEvent(
+                zone: zone, date: row.date, durationMinutes: row.durationMinutes,
+                estimatedLiters: row.estimatedLiters, isAutomatic: row.isAutomatic, notes: row.notes
+            )
+            event.id = row.id
+            event.syncStatus = .synced
+            context.insert(event)
         }
 
         // Only pulled if this device has no local row yet — HomeView's
@@ -294,6 +328,30 @@ final class SyncEngine: ObservableObject {
         }
     }
 
+    private struct IrrigationZoneRow: Decodable {
+        var id: UUID
+        var gardenId: UUID
+        var name: String
+        var type: IrrigationType
+        var flowRate: Double?
+        var flowRateUnit: String
+        var durationMinutes: Int?
+        var active: Bool
+        var notes: String
+        var updatedAt: Date?
+
+        enum CodingKeys: String, CodingKey {
+            case id
+            case gardenId = "garden_id"
+            case name, type
+            case flowRate = "flow_rate"
+            case flowRateUnit = "flow_rate_unit"
+            case durationMinutes = "duration_minutes"
+            case active, notes
+            case updatedAt = "updated_at"
+        }
+    }
+
     private struct PlantRow: Decodable {
         var id: UUID
         var gardenId: UUID?
@@ -314,6 +372,9 @@ final class SyncEngine: ObservableObject {
         var mapPositionX: Double?
         var mapPositionY: Double?
         var positionSource: String?
+        var irrigationZoneId: UUID?
+        var emitterCount: Int?
+        var emitterFlowRate: Double?
         var updatedAt: Date?
 
         enum CodingKeys: String, CodingKey {
@@ -334,6 +395,9 @@ final class SyncEngine: ObservableObject {
             case latitude, longitude
             case mapPositionX = "map_position_x"
             case mapPositionY = "map_position_y"
+            case irrigationZoneId = "irrigation_zone_id"
+            case emitterCount = "emitter_count"
+            case emitterFlowRate = "emitter_flow_rate"
             case positionSource = "position_source"
             case updatedAt = "updated_at"
         }
@@ -418,6 +482,26 @@ final class SyncEngine: ObservableObject {
             case type, date, summary
             case structuredData = "structured_data"
             case provider, model, confidence
+        }
+    }
+
+    private struct IrrigationEventRow: Decodable {
+        var id: UUID
+        var zoneId: UUID
+        var date: Date
+        var durationMinutes: Int
+        var estimatedLiters: Double
+        var isAutomatic: Bool
+        var notes: String
+
+        enum CodingKeys: String, CodingKey {
+            case id
+            case zoneId = "zone_id"
+            case date
+            case durationMinutes = "duration_minutes"
+            case estimatedLiters = "estimated_liters"
+            case isAutomatic = "is_automatic"
+            case notes
         }
     }
 
@@ -519,6 +603,52 @@ final class SyncEngine: ObservableObject {
         for zone in pending where zone.garden != nil { zone.syncStatus = .synced }
     }
 
+    // MARK: - Irrigation zones
+    // Pushed before plants: a plant can reference an irrigation zone by
+    // id, and that foreign key needs the zone row to already exist.
+
+    private struct IrrigationZoneDTO: Encodable {
+        var id: UUID
+        var workspaceId: UUID
+        var gardenId: UUID
+        var name: String
+        var type: IrrigationType
+        var flowRate: Double?
+        var flowRateUnit: String
+        var durationMinutes: Int?
+        var active: Bool
+        var notes: String
+        var updatedAt: Date
+
+        enum CodingKeys: String, CodingKey {
+            case id
+            case workspaceId = "workspace_id"
+            case gardenId = "garden_id"
+            case name, type
+            case flowRate = "flow_rate"
+            case flowRateUnit = "flow_rate_unit"
+            case durationMinutes = "duration_minutes"
+            case active, notes
+            case updatedAt = "updated_at"
+        }
+    }
+
+    private func pushIrrigationZones(workspaceID: UUID, context: ModelContext) async throws {
+        let pending = try context.fetch(FetchDescriptor<IrrigationZone>()).filter { $0.syncStatus != .synced }
+        guard !pending.isEmpty else { return }
+        let dtos = pending.compactMap { zone -> IrrigationZoneDTO? in
+            guard let gardenID = zone.garden?.id else { return nil }
+            return IrrigationZoneDTO(
+                id: zone.id, workspaceId: workspaceID, gardenId: gardenID, name: zone.name, type: zone.type,
+                flowRate: zone.flowRate, flowRateUnit: zone.flowRateUnit, durationMinutes: zone.durationMinutes,
+                active: zone.active, notes: zone.notes, updatedAt: zone.updatedAt ?? .now
+            )
+        }
+        guard !dtos.isEmpty else { return }
+        try await AuthService.client.from("irrigation_zones").upsert(dtos).execute()
+        for zone in pending where zone.garden != nil { zone.syncStatus = .synced }
+    }
+
     // MARK: - Plants
 
     private struct PlantDTO: Encodable {
@@ -542,6 +672,9 @@ final class SyncEngine: ObservableObject {
         var mapPositionX: Double?
         var mapPositionY: Double?
         var positionSource: String?
+        var irrigationZoneId: UUID?
+        var emitterCount: Int?
+        var emitterFlowRate: Double?
         var updatedAt: Date
 
         enum CodingKeys: String, CodingKey {
@@ -564,6 +697,9 @@ final class SyncEngine: ObservableObject {
             case mapPositionX = "map_position_x"
             case mapPositionY = "map_position_y"
             case positionSource = "position_source"
+            case irrigationZoneId = "irrigation_zone_id"
+            case emitterCount = "emitter_count"
+            case emitterFlowRate = "emitter_flow_rate"
             case updatedAt = "updated_at"
         }
     }
@@ -594,6 +730,8 @@ final class SyncEngine: ObservableObject {
                 latitude: plant.latitude, longitude: plant.longitude,
                 mapPositionX: plant.mapPositionX, mapPositionY: plant.mapPositionY,
                 positionSource: plant.positionSource,
+                irrigationZoneId: plant.irrigationZone?.id, emitterCount: plant.emitterCount,
+                emitterFlowRate: plant.emitterFlowRate,
                 updatedAt: plant.updatedAt ?? .now
             ))
         }
@@ -763,6 +901,43 @@ final class SyncEngine: ObservableObject {
         guard !dtos.isEmpty else { return }
         try await AuthService.client.from("ai_analyses").upsert(dtos).execute()
         for analysis in pending where analysis.plant != nil { analysis.syncStatus = .synced }
+    }
+
+    // MARK: - Irrigation events
+
+    private struct IrrigationEventDTO: Encodable {
+        var id: UUID
+        var zoneId: UUID
+        var date: Date
+        var durationMinutes: Int
+        var estimatedLiters: Double
+        var isAutomatic: Bool
+        var notes: String
+
+        enum CodingKeys: String, CodingKey {
+            case id
+            case zoneId = "zone_id"
+            case date
+            case durationMinutes = "duration_minutes"
+            case estimatedLiters = "estimated_liters"
+            case isAutomatic = "is_automatic"
+            case notes
+        }
+    }
+
+    private func pushIrrigationEvents(context: ModelContext) async throws {
+        let pending = try context.fetch(FetchDescriptor<IrrigationEvent>()).filter { $0.syncStatus != .synced }
+        guard !pending.isEmpty else { return }
+        let dtos = pending.compactMap { event -> IrrigationEventDTO? in
+            guard let zoneID = event.zone?.id else { return nil }
+            return IrrigationEventDTO(
+                id: event.id, zoneId: zoneID, date: event.date, durationMinutes: event.durationMinutes,
+                estimatedLiters: event.estimatedLiters, isAutomatic: event.isAutomatic, notes: event.notes
+            )
+        }
+        guard !dtos.isEmpty else { return }
+        try await AuthService.client.from("irrigation_events").upsert(dtos).execute()
+        for event in pending where event.zone != nil { event.syncStatus = .synced }
     }
 
     // MARK: - Dashboard preferences

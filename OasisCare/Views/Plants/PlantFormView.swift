@@ -23,6 +23,9 @@ struct PlantFormView: View {
     @State private var notes: String
     @State private var selectedGarden: Garden?
     @State private var selectedZone: GardenZone?
+    @State private var selectedIrrigationZone: IrrigationZone?
+    @State private var emitterCountText: String
+    @State private var emitterFlowRateText: String
 
     @State private var isCompletingProfile = false
     @State private var completionError: String?
@@ -45,6 +48,9 @@ struct PlantFormView: View {
         _notes = State(initialValue: plant?.notes ?? "")
         _selectedGarden = State(initialValue: plant?.garden)
         _selectedZone = State(initialValue: plant?.zone)
+        _selectedIrrigationZone = State(initialValue: plant?.irrigationZone)
+        _emitterCountText = State(initialValue: plant?.emitterCount.map { String($0) } ?? "")
+        _emitterFlowRateText = State(initialValue: plant?.emitterFlowRate.map { String($0) } ?? "")
     }
 
     private var availableZones: [GardenZone] {
@@ -113,6 +119,43 @@ struct PlantFormView: View {
                     }
                 }
 
+                if let selectedGarden, !selectedGarden.irrigationZones.isEmpty {
+                    Section {
+                        Picker("Zone d'irrigation", selection: $selectedIrrigationZone) {
+                            Text("Aucune").tag(IrrigationZone?.none)
+                            ForEach(selectedGarden.irrigationZones.sorted { $0.name < $1.name }) { zone in
+                                Text(zone.name).tag(IrrigationZone?.some(zone))
+                            }
+                        }
+                        .pickerStyle(.menu)
+
+                        if selectedIrrigationZone != nil {
+                            HStack {
+                                Text("Goutteurs")
+                                Spacer()
+                                TextField("nombre", text: $emitterCountText)
+                                    .keyboardType(.numberPad)
+                                    .multilineTextAlignment(.trailing)
+                                    .frame(width: 60)
+                            }
+                            HStack {
+                                Text("Débit par goutteur")
+                                Spacer()
+                                TextField("L/h", text: $emitterFlowRateText)
+                                    .keyboardType(.decimalPad)
+                                    .multilineTextAlignment(.trailing)
+                                    .frame(width: 60)
+                                Text("L/h")
+                                    .foregroundStyle(.secondary)
+                            }
+                        }
+                    } header: {
+                        Text("Irrigation")
+                    } footer: {
+                        Text("Facultatif — permet d'estimer la consommation d'eau de ce végétal.")
+                    }
+                }
+
                 Section("Notes") {
                     TextField("Notes", text: $notes, axis: .vertical)
                         .lineLimit(3...6)
@@ -132,6 +175,9 @@ struct PlantFormView: View {
             .onChange(of: selectedGarden) { _, newGarden in
                 if let selectedZone, selectedZone.garden != newGarden {
                     self.selectedZone = nil
+                }
+                if let selectedIrrigationZone, selectedIrrigationZone.garden != newGarden {
+                    self.selectedIrrigationZone = nil
                 }
             }
             .sheet(isPresented: $isSignInPresented) {
@@ -263,8 +309,15 @@ struct PlantFormView: View {
             modelContext.insert(newPlant)
             selectedGarden?.plants.append(newPlant)
             selectedZone?.plants.append(newPlant)
+            selectedIrrigationZone?.plants.append(newPlant)
             targetPlant = newPlant
         }
+
+        targetPlant.irrigationZone = selectedIrrigationZone
+        targetPlant.emitterCount = selectedIrrigationZone != nil ? Int(emitterCountText) : nil
+        targetPlant.emitterFlowRate = selectedIrrigationZone != nil
+            ? Double(emitterFlowRateText.replacingOccurrences(of: ",", with: "."))
+            : nil
 
         if let fetchedProfile, let fetchedProfileJSON {
             attachSpeciesProfile(fetchedProfile, json: fetchedProfileJSON, to: targetPlant)

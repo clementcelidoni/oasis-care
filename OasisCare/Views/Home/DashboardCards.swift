@@ -478,17 +478,52 @@ struct RecentActivityCard: View {
 // MARK: - Consommation d'eau (spec §10 — shell; réel en Phase 4D)
 
 struct WaterCard: View {
+    var events: [IrrigationEvent]
+
     var body: some View {
-        VStack(alignment: .leading, spacing: 6) {
+        VStack(alignment: .leading, spacing: 8) {
             Label("Eau", systemImage: "drop.fill")
                 .font(.headline)
-            Text("Créez une zone d'irrigation pour suivre votre consommation d'eau ici.")
-                .font(.caption)
-                .foregroundStyle(.secondary)
+
+            if events.isEmpty {
+                Text("Créez une zone d'irrigation pour suivre votre consommation d'eau ici.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            } else {
+                let stats = IrrigationStatsService.stats(events: events)
+                HStack(spacing: 16) {
+                    statColumn(title: "Aujourd'hui", liters: stats.todayLiters)
+                    statColumn(title: "Cette semaine", liters: stats.weekLiters)
+                    statColumn(title: "Ce mois", liters: stats.monthLiters, changePercent: stats.monthChangePercent)
+                }
+                if let topZone = stats.topZone {
+                    Text("Zone la plus consommatrice : \(topZone.name)")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+                Text("Consommation estimée à partir du débit renseigné pour chaque zone.")
+                    .font(.caption2)
+                    .foregroundStyle(.tertiary)
+            }
         }
         .padding()
         .frame(maxWidth: .infinity, alignment: .leading)
         .background(Color(.secondarySystemGroupedBackground), in: RoundedRectangle(cornerRadius: 16, style: .continuous))
+    }
+
+    private func statColumn(title: String, liters: Double, changePercent: Int? = nil) -> some View {
+        VStack(alignment: .leading, spacing: 2) {
+            Text(title)
+                .font(.caption)
+                .foregroundStyle(.secondary)
+            Text("\(Int(liters.rounded())) L")
+                .font(.title3.weight(.semibold))
+            if let changePercent {
+                Text("\(changePercent > 0 ? "↑" : "↓") \(abs(changePercent)) % vs mois précédent")
+                    .font(.caption2)
+                    .foregroundStyle(.secondary)
+            }
+        }
     }
 }
 

@@ -15,7 +15,9 @@ struct OasisCareApp: App {
             PendingDeletion.self,
             SpeciesProfile.self,
             AIAnalysis.self,
-            DashboardPreferences.self
+            DashboardPreferences.self,
+            IrrigationZone.self,
+            IrrigationEvent.self
         ])
         let configuration = ModelConfiguration(schema: schema)
 
