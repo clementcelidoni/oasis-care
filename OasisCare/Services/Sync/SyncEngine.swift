@@ -157,6 +157,11 @@ final class SyncEngine: ObservableObject {
             )
             plant.id = row.id
             plant.isArchived = row.isArchived
+            plant.latitude = row.latitude
+            plant.longitude = row.longitude
+            plant.mapPositionX = row.mapPositionX
+            plant.mapPositionY = row.mapPositionY
+            plant.positionSource = row.positionSource
             plant.syncStatus = .synced
             plant.updatedAt = row.updatedAt
             if let path = row.photoStoragePath { plant.photoData = try? await downloadPhoto(path: path) }
@@ -304,6 +309,11 @@ final class SyncEngine: ObservableObject {
         var isArchived: Bool
         var photoStoragePath: String?
         var thumbnailStoragePath: String?
+        var latitude: Double?
+        var longitude: Double?
+        var mapPositionX: Double?
+        var mapPositionY: Double?
+        var positionSource: String?
         var updatedAt: Date?
 
         enum CodingKeys: String, CodingKey {
@@ -321,6 +331,10 @@ final class SyncEngine: ObservableObject {
             case isArchived = "is_archived"
             case photoStoragePath = "photo_storage_path"
             case thumbnailStoragePath = "thumbnail_storage_path"
+            case latitude, longitude
+            case mapPositionX = "map_position_x"
+            case mapPositionY = "map_position_y"
+            case positionSource = "position_source"
             case updatedAt = "updated_at"
         }
     }
@@ -523,6 +537,11 @@ final class SyncEngine: ObservableObject {
         var isArchived: Bool
         var photoStoragePath: String?
         var thumbnailStoragePath: String?
+        var latitude: Double?
+        var longitude: Double?
+        var mapPositionX: Double?
+        var mapPositionY: Double?
+        var positionSource: String?
         var updatedAt: Date
 
         enum CodingKeys: String, CodingKey {
@@ -541,6 +560,10 @@ final class SyncEngine: ObservableObject {
             case isArchived = "is_archived"
             case photoStoragePath = "photo_storage_path"
             case thumbnailStoragePath = "thumbnail_storage_path"
+            case latitude, longitude
+            case mapPositionX = "map_position_x"
+            case mapPositionY = "map_position_y"
+            case positionSource = "position_source"
             case updatedAt = "updated_at"
         }
     }
@@ -568,6 +591,9 @@ final class SyncEngine: ObservableObject {
                 type: plant.type, isIndoor: plant.isIndoor, notes: plant.notes, dateAdded: plant.dateAdded,
                 healthStatus: plant.healthStatus, isArchived: plant.isArchived,
                 photoStoragePath: photoPath, thumbnailStoragePath: thumbnailPath,
+                latitude: plant.latitude, longitude: plant.longitude,
+                mapPositionX: plant.mapPositionX, mapPositionY: plant.mapPositionY,
+                positionSource: plant.positionSource,
                 updatedAt: plant.updatedAt ?? .now
             ))
         }

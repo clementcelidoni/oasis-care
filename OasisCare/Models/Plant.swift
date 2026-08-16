@@ -25,6 +25,18 @@ final class Plant: Syncable {
     var zone: GardenZone?
     var speciesProfile: SpeciesProfile?
 
+    /// Spec §24 — all optional, "les coordonnées restent facultatives."
+    /// latitude/longitude place the plant on the real MapKit map.
+    /// mapPositionX/Y are a reserved, currently-unused seam for a
+    /// future custom garden-plan-image overlay (spec §30: "conserver
+    /// également... pour permettre plus tard d'utiliser un plan/image
+    /// du jardin" — no drawing tool built now, just the columns).
+    var latitude: Double?
+    var longitude: Double?
+    var mapPositionX: Double?
+    var mapPositionY: Double?
+    var positionSource: String?
+
     @Relationship(deleteRule: .cascade, inverse: \CareEvent.plant)
     var careEvents: [CareEvent] = []
 
@@ -84,4 +96,6 @@ final class Plant: Syncable {
     func schedule(for type: CareEventType) -> CareSchedule? {
         careSchedules.first { $0.type == type }
     }
+
+    var hasMapPosition: Bool { latitude != nil && longitude != nil }
 }

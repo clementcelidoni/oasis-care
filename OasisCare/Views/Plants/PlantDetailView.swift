@@ -10,6 +10,7 @@ struct PlantDetailView: View {
         case configureSchedule(CareEventType)
         case assistant
         case diagnosis
+        case placeOnMap
 
         var id: String {
             switch self {
@@ -18,6 +19,7 @@ struct PlantDetailView: View {
             case .configureSchedule(let type): return "configureSchedule-\(type.rawValue)"
             case .assistant: return "assistant"
             case .diagnosis: return "diagnosis"
+            case .placeOnMap: return "placeOnMap"
             }
         }
     }
@@ -135,6 +137,8 @@ struct PlantDetailView: View {
                 PlantAssistantView(plant: plant)
             case .diagnosis:
                 PlantDiagnosisView(plant: plant)
+            case .placeOnMap:
+                PlacePlantOnMapSheet(plant: plant)
             }
         }
         .onChange(of: selectedPhotoItem) { _, newItem in
@@ -221,6 +225,18 @@ struct PlantDetailView: View {
                     .font(.caption)
                     .foregroundStyle(.secondary)
             }
+
+            Button {
+                activeSheet = .placeOnMap
+            } label: {
+                Label(
+                    plant.hasMapPosition ? "Position dans le jardin définie" : "Position dans le jardin",
+                    systemImage: plant.hasMapPosition ? "mappin.circle.fill" : "mappin.circle"
+                )
+                .font(.caption.weight(.medium))
+            }
+            .buttonStyle(.plain)
+            .foregroundStyle(plant.hasMapPosition ? Color.accentColor : .secondary)
         }
     }
 

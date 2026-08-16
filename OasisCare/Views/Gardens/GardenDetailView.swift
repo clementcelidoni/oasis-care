@@ -16,6 +16,17 @@ struct GardenDetailView: View {
         }
     }
 
+    private enum ViewMode: String, CaseIterable {
+        case list, map
+
+        var label: String {
+            switch self {
+            case .list: return "Liste"
+            case .map: return "Carte"
+            }
+        }
+    }
+
     var garden: Garden
 
     @Environment(\.modelContext) private var modelContext
@@ -23,38 +34,33 @@ struct GardenDetailView: View {
     @State private var activeSheet: ActiveSheet?
     @State private var isBulkWaterSheetPresented = false
     @State private var zonePendingDeletion: GardenZone?
+    @State private var viewMode: ViewMode = .list
 
     private var plantsDueForWatering: [Plant] {
         garden.plants.filter { $0.schedule(for: .watering)?.isDue ?? false }
     }
 
     var body: some View {
-        ScrollView {
-            VStack(alignment: .leading, spacing: 24) {
-                if let address = garden.address, !address.isEmpty {
-                    Label(address, systemImage: "location.fill")
-                        .font(.subheadline)
-                        .foregroundStyle(.secondary)
-                }
-
-                if !garden.notes.isEmpty {
-                    Text(garden.notes)
-                        .font(.subheadline)
-                        .foregroundStyle(.secondary)
-                }
-
-                if !plantsDueForWatering.isEmpty {
-                    quickWaterBanner
-                }
-
-                zonesSection
-                plantsSection
+        Group {
+            switch viewMode {
+            case .list:
+                listContent
+            case .map:
+                GardenMapView(garden: garden)
             }
-            .padding()
         }
         .navigationTitle(garden.name)
         .navigationBarTitleDisplayMode(.inline)
         .toolbar {
+            ToolbarItem(placement: .principal) {
+                Picker("Affichage", selection: $viewMode) {
+                    ForEach(ViewMode.allCases, id: \.self) { mode in
+                        Text(mode.label).tag(mode)
+                    }
+                }
+                .pickerStyle(.segmented)
+                .frame(width: 160)
+            }
             ToolbarItem(placement: .topBarTrailing) {
                 Button("Modifier") { activeSheet = .edit }
             }
@@ -94,6 +100,32 @@ struct GardenDetailView: View {
             }
         } message: {
             Text("Les végétaux de cette zone seront conservés, sans zone associée. Cette action est irréversible.")
+        }
+    }
+
+    private var listContent: some View {
+        ScrollView {
+            VStack(alignment: .leading, spacing: 24) {
+                if let address = garden.address, !address.isEmpty {
+                    Label(address, systemImage: "location.fill")
+                        .font(.subheadline)
+                        .foregroundStyle(.secondary)
+                }
+
+                if !garden.notes.isEmpty {
+                    Text(garden.notes)
+                        .font(.subheadline)
+                        .foregroundStyle(.secondary)
+                }
+
+                if !plantsDueForWatering.isEmpty {
+                    quickWaterBanner
+                }
+
+                zonesSection
+                plantsSection
+            }
+            .padding()
         }
     }
 
