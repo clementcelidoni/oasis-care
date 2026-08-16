@@ -68,6 +68,12 @@ struct SettingsView: View {
             }
 
             Section {
+                NavigationLink("Personnaliser l'accueil") {
+                    DashboardCustomizationView()
+                }
+            }
+
+            Section {
                 Toggle("Rappels activés", isOn: notificationsBinding)
                     .accessibilityIdentifier("notificationsEnabledToggle")
             } footer: {

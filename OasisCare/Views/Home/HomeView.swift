@@ -2,18 +2,57 @@ import SwiftUI
 import SwiftData
 
 struct HomeView: View {
+    @Environment(\.modelContext) private var modelContext
+    @ObservedObject private var authState = AuthState.shared
+
     @Query(filter: #Predicate<Plant> { !$0.isArchived }, sort: \Plant.customName)
-    private var plants: [Plant]
+    private var allPlants: [Plant]
+    @Query private var allSchedules: [CareSchedule]
+    @Query private var allEvents: [CareEvent]
+    @Query private var allPhotos: [PlantPhoto]
+    @Query(sort: \Garden.name) private var gardens: [Garden]
+    @Query private var preferencesQuery: [DashboardPreferences]
 
-    @Query private var schedules: [CareSchedule]
+    @State private var selectedGarden: Garden?
+    @State private var isOasisSheetPresented = false
+    @State private var addPlantSheet: AddPlantSheet?
 
-    private var dueSchedules: [CareSchedule] {
-        schedules.filter { $0.isDue }
+    private enum AddPlantSheet: Identifiable {
+        case scanner, manual, addEvent
+        var id: Self { self }
     }
 
-    private var overdueSchedules: [CareSchedule] {
-        schedules.filter { $0.isOverdue }
+    private var preferences: DashboardPreferences {
+        preferencesQuery.first ?? DashboardPreferences()
     }
+
+    private var plants: [Plant] {
+        guard let selectedGarden else { return allPlants }
+        return allPlants.filter { $0.garden?.id == selectedGarden.id }
+    }
+
+    private var schedules: [CareSchedule] {
+        scoped(allSchedules) { $0.plant?.id }
+    }
+
+    private var events: [CareEvent] {
+        scoped(allEvents) { $0.plant?.id }
+    }
+
+    private var photos: [PlantPhoto] {
+        scoped(allPhotos) { $0.plant?.id }
+    }
+
+    private func scoped<T>(_ items: [T], plantID: (T) -> UUID?) -> [T] {
+        guard selectedGarden != nil else { return items }
+        let ids = Set(plants.map(\.id))
+        return items.filter { plantID($0).map(ids.contains) ?? false }
+    }
+
+    private var dueSchedules: [CareSchedule] { schedules.filter { $0.isDue } }
+    private var overdueSchedules: [CareSchedule] { schedules.filter { $0.isOverdue } }
+    private var monitoredPlants: [Plant] { plants.filter { $0.healthStatus != .healthy } }
+    private var insights: [GardenInsightService.Insight] { GardenInsightService.insights(plants: plants) }
 
     private func dueCount(for type: CareEventType) -> Int {
         dueSchedules.filter { $0.type == type }.count
@@ -26,14 +65,6 @@ struct HomeView: View {
 
     private var categoriesWithDue: [CareEventType] {
         CareEventType.schedulable.filter { dueCount(for: $0) > 0 }
-    }
-
-    private var toMonitorCount: Int {
-        monitoredPlants.count
-    }
-
-    private var monitoredPlants: [Plant] {
-        plants.filter { $0.healthStatus != .healthy }
     }
 
     private var overduePlants: [Plant] {
@@ -59,7 +90,7 @@ struct HomeView: View {
     var body: some View {
         NavigationStack {
             Group {
-                if plants.isEmpty {
+                if allPlants.isEmpty {
                     EmptyStateView(
                         icon: "leaf",
                         title: "Aucun végétal pour l'instant",
@@ -68,26 +99,63 @@ struct HomeView: View {
                 } else {
                     ScrollView {
                         VStack(alignment: .leading, spacing: 24) {
-                            todaySection
+                            header
 
-                            if !overdueSchedules.isEmpty {
-                                VStack(alignment: .leading, spacing: 8) {
-                                    Text("Interventions en retard")
-                                        .font(.headline)
+                            if preferences.showHealth {
+                                GlobalSummaryCard(plants: plants)
+                                HealthScoreCard(score: DashboardService.healthScore(plants: plants))
+                            }
 
-                                    VStack(spacing: 0) {
-                                        ForEach(overdueSchedules.prefix(5)) { schedule in
-                                            if let plant = schedule.plant {
-                                                NavigationLink(value: plant) {
-                                                    ScheduleRow(schedule: schedule, plant: plant)
-                                                }
-                                                .buttonStyle(.plain)
-                                                Divider()
-                                            }
-                                        }
-                                    }
+                            if preferences.showToday {
+                                todaySection
+                                bulkActionsSection
+                            }
+
+                            if preferences.showAlerts && !insights.isEmpty {
+                                AlertsCard(insights: insights)
+                            }
+
+                            if preferences.showWeather {
+                                WeatherCard(garden: selectedGarden)
+                            }
+
+                            if preferences.showUpcoming {
+                                let upcoming = DashboardService.upcoming(schedules: schedules)
+                                if !upcoming.isEmpty {
+                                    UpcomingCard(days: upcoming)
                                 }
                             }
+
+                            if preferences.showRecentActivity {
+                                let recent = DashboardService.recentActivity(events: events)
+                                if !recent.isEmpty {
+                                    RecentActivityCard(events: recent)
+                                }
+                            }
+
+                            if preferences.showWater {
+                                WaterCard()
+                            }
+
+                            if preferences.showEvolution {
+                                EvolutionCard(evolution: DashboardService.evolution(plants: plants, photos: photos))
+                            }
+
+                            if preferences.showOasisAI {
+                                OasisAICard(
+                                    insights: insights,
+                                    todayTaskCount: dueSchedules.count
+                                ) {
+                                    isOasisSheetPresented = true
+                                }
+                            }
+
+                            QuickActionsGrid(
+                                onAddPlant: { addPlantSheet = .manual },
+                                onScan: { addPlantSheet = .scanner },
+                                onBulkWater: { performBulkCare(.watering) },
+                                onAddIntervention: { addPlantSheet = .addEvent }
+                            )
                         }
                         .padding()
                     }
@@ -117,7 +185,88 @@ struct HomeView: View {
                 .navigationTitle(filter.title)
                 .navigationBarTitleDisplayMode(.inline)
             }
+            .navigationDestination(for: AllInsightsRoute.self) { _ in
+                List(insights) { insight in
+                    InsightRow(insight: insight)
+                }
+                .listStyle(.plain)
+                .navigationTitle("Alertes")
+                .navigationBarTitleDisplayMode(.inline)
+            }
+            .sheet(isPresented: $isOasisSheetPresented) {
+                OasisAssistantSheet(
+                    context: GardenAIContext.build(
+                        gardenName: selectedGarden?.name,
+                        plants: plants,
+                        todaySchedules: dueSchedules,
+                        overdueCount: overdueSchedules.count,
+                        insights: insights,
+                        recentEvents: DashboardService.recentActivity(events: events, limit: 15)
+                    )
+                )
+            }
+            .sheet(item: $addPlantSheet) { sheet in
+                switch sheet {
+                case .scanner:
+                    ScannerView()
+                case .manual:
+                    PlantFormView(plant: nil)
+                case .addEvent:
+                    AddCareEventSheet(plants: plants)
+                }
+            }
+            .task {
+                _ = DashboardService.preferences(in: modelContext)
+            }
         }
+    }
+
+    private var header: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            HStack {
+                VStack(alignment: .leading, spacing: 2) {
+                    Text(greeting)
+                        .font(.title2.weight(.semibold))
+                    Text(Date.now.formatted(.dateTime.weekday(.wide).day().month(.wide)).capitalized)
+                        .font(.subheadline)
+                        .foregroundStyle(.secondary)
+                }
+                Spacer()
+            }
+
+            Menu {
+                Button("Tous mes jardins") { selectedGarden = nil }
+                if !gardens.isEmpty {
+                    Divider()
+                    ForEach(gardens) { garden in
+                        Button(garden.name) { selectedGarden = garden }
+                    }
+                }
+            } label: {
+                HStack(spacing: 4) {
+                    Text(selectedGarden?.name ?? "Tous mes jardins")
+                    Image(systemName: "chevron.down")
+                        .font(.caption2)
+                }
+                .font(.subheadline.weight(.medium))
+                .foregroundStyle(Color.accentColor)
+            }
+        }
+    }
+
+    private var greeting: String {
+        if let name = greetingName {
+            return "Bonjour \(name) 🌿"
+        }
+        return "Bonjour 🌿"
+    }
+
+    private var greetingName: String? {
+        guard case .authenticated = authState.status, let email = authState.session?.user.email else { return nil }
+        let localPart = email.split(separator: "@").first.map(String.init) ?? email
+        let namePart = localPart.split(separator: ".").first.map(String.init) ?? localPart
+        guard let first = namePart.first else { return nil }
+        return String(first).uppercased() + String(namePart.dropFirst())
     }
 
     private var todaySection: some View {
@@ -134,7 +283,7 @@ struct HomeView: View {
                 }
 
                 NavigationLink(value: PlantCategoryFilter(title: "À surveiller", plants: monitoredPlants)) {
-                    SummaryCard(title: "À surveiller", count: toMonitorCount, icon: "eye.fill", tint: .orange)
+                    SummaryCard(title: "À surveiller", count: monitoredPlants.count, icon: "eye.fill", tint: .orange)
                 }
                 .buttonStyle(.plain)
 
@@ -145,9 +294,41 @@ struct HomeView: View {
             }
         }
     }
+
+    /// Spec §5: group action directly from the dashboard, reusing
+    /// CareScheduleEngine — the same engine PlantListView's bulk
+    /// actions use, not a second implementation of the same logic.
+    @ViewBuilder
+    private var bulkActionsSection: some View {
+        let bulkable: [CareEventType] = [.watering, .fertilizing]
+        let rows = bulkable.filter { dueCount(for: $0) > 0 }
+        if !rows.isEmpty {
+            VStack(spacing: 8) {
+                ForEach(rows) { type in
+                    BulkActionRow(type: type, count: dueCount(for: type)) {
+                        performBulkCare(type)
+                    }
+                }
+            }
+        }
+    }
+
+    private func performBulkCare(_ type: CareEventType) {
+        let targets = plants(dueFor: type)
+        guard !targets.isEmpty else { return }
+        let result = CareScheduleEngine.recordCareForMultiple(type, plants: targets, in: modelContext)
+        Haptics.success()
+        let count = targets.count
+        ToastCenter.shared.show(
+            title: "✓ \(count) plante\(count > 1 ? "s" : "") — \(type.displayName.lowercased())",
+            undoAction: result.undo
+        )
+    }
 }
 
-private struct PlantCategoryFilter: Hashable {
+struct PlantCategoryFilter: Hashable {
     var title: String
     var plants: [Plant]
 }
+
+struct AllInsightsRoute: Hashable {}

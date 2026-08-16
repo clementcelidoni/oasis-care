@@ -36,7 +36,7 @@ struct BulkChangeZoneSheet: View {
                         }
                     }
                 } footer: {
-                    Text("\(plants.count) végétal\(plants.count > 1 ? "aux" : "") déplacé\(plants.count > 1 ? "s" : "").")
+                    Text("\(plants.count) \(plants.count > 1 ? "végétaux" : "végétal") déplacé\(plants.count > 1 ? "s" : "").")
                 }
             }
             .navigationTitle("Modifier la zone")
