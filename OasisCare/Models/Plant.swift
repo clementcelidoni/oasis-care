@@ -54,6 +54,9 @@ final class Plant: Syncable {
     @Relationship(deleteRule: .cascade, inverse: \AIAnalysis.plant)
     var aiAnalyses: [AIAnalysis] = []
 
+    @Relationship(deleteRule: .cascade, inverse: \SmartTag.plant)
+    var smartTags: [SmartTag] = []
+
     init(
         customName: String,
         commonName: String? = nil,

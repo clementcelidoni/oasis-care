@@ -11,6 +11,8 @@ struct PlantDetailView: View {
         case assistant
         case diagnosis
         case placeOnMap
+        case qrCode(SmartTag)
+        case nfcAssociate
 
         var id: String {
             switch self {
@@ -20,6 +22,8 @@ struct PlantDetailView: View {
             case .assistant: return "assistant"
             case .diagnosis: return "diagnosis"
             case .placeOnMap: return "placeOnMap"
+            case .qrCode(let tag): return "qrCode-\(tag.id.uuidString)"
+            case .nfcAssociate: return "nfcAssociate"
             }
         }
     }
@@ -87,6 +91,7 @@ struct PlantDetailView: View {
                 quickActions
                 aiSection
                 upcomingCare
+                smartTagSection
                 if !plant.photos.isEmpty {
                     evolutionSection
                 }
@@ -139,6 +144,10 @@ struct PlantDetailView: View {
                 PlantDiagnosisView(plant: plant)
             case .placeOnMap:
                 PlacePlantOnMapSheet(plant: plant)
+            case .qrCode(let tag):
+                QRCodeSheet(plant: plant, tag: tag)
+            case .nfcAssociate:
+                NFCAssociationSheet(plant: plant)
             }
         }
         .onChange(of: selectedPhotoItem) { _, newItem in
@@ -452,6 +461,53 @@ struct PlantDetailView: View {
                     .padding(.top, 4)
                 }
                 .font(.subheadline.weight(.medium))
+            }
+        }
+    }
+
+    private var qrTag: SmartTag? {
+        plant.smartTags.first { $0.type == .qr && $0.active }
+    }
+
+    private var nfcTag: SmartTag? {
+        plant.smartTags.first { $0.type == .nfc && $0.active }
+    }
+
+    /// Spec §42 — "Étiquette intelligente" with its two independent
+    /// entry points. NFC's button label doesn't offer "voir" the way QR
+    /// does: there's nothing to display for an NFC tag beyond what's
+    /// already implied by its existing/not-existing state, and
+    /// dissociating it lives inside NFCAssociationSheet's own flow if
+    /// the user re-associates.
+    private var smartTagSection: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            Text("Étiquette intelligente")
+                .font(.headline)
+            HStack(spacing: 12) {
+                Button {
+                    let tag = SmartTagService.tag(for: plant, type: .qr, in: modelContext)
+                    activeSheet = .qrCode(tag)
+                } label: {
+                    ActionButtonLabel(
+                        title: qrTag != nil ? "Voir le QR" : "Afficher QR",
+                        icon: "qrcode",
+                        tint: .indigo
+                    )
+                }
+                .buttonStyle(.plain)
+                .accessibilityIdentifier("showQRButton")
+
+                Button {
+                    activeSheet = .nfcAssociate
+                } label: {
+                    ActionButtonLabel(
+                        title: nfcTag != nil ? "Tag NFC associé" : "Associer NFC",
+                        icon: "wave.3.right",
+                        tint: .teal
+                    )
+                }
+                .buttonStyle(.plain)
+                .accessibilityIdentifier("associateNFCButton")
             }
         }
     }

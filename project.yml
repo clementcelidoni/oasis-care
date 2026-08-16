@@ -47,6 +47,7 @@ targets:
         ITSAppUsesNonExemptEncryption: false
         NSCameraUsageDescription: "Oasis Care a besoin de l'appareil photo pour prendre des photos de vos végétaux."
         NSLocationWhenInUseUsageDescription: "Oasis Care peut utiliser votre position pour afficher la météo d'un jardin. Vous pouvez toujours saisir une position manuellement."
+        NFCReaderUsageDescription: "Oasis Care utilise le NFC pour associer une étiquette intelligente à un végétal et l'ouvrir en approchant votre iPhone."
         CFBundleURLTypes:
           - CFBundleURLSchemes:
               - com.oasisrarecare.app

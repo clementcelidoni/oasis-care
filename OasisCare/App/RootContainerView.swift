@@ -11,6 +11,7 @@ struct RootContainerView: View {
 
     @ObservedObject private var authState = AuthState.shared
     @ObservedObject private var syncEngine = SyncEngine.shared
+    @ObservedObject private var deepLinkRouter = DeepLinkRouter.shared
     @AppStorage("hasSeenWelcome") private var hasSeenWelcome = false
 
     var body: some View {
@@ -36,10 +37,14 @@ struct RootContainerView: View {
         .onChange(of: authState.status) { _, newStatus in
             guard case .authenticated = newStatus else { return }
             Task { await syncEngine.syncIfPossible(context: modelContext) }
+            deepLinkRouter.retryPendingTokenIfNeeded(context: modelContext)
         }
         .onChange(of: scenePhase) { _, newPhase in
             guard newPhase == .active else { return }
             Task { await syncEngine.syncIfPossible(context: modelContext) }
+        }
+        .onOpenURL { url in
+            deepLinkRouter.handle(url: url, context: modelContext)
         }
     }
 }

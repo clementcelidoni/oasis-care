@@ -25,14 +25,32 @@ struct ScannerView: View {
     @State private var selectedPhotoItem: PhotosPickerItem?
     @State private var isSignInPresented = false
     @State private var prefill: PlantPrefill?
+    @State private var isQRScannerPresented = false
+    @State private var isScanningNFC = false
+    @State private var nfcScannedPlant: Plant?
+    @State private var nfcErrorMessage: String?
+    @Environment(\.modelContext) private var modelContext
 
     var body: some View {
         NavigationStack {
-            Group {
-                if case .authenticated = authState.status {
-                    content
-                } else {
-                    signInPrompt
+            VStack(spacing: 0) {
+                // Spec §49: QR/NFC scanning is local-only (SmartTagService
+                // resolves purely from on-device data) and, per this same
+                // screen's own sign-in prompt below, guests keep full
+                // access to everything except AI photo identification —
+                // so unlike `content`, this row is never gated behind
+                // authState.
+                scanButtonsSection
+                    .padding()
+
+                Divider()
+
+                Group {
+                    if case .authenticated = authState.status {
+                        content
+                    } else {
+                        signInPrompt
+                    }
                 }
             }
             .navigationTitle("Scanner une plante")
@@ -71,6 +89,73 @@ struct ScannerView: View {
                     onSaved: onSaved
                 )
             }
+            .fullScreenCover(isPresented: $isQRScannerPresented) {
+                QRScannerSheet()
+            }
+            .sheet(item: $nfcScannedPlant) { plant in
+                QuickActionsAfterScanSheet(plant: plant)
+            }
+        }
+    }
+
+    private var scanButtonsSection: some View {
+        VStack(spacing: 8) {
+            HStack(spacing: 12) {
+                Button {
+                    isQRScannerPresented = true
+                } label: {
+                    Label("Scanner QR", systemImage: "qrcode.viewfinder")
+                        .frame(maxWidth: .infinity)
+                }
+                .buttonStyle(.bordered)
+                .accessibilityIdentifier("scanQRButton")
+
+                Button {
+                    Task { await scanNFC() }
+                } label: {
+                    if isScanningNFC {
+                        ProgressView()
+                            .frame(maxWidth: .infinity)
+                    } else {
+                        Label("Scanner NFC", systemImage: "wave.3.right")
+                            .frame(maxWidth: .infinity)
+                    }
+                }
+                .buttonStyle(.bordered)
+                .disabled(isScanningNFC)
+                .accessibilityIdentifier("scanNFCButton")
+            }
+
+            if let nfcErrorMessage {
+                Text(nfcErrorMessage)
+                    .font(.caption)
+                    .foregroundStyle(.red)
+                    .multilineTextAlignment(.center)
+            }
+        }
+    }
+
+    private func scanNFC() async {
+        isScanningNFC = true
+        nfcErrorMessage = nil
+        defer { isScanningNFC = false }
+        do {
+            let url = try await NFCService.shared.read(alertMessage: "Approchez l'iPhone de l'étiquette NFC")
+            guard let token = SmartTagConfig.token(from: url),
+                  let tag = SmartTagService.existingTag(forToken: token, in: modelContext),
+                  let plant = tag.plant else {
+                nfcErrorMessage = "Ce tag NFC n'est associé à aucun végétal sur cet appareil."
+                return
+            }
+            SmartTagService.markScanned(tag)
+            Haptics.success()
+            nfcScannedPlant = plant
+        } catch NFCServiceError.cancelled {
+            // User backed out — no error to show.
+        } catch let error as NFCServiceError {
+            nfcErrorMessage = error.errorDescription
+        } catch {
+            nfcErrorMessage = error.localizedDescription
         }
     }
 

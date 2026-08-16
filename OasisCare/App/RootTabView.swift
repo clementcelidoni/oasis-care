@@ -4,6 +4,7 @@ import SwiftData
 struct RootTabView: View {
     @Environment(\.modelContext) private var modelContext
     @ObservedObject private var notificationRouter = NotificationRouter.shared
+    @ObservedObject private var deepLinkRouter = DeepLinkRouter.shared
     @ObservedObject private var toastCenter = ToastCenter.shared
 
     @State private var deepLinkedPlant: Plant?
@@ -30,11 +31,23 @@ struct RootTabView: View {
                 #if DEBUG
                 DemoData.seedIfNeeded(context: modelContext)
                 #endif
+                // .onChange below only fires on a value that changes AFTER
+                // this view is observing it — a cold launch via Universal
+                // Link (or a tapped notification) before RootTabView ever
+                // mounted, e.g. on a fresh install still showing Welcome,
+                // would otherwise set pendingPlantID and have no observer
+                // catch it. Checking once on appear closes that gap.
+                checkPendingRoutes()
             }
             .onChange(of: notificationRouter.pendingPlantID) { _, newID in
                 guard let newID else { return }
                 deepLinkedPlant = findPlant(id: newID)
                 notificationRouter.pendingPlantID = nil
+            }
+            .onChange(of: deepLinkRouter.pendingPlantID) { _, newID in
+                guard let newID else { return }
+                deepLinkedPlant = findPlant(id: newID)
+                deepLinkRouter.pendingPlantID = nil
             }
             .sheet(item: $deepLinkedPlant) { plant in
                 NavigationStack {
@@ -60,6 +73,16 @@ struct RootTabView: View {
                 .transition(.move(edge: .bottom).combined(with: .opacity))
                 .animation(.spring(duration: 0.35), value: toastCenter.current?.id)
             }
+        }
+    }
+
+    private func checkPendingRoutes() {
+        if let id = notificationRouter.pendingPlantID {
+            deepLinkedPlant = findPlant(id: id)
+            notificationRouter.pendingPlantID = nil
+        } else if let id = deepLinkRouter.pendingPlantID {
+            deepLinkedPlant = findPlant(id: id)
+            deepLinkRouter.pendingPlantID = nil
         }
     }
 

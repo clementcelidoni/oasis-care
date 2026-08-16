@@ -42,6 +42,7 @@ final class SyncEngine: ObservableObject {
             try await pushEvents(context: context)
             try await pushPlantPhotos(workspaceID: workspaceID, context: context)
             try await pushAIAnalyses(context: context)
+            try await pushSmartTags(workspaceID: workspaceID, context: context)
             try await pushIrrigationEvents(context: context)
             try await pushDashboardPreferences(workspaceID: workspaceID, context: context)
             try await pushPendingDeletions(context: context)
@@ -66,8 +67,9 @@ final class SyncEngine: ObservableObject {
         let preferences = (try? context.fetch(FetchDescriptor<DashboardPreferences>()))?.filter { $0.syncStatus != .synced }.count ?? 0
         let irrigationZones = (try? context.fetch(FetchDescriptor<IrrigationZone>()))?.filter { $0.syncStatus != .synced }.count ?? 0
         let irrigationEvents = (try? context.fetch(FetchDescriptor<IrrigationEvent>()))?.filter { $0.syncStatus != .synced }.count ?? 0
+        let smartTags = (try? context.fetch(FetchDescriptor<SmartTag>()))?.filter { $0.syncStatus != .synced }.count ?? 0
         let deletions = (try? context.fetchCount(FetchDescriptor<PendingDeletion>())) ?? 0
-        return gardens + zones + plants + schedules + events + photos + analyses + preferences + irrigationZones + irrigationEvents + deletions
+        return gardens + zones + plants + schedules + events + photos + analyses + preferences + irrigationZones + irrigationEvents + smartTags + deletions
     }
 
     private static let photoBucket = "plant-photos"
@@ -242,6 +244,23 @@ final class SyncEngine: ObservableObject {
             analysis.id = row.id
             analysis.syncStatus = .synced
             context.insert(analysis)
+        }
+
+        let remoteSmartTags: [SmartTagRow] = try await AuthService.client.from("smart_tags").select().execute().value
+        for row in remoteSmartTags {
+            guard let plant = plantsByID[row.plantId] else { continue }
+            let tag = SmartTag(plant: plant, type: row.type)
+            tag.id = row.id
+            // Must carry over the ORIGINAL token, not the fresh random
+            // one the initializer just generated — physical QR/NFC tags
+            // already have this token printed/written on them.
+            tag.publicToken = row.publicToken
+            tag.active = row.active
+            tag.createdAt = row.createdAt
+            tag.lastScannedAt = row.lastScannedAt
+            tag.syncStatus = .synced
+            tag.updatedAt = row.updatedAt
+            context.insert(tag)
         }
 
         let remoteIrrigationEvents: [IrrigationEventRow] = try await AuthService.client.from("irrigation_events").select().execute().value
@@ -482,6 +501,28 @@ final class SyncEngine: ObservableObject {
             case type, date, summary
             case structuredData = "structured_data"
             case provider, model, confidence
+        }
+    }
+
+    private struct SmartTagRow: Decodable {
+        var id: UUID
+        var plantId: UUID
+        var type: SmartTagType
+        var publicToken: String
+        var active: Bool
+        var createdAt: Date
+        var lastScannedAt: Date?
+        var updatedAt: Date?
+
+        enum CodingKeys: String, CodingKey {
+            case id
+            case plantId = "plant_id"
+            case type
+            case publicToken = "public_token"
+            case active
+            case createdAt = "created_at"
+            case lastScannedAt = "last_scanned_at"
+            case updatedAt = "updated_at"
         }
     }
 
@@ -901,6 +942,48 @@ final class SyncEngine: ObservableObject {
         guard !dtos.isEmpty else { return }
         try await AuthService.client.from("ai_analyses").upsert(dtos).execute()
         for analysis in pending where analysis.plant != nil { analysis.syncStatus = .synced }
+    }
+
+    // MARK: - Smart tags
+
+    private struct SmartTagDTO: Encodable {
+        var id: UUID
+        var workspaceId: UUID
+        var plantId: UUID
+        var type: SmartTagType
+        var publicToken: String
+        var active: Bool
+        var createdAt: Date
+        var lastScannedAt: Date?
+        var updatedAt: Date
+
+        enum CodingKeys: String, CodingKey {
+            case id
+            case workspaceId = "workspace_id"
+            case plantId = "plant_id"
+            case type
+            case publicToken = "public_token"
+            case active
+            case createdAt = "created_at"
+            case lastScannedAt = "last_scanned_at"
+            case updatedAt = "updated_at"
+        }
+    }
+
+    private func pushSmartTags(workspaceID: UUID, context: ModelContext) async throws {
+        let pending = try context.fetch(FetchDescriptor<SmartTag>()).filter { $0.syncStatus != .synced }
+        guard !pending.isEmpty else { return }
+        let dtos = pending.compactMap { tag -> SmartTagDTO? in
+            guard let plantID = tag.plant?.id else { return nil }
+            return SmartTagDTO(
+                id: tag.id, workspaceId: workspaceID, plantId: plantID, type: tag.type,
+                publicToken: tag.publicToken, active: tag.active, createdAt: tag.createdAt,
+                lastScannedAt: tag.lastScannedAt, updatedAt: tag.updatedAt ?? .now
+            )
+        }
+        guard !dtos.isEmpty else { return }
+        try await AuthService.client.from("smart_tags").upsert(dtos).execute()
+        for tag in pending where tag.plant != nil { tag.syncStatus = .synced }
     }
 
     // MARK: - Irrigation events
