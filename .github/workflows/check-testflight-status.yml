@@ -9,7 +9,9 @@ jobs:
 
     steps:
       - name: Install PyJWT
-        run: pip3 install --quiet pyjwt cryptography
+        run: |
+          python3 -m venv "$RUNNER_TEMP/venv"
+          "$RUNNER_TEMP/venv/bin/pip" install --quiet pyjwt cryptography
 
       - name: Write query script
         run: |
@@ -67,4 +69,4 @@ jobs:
         run: |
           echo "${{ secrets.APP_STORE_CONNECT_API_KEY_CONTENT }}" | base64 --decode > "$RUNNER_TEMP/AuthKey.p8"
           export KEY_PATH="$RUNNER_TEMP/AuthKey.p8"
-          python3 "$RUNNER_TEMP/check_status.py"
+          "$RUNNER_TEMP/venv/bin/python3" "$RUNNER_TEMP/check_status.py"
