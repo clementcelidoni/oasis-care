@@ -23,6 +23,7 @@ final class Plant: Syncable {
 
     var garden: Garden?
     var zone: GardenZone?
+    var speciesProfile: SpeciesProfile?
 
     @Relationship(deleteRule: .cascade, inverse: \CareEvent.plant)
     var careEvents: [CareEvent] = []
@@ -32,6 +33,9 @@ final class Plant: Syncable {
 
     @Relationship(deleteRule: .cascade, inverse: \PlantPhoto.plant)
     var photos: [PlantPhoto] = []
+
+    @Relationship(deleteRule: .cascade, inverse: \AIAnalysis.plant)
+    var aiAnalyses: [AIAnalysis] = []
 
     init(
         customName: String,
@@ -44,6 +48,7 @@ final class Plant: Syncable {
         healthStatus: HealthStatus = .healthy,
         garden: Garden? = nil,
         zone: GardenZone? = nil,
+        speciesProfile: SpeciesProfile? = nil,
         photoData: Data? = nil,
         thumbnailData: Data? = nil
     ) {
@@ -59,6 +64,7 @@ final class Plant: Syncable {
         self.isArchived = false
         self.garden = garden
         self.zone = zone
+        self.speciesProfile = speciesProfile
         self.photoData = photoData
         self.thumbnailData = thumbnailData
         self.syncStatus = .pendingCreate

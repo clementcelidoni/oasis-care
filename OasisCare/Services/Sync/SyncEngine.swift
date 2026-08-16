@@ -33,12 +33,14 @@ final class SyncEngine: ObservableObject {
 
         do {
             let workspaceID = try await fetchWorkspaceID()
+            try await restoreFromCloudIfNeeded(context: context)
             try await pushGardens(workspaceID: workspaceID, context: context)
             try await pushZones(context: context)
             try await pushPlants(workspaceID: workspaceID, context: context)
             try await pushSchedules(context: context)
             try await pushEvents(context: context)
             try await pushPlantPhotos(workspaceID: workspaceID, context: context)
+            try await pushAIAnalyses(context: context)
             try await pushPendingDeletions(context: context)
             try context.save()
             lastSyncError = nil
@@ -57,8 +59,9 @@ final class SyncEngine: ObservableObject {
         let schedules = (try? context.fetch(FetchDescriptor<CareSchedule>()))?.filter { $0.syncStatus != .synced }.count ?? 0
         let events = (try? context.fetch(FetchDescriptor<CareEvent>()))?.filter { $0.syncStatus != .synced }.count ?? 0
         let photos = (try? context.fetch(FetchDescriptor<PlantPhoto>()))?.filter { $0.syncStatus != .synced }.count ?? 0
+        let analyses = (try? context.fetch(FetchDescriptor<AIAnalysis>()))?.filter { $0.syncStatus != .synced }.count ?? 0
         let deletions = (try? context.fetchCount(FetchDescriptor<PendingDeletion>())) ?? 0
-        return gardens + zones + plants + schedules + events + photos + deletions
+        return gardens + zones + plants + schedules + events + photos + analyses + deletions
     }
 
     private static let photoBucket = "plant-photos"
@@ -67,6 +70,10 @@ final class SyncEngine: ObservableObject {
         try await AuthService.client.storage
             .from(Self.photoBucket)
             .upload(path: path, file: data, options: FileOptions(contentType: "image/jpeg", upsert: true))
+    }
+
+    private func downloadPhoto(path: String) async throws -> Data {
+        try await AuthService.client.storage.from(Self.photoBucket).download(path: path)
     }
 
     private func fetchWorkspaceID() async throws -> UUID {
@@ -83,6 +90,281 @@ final class SyncEngine: ObservableObject {
             throw SyncEngineError.noWorkspace
         }
         return id
+    }
+
+    // MARK: - Restore from cloud (new device)
+
+    /// One-time recovery for validation criterion "récupérer mes données
+    /// sur un nouvel appareil": if this device's local store has no
+    /// gardens and no plants yet, treat that as a fresh install/new
+    /// device under an existing account and pull everything the account
+    /// already has in the cloud, rebuilding local objects with matching
+    /// ids and `.synced` status.
+    ///
+    /// Deliberately NOT a general bidirectional/multi-device merge: if
+    /// there is ANY local garden or plant already (e.g. guest data from
+    /// before this sign-in), this does nothing and sync stays push-only,
+    /// same as before — merging two non-empty data sets is a harder
+    /// problem this phase doesn't attempt. `deleted_at` columns exist in
+    /// the schema but nothing currently sets them (deletions are hard
+    /// deletes — see pushPendingDeletions), so no extra filtering is
+    /// needed here: a row coming back from SELECT is, by construction,
+    /// not deleted.
+    private func restoreFromCloudIfNeeded(context: ModelContext) async throws {
+        let hasLocalGardens = ((try? context.fetchCount(FetchDescriptor<Garden>())) ?? 0) > 0
+        let hasLocalPlants = ((try? context.fetchCount(FetchDescriptor<Plant>())) ?? 0) > 0
+        guard !hasLocalGardens, !hasLocalPlants else { return }
+
+        let remoteGardens: [GardenRow] = try await AuthService.client.from("gardens").select().execute().value
+        guard !remoteGardens.isEmpty else { return }
+
+        var gardensByID: [UUID: Garden] = [:]
+        for row in remoteGardens {
+            let garden = Garden(name: row.name, address: row.address, notes: row.notes, dateCreated: row.dateCreated)
+            garden.id = row.id
+            garden.syncStatus = .synced
+            garden.updatedAt = row.updatedAt
+            context.insert(garden)
+            gardensByID[row.id] = garden
+        }
+
+        let remoteZones: [GardenZoneRow] = try await AuthService.client.from("garden_zones").select().execute().value
+        var zonesByID: [UUID: GardenZone] = [:]
+        for row in remoteZones {
+            guard let garden = gardensByID[row.gardenId] else { continue }
+            let zone = GardenZone(name: row.name, notes: row.notes, garden: garden)
+            zone.id = row.id
+            zone.syncStatus = .synced
+            zone.updatedAt = row.updatedAt
+            context.insert(zone)
+            zonesByID[row.id] = zone
+        }
+
+        let remotePlants: [PlantRow] = try await AuthService.client.from("plants").select().execute().value
+        var plantsByID: [UUID: Plant] = [:]
+        for row in remotePlants {
+            let plant = Plant(
+                customName: row.customName, commonName: row.commonName, scientificName: row.scientificName,
+                type: row.type, isIndoor: row.isIndoor, notes: row.notes, dateAdded: row.dateAdded,
+                healthStatus: row.healthStatus, garden: row.gardenId.flatMap { gardensByID[$0] },
+                zone: row.zoneId.flatMap { zonesByID[$0] }
+            )
+            plant.id = row.id
+            plant.isArchived = row.isArchived
+            plant.syncStatus = .synced
+            plant.updatedAt = row.updatedAt
+            if let path = row.photoStoragePath { plant.photoData = try? await downloadPhoto(path: path) }
+            if let path = row.thumbnailStoragePath { plant.thumbnailData = try? await downloadPhoto(path: path) }
+            context.insert(plant)
+            plantsByID[row.id] = plant
+        }
+
+        let remoteSchedules: [CareScheduleRow] = try await AuthService.client.from("care_schedules").select().execute().value
+        for row in remoteSchedules {
+            guard let plant = plantsByID[row.plantId] else { continue }
+            let schedule = CareSchedule(
+                plant: plant, type: row.type, frequencyDays: row.frequencyDays, isActive: row.isActive,
+                notes: row.notes, preferredTime: row.preferredTimeMinutes.map(Self.dateFromMinutesSinceMidnight),
+                reminderEnabled: row.reminderEnabled
+            )
+            schedule.id = row.id
+            schedule.lastCompletedDate = row.lastCompletedDate
+            schedule.nextDueDate = row.nextDueDate
+            schedule.syncStatus = .synced
+            schedule.updatedAt = row.updatedAt
+            context.insert(schedule)
+        }
+
+        let remoteEvents: [CareEventRow] = try await AuthService.client.from("care_events").select().execute().value
+        for row in remoteEvents {
+            guard let plant = plantsByID[row.plantId] else { continue }
+            let event = CareEvent(
+                plant: plant, type: row.type, date: row.date, notes: row.notes,
+                quantity: row.quantity, unit: row.unit, product: row.product
+            )
+            event.id = row.id
+            event.syncStatus = .synced
+            context.insert(event)
+        }
+
+        let remotePhotos: [PlantPhotoRow] = try await AuthService.client.from("plant_photos").select().execute().value
+        for row in remotePhotos {
+            guard let plant = plantsByID[row.plantId] else { continue }
+            guard let imageData = try? await downloadPhoto(path: row.storagePath),
+                  let thumbnailData = try? await downloadPhoto(path: row.thumbnailStoragePath) else { continue }
+            let photo = PlantPhoto(plant: plant, imageData: imageData, thumbnailData: thumbnailData, date: row.date, notes: row.notes)
+            photo.id = row.id
+            photo.syncStatus = .synced
+            context.insert(photo)
+        }
+
+        let remoteAnalyses: [AIAnalysisRow] = try await AuthService.client.from("ai_analyses").select().execute().value
+        for row in remoteAnalyses {
+            guard let plant = plantsByID[row.plantId] else { continue }
+            let analysis = AIAnalysis(
+                plant: plant, type: row.type, date: row.date, summary: row.summary,
+                structuredDataJSON: row.structuredData, provider: row.provider, model: row.model,
+                confidence: row.confidence.flatMap(AIConfidence.init(rawValue:))
+            )
+            analysis.id = row.id
+            analysis.syncStatus = .synced
+            context.insert(analysis)
+        }
+
+        try context.save()
+    }
+
+    private static func dateFromMinutesSinceMidnight(_ minutes: Int) -> Date {
+        let startOfDay = Calendar.current.startOfDay(for: .now)
+        return Calendar.current.date(byAdding: .minute, value: minutes, to: startOfDay) ?? startOfDay
+    }
+
+    private struct GardenRow: Decodable {
+        var id: UUID
+        var name: String
+        var address: String?
+        var notes: String
+        var dateCreated: Date
+        var updatedAt: Date?
+
+        enum CodingKeys: String, CodingKey {
+            case id, name, address, notes
+            case dateCreated = "date_created"
+            case updatedAt = "updated_at"
+        }
+    }
+
+    private struct GardenZoneRow: Decodable {
+        var id: UUID
+        var gardenId: UUID
+        var name: String
+        var notes: String
+        var updatedAt: Date?
+
+        enum CodingKeys: String, CodingKey {
+            case id
+            case gardenId = "garden_id"
+            case name, notes
+            case updatedAt = "updated_at"
+        }
+    }
+
+    private struct PlantRow: Decodable {
+        var id: UUID
+        var gardenId: UUID?
+        var zoneId: UUID?
+        var customName: String
+        var commonName: String?
+        var scientificName: String?
+        var type: PlantType
+        var isIndoor: Bool
+        var notes: String
+        var dateAdded: Date
+        var healthStatus: HealthStatus
+        var isArchived: Bool
+        var photoStoragePath: String?
+        var thumbnailStoragePath: String?
+        var updatedAt: Date?
+
+        enum CodingKeys: String, CodingKey {
+            case id
+            case gardenId = "garden_id"
+            case zoneId = "zone_id"
+            case customName = "custom_name"
+            case commonName = "common_name"
+            case scientificName = "scientific_name"
+            case type
+            case isIndoor = "is_indoor"
+            case notes
+            case dateAdded = "date_added"
+            case healthStatus = "health_status"
+            case isArchived = "is_archived"
+            case photoStoragePath = "photo_storage_path"
+            case thumbnailStoragePath = "thumbnail_storage_path"
+            case updatedAt = "updated_at"
+        }
+    }
+
+    private struct CareScheduleRow: Decodable {
+        var id: UUID
+        var plantId: UUID
+        var type: CareEventType
+        var isActive: Bool
+        var frequencyDays: Int
+        var lastCompletedDate: Date?
+        var nextDueDate: Date?
+        var notes: String
+        var preferredTimeMinutes: Int?
+        var reminderEnabled: Bool
+        var updatedAt: Date?
+
+        enum CodingKeys: String, CodingKey {
+            case id
+            case plantId = "plant_id"
+            case type
+            case isActive = "is_active"
+            case frequencyDays = "frequency_days"
+            case lastCompletedDate = "last_completed_date"
+            case nextDueDate = "next_due_date"
+            case notes
+            case preferredTimeMinutes = "preferred_time_minutes"
+            case reminderEnabled = "reminder_enabled"
+            case updatedAt = "updated_at"
+        }
+    }
+
+    private struct CareEventRow: Decodable {
+        var id: UUID
+        var plantId: UUID
+        var type: CareEventType
+        var date: Date
+        var notes: String
+        var quantity: Double?
+        var unit: String?
+        var product: String?
+
+        enum CodingKeys: String, CodingKey {
+            case id
+            case plantId = "plant_id"
+            case type, date, notes, quantity, unit, product
+        }
+    }
+
+    private struct PlantPhotoRow: Decodable {
+        var id: UUID
+        var plantId: UUID
+        var storagePath: String
+        var thumbnailStoragePath: String
+        var date: Date
+        var notes: String
+
+        enum CodingKeys: String, CodingKey {
+            case id
+            case plantId = "plant_id"
+            case storagePath = "storage_path"
+            case thumbnailStoragePath = "thumbnail_storage_path"
+            case date, notes
+        }
+    }
+
+    private struct AIAnalysisRow: Decodable {
+        var id: UUID
+        var plantId: UUID
+        var type: AIAnalysisType
+        var date: Date
+        var summary: String
+        var structuredData: String?
+        var provider: String
+        var model: String?
+        var confidence: String?
+
+        enum CodingKeys: String, CodingKey {
+            case id
+            case plantId = "plant_id"
+            case type, date, summary
+            case structuredData = "structured_data"
+            case provider, model, confidence
+        }
     }
 
     // MARK: - Gardens
@@ -341,6 +623,44 @@ final class SyncEngine: ObservableObject {
         guard !dtos.isEmpty else { return }
         try await AuthService.client.from("plant_photos").upsert(dtos).execute()
         for photo in pending where photo.plant != nil { photo.syncStatus = .synced }
+    }
+
+    // MARK: - AI analysis history
+
+    private struct AIAnalysisDTO: Encodable {
+        var id: UUID
+        var plantId: UUID
+        var type: AIAnalysisType
+        var date: Date
+        var summary: String
+        var structuredData: String?
+        var provider: String
+        var model: String?
+        var confidence: AIConfidence?
+
+        enum CodingKeys: String, CodingKey {
+            case id
+            case plantId = "plant_id"
+            case type, date, summary
+            case structuredData = "structured_data"
+            case provider, model, confidence
+        }
+    }
+
+    private func pushAIAnalyses(context: ModelContext) async throws {
+        let pending = try context.fetch(FetchDescriptor<AIAnalysis>()).filter { $0.syncStatus != .synced }
+        guard !pending.isEmpty else { return }
+        let dtos = pending.compactMap { analysis -> AIAnalysisDTO? in
+            guard let plantID = analysis.plant?.id else { return nil }
+            return AIAnalysisDTO(
+                id: analysis.id, plantId: plantID, type: analysis.type, date: analysis.date,
+                summary: analysis.summary, structuredData: analysis.structuredDataJSON,
+                provider: analysis.provider, model: analysis.model, confidence: analysis.confidence
+            )
+        }
+        guard !dtos.isEmpty else { return }
+        try await AuthService.client.from("ai_analyses").upsert(dtos).execute()
+        for analysis in pending where analysis.plant != nil { analysis.syncStatus = .synced }
     }
 
     // MARK: - Pending deletions
