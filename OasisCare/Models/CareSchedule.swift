@@ -5,7 +5,7 @@ import SwiftData
 /// every 7 days"). `nextDueDate` is always recomputed from the date of the
 /// last real `CareEvent`, never advanced on its own — see CareScheduleEngine.
 @Model
-final class CareSchedule {
+final class CareSchedule: Syncable {
     var id: UUID
     var type: CareEventType
     var isActive: Bool

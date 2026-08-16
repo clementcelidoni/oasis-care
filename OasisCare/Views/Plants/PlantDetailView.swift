@@ -189,6 +189,7 @@ struct PlantDetailView: View {
                     ForEach(HealthStatus.allCases) { status in
                         Button {
                             plant.healthStatus = status
+                            plant.markDirty()
                         } label: {
                             Label(status.displayName, systemImage: "circle.fill")
                         }

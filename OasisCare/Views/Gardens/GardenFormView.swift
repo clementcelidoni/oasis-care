@@ -55,6 +55,7 @@ struct GardenFormView: View {
             garden.name = trimmedName
             garden.address = address.isEmpty ? nil : address
             garden.notes = notes
+            garden.markDirty()
         } else {
             let newGarden = Garden(name: trimmedName, address: address.isEmpty ? nil : address, notes: notes)
             modelContext.insert(newGarden)

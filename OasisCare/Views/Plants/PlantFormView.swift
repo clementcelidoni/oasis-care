@@ -119,6 +119,7 @@ struct PlantFormView: View {
             plant.notes = notes
             plant.garden = selectedGarden
             plant.zone = selectedZone
+            plant.markDirty()
         } else {
             let newPlant = Plant(
                 customName: trimmedName,

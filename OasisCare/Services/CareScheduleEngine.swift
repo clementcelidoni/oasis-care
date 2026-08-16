@@ -39,6 +39,7 @@ enum CareScheduleEngine {
         if let schedule = plant.schedule(for: type) {
             schedule.lastCompletedDate = date
             schedule.nextDueDate = Calendar.current.date(byAdding: .day, value: schedule.frequencyDays, to: date)
+            schedule.markDirty()
             NotificationService.scheduleReminder(for: schedule, plant: plant)
         }
 
@@ -66,6 +67,7 @@ enum CareScheduleEngine {
             if let last = existing.lastCompletedDate {
                 existing.nextDueDate = Calendar.current.date(byAdding: .day, value: frequencyDays, to: last)
             }
+            existing.markDirty()
             schedule = existing
         } else {
             let newSchedule = CareSchedule(
@@ -123,6 +125,7 @@ enum CareScheduleEngine {
             for prior in priorStates {
                 prior.schedule.lastCompletedDate = prior.lastCompletedDate
                 prior.schedule.nextDueDate = prior.nextDueDate
+                prior.schedule.markDirty()
                 if let plant = prior.schedule.plant {
                     NotificationService.scheduleReminder(for: prior.schedule, plant: plant)
                 }
@@ -135,6 +138,7 @@ enum CareScheduleEngine {
     static func deactivateSchedule(_ type: CareEventType, for plant: Plant) {
         guard let schedule = plant.schedule(for: type) else { return }
         schedule.isActive = false
+        schedule.markDirty()
         NotificationService.cancelReminder(for: schedule)
     }
 
@@ -159,6 +163,7 @@ enum CareScheduleEngine {
         plant.photos.append(photo)
         plant.photoData = detailData
         plant.thumbnailData = thumbnailData
+        plant.markDirty()
 
         recordCare(.photoUpdate, for: plant, on: date, notes: notes, in: context)
 

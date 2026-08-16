@@ -2,7 +2,7 @@ import Foundation
 import SwiftData
 
 @Model
-final class Garden {
+final class Garden: Syncable {
     var id: UUID
     var name: String
     var address: String?

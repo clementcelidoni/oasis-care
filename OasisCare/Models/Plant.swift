@@ -2,7 +2,7 @@ import Foundation
 import SwiftData
 
 @Model
-final class Plant {
+final class Plant: Syncable {
     var id: UUID
     var customName: String
     var commonName: String?

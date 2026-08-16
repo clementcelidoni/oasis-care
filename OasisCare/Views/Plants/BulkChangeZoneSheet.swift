@@ -63,6 +63,7 @@ struct BulkChangeZoneSheet: View {
             plant.zone?.plants.removeAll { $0.id == plant.id }
             plant.garden = selectedGarden
             plant.zone = selectedZone
+            plant.markDirty()
             selectedGarden?.plants.append(plant)
             selectedZone?.plants.append(plant)
         }

@@ -15,9 +15,6 @@ import Supabase
 /// signing in naturally pushes everything that already exists. Re-running
 /// sync is safe: `upsert` keyed on the client-generated `id` never creates
 /// a duplicate, it just re-writes the same row.
-///
-/// Photos aren't synced yet (Task: Storage upload) — plants/events push
-/// without their image columns until that lands.
 @MainActor
 final class SyncEngine: ObservableObject {
     static let shared = SyncEngine()
@@ -41,6 +38,7 @@ final class SyncEngine: ObservableObject {
             try await pushPlants(workspaceID: workspaceID, context: context)
             try await pushSchedules(context: context)
             try await pushEvents(context: context)
+            try await pushPlantPhotos(workspaceID: workspaceID, context: context)
             try await pushPendingDeletions(context: context)
             try context.save()
             lastSyncError = nil
@@ -58,8 +56,17 @@ final class SyncEngine: ObservableObject {
         let plants = (try? context.fetch(FetchDescriptor<Plant>()))?.filter { $0.syncStatus != .synced }.count ?? 0
         let schedules = (try? context.fetch(FetchDescriptor<CareSchedule>()))?.filter { $0.syncStatus != .synced }.count ?? 0
         let events = (try? context.fetch(FetchDescriptor<CareEvent>()))?.filter { $0.syncStatus != .synced }.count ?? 0
+        let photos = (try? context.fetch(FetchDescriptor<PlantPhoto>()))?.filter { $0.syncStatus != .synced }.count ?? 0
         let deletions = (try? context.fetchCount(FetchDescriptor<PendingDeletion>())) ?? 0
-        return gardens + zones + plants + schedules + events + deletions
+        return gardens + zones + plants + schedules + events + photos + deletions
+    }
+
+    private static let photoBucket = "plant-photos"
+
+    private func uploadPhoto(_ data: Data, path: String) async throws {
+        try await AuthService.client.storage
+            .from(Self.photoBucket)
+            .upload(path: path, file: data, options: FileOptions(contentType: "image/jpeg", upsert: true))
     }
 
     private func fetchWorkspaceID() async throws -> UUID {
@@ -156,6 +163,8 @@ final class SyncEngine: ObservableObject {
         var dateAdded: Date
         var healthStatus: HealthStatus
         var isArchived: Bool
+        var photoStoragePath: String?
+        var thumbnailStoragePath: String?
         var updatedAt: Date
 
         enum CodingKeys: String, CodingKey {
@@ -172,6 +181,8 @@ final class SyncEngine: ObservableObject {
             case dateAdded = "date_added"
             case healthStatus = "health_status"
             case isArchived = "is_archived"
+            case photoStoragePath = "photo_storage_path"
+            case thumbnailStoragePath = "thumbnail_storage_path"
             case updatedAt = "updated_at"
         }
     }
@@ -179,13 +190,28 @@ final class SyncEngine: ObservableObject {
     private func pushPlants(workspaceID: UUID, context: ModelContext) async throws {
         let pending = try context.fetch(FetchDescriptor<Plant>()).filter { $0.syncStatus != .synced }
         guard !pending.isEmpty else { return }
-        let dtos = pending.map {
-            PlantDTO(
-                id: $0.id, workspaceId: workspaceID, gardenId: $0.garden?.id, zoneId: $0.zone?.id,
-                customName: $0.customName, commonName: $0.commonName, scientificName: $0.scientificName,
-                type: $0.type, isIndoor: $0.isIndoor, notes: $0.notes, dateAdded: $0.dateAdded,
-                healthStatus: $0.healthStatus, isArchived: $0.isArchived, updatedAt: $0.updatedAt ?? .now
-            )
+        var dtos: [PlantDTO] = []
+        for plant in pending {
+            var photoPath: String?
+            var thumbnailPath: String?
+            if let photoData = plant.photoData {
+                let path = "\(workspaceID)/\(plant.id)/main.jpg"
+                try await uploadPhoto(photoData, path: path)
+                photoPath = path
+            }
+            if let thumbnailData = plant.thumbnailData {
+                let path = "\(workspaceID)/\(plant.id)/main_thumb.jpg"
+                try await uploadPhoto(thumbnailData, path: path)
+                thumbnailPath = path
+            }
+            dtos.append(PlantDTO(
+                id: plant.id, workspaceId: workspaceID, gardenId: plant.garden?.id, zoneId: plant.zone?.id,
+                customName: plant.customName, commonName: plant.commonName, scientificName: plant.scientificName,
+                type: plant.type, isIndoor: plant.isIndoor, notes: plant.notes, dateAdded: plant.dateAdded,
+                healthStatus: plant.healthStatus, isArchived: plant.isArchived,
+                photoStoragePath: photoPath, thumbnailStoragePath: thumbnailPath,
+                updatedAt: plant.updatedAt ?? .now
+            ))
         }
         try await AuthService.client.from("plants").upsert(dtos).execute()
         for plant in pending { plant.syncStatus = .synced }
@@ -276,6 +302,45 @@ final class SyncEngine: ObservableObject {
         guard !dtos.isEmpty else { return }
         try await AuthService.client.from("care_events").upsert(dtos).execute()
         for event in pending where event.plant != nil { event.syncStatus = .synced }
+    }
+
+    // MARK: - Plant photos (Évolution gallery)
+
+    private struct PlantPhotoDTO: Encodable {
+        var id: UUID
+        var plantId: UUID
+        var storagePath: String
+        var thumbnailStoragePath: String
+        var date: Date
+        var notes: String
+
+        enum CodingKeys: String, CodingKey {
+            case id
+            case plantId = "plant_id"
+            case storagePath = "storage_path"
+            case thumbnailStoragePath = "thumbnail_storage_path"
+            case date, notes
+        }
+    }
+
+    private func pushPlantPhotos(workspaceID: UUID, context: ModelContext) async throws {
+        let pending = try context.fetch(FetchDescriptor<PlantPhoto>()).filter { $0.syncStatus != .synced }
+        guard !pending.isEmpty else { return }
+        var dtos: [PlantPhotoDTO] = []
+        for photo in pending {
+            guard let plantID = photo.plant?.id else { continue }
+            let path = "\(workspaceID)/\(plantID)/\(photo.id).jpg"
+            let thumbnailPath = "\(workspaceID)/\(plantID)/\(photo.id)_thumb.jpg"
+            try await uploadPhoto(photo.imageData, path: path)
+            try await uploadPhoto(photo.thumbnailData, path: thumbnailPath)
+            dtos.append(PlantPhotoDTO(
+                id: photo.id, plantId: plantID, storagePath: path,
+                thumbnailStoragePath: thumbnailPath, date: photo.date, notes: photo.notes
+            ))
+        }
+        guard !dtos.isEmpty else { return }
+        try await AuthService.client.from("plant_photos").upsert(dtos).execute()
+        for photo in pending where photo.plant != nil { photo.syncStatus = .synced }
     }
 
     // MARK: - Pending deletions
