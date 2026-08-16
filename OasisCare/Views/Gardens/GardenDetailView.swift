@@ -18,8 +18,11 @@ struct GardenDetailView: View {
 
     var garden: Garden
 
+    @Environment(\.modelContext) private var modelContext
+
     @State private var activeSheet: ActiveSheet?
     @State private var isBulkWaterSheetPresented = false
+    @State private var zonePendingDeletion: GardenZone?
 
     private var plantsDueForWatering: [Plant] {
         garden.plants.filter { $0.schedule(for: .watering)?.isDue ?? false }
@@ -71,6 +74,26 @@ struct GardenDetailView: View {
         }
         .sheet(isPresented: $isBulkWaterSheetPresented) {
             PlantListView(gardenFilter: garden)
+        }
+        .confirmationDialog(
+            "Supprimer \(zonePendingDeletion?.name ?? "cette zone") ?",
+            isPresented: Binding(
+                get: { zonePendingDeletion != nil },
+                set: { if !$0 { zonePendingDeletion = nil } }
+            ),
+            titleVisibility: .visible
+        ) {
+            Button("Supprimer", role: .destructive) {
+                if let zone = zonePendingDeletion {
+                    DeletionService.delete(zone, in: modelContext)
+                }
+                zonePendingDeletion = nil
+            }
+            Button("Annuler", role: .cancel) {
+                zonePendingDeletion = nil
+            }
+        } message: {
+            Text("Les végétaux de cette zone seront conservés, sans zone associée. Cette action est irréversible.")
         }
     }
 
@@ -135,6 +158,18 @@ struct GardenDetailView: View {
                         }
                         .buttonStyle(.plain)
                         .accessibilityIdentifier(zone.name)
+                        .contextMenu {
+                            Button {
+                                activeSheet = .editZone(zone)
+                            } label: {
+                                Label("Modifier", systemImage: "pencil")
+                            }
+                            Button(role: .destructive) {
+                                zonePendingDeletion = zone
+                            } label: {
+                                Label("Supprimer", systemImage: "trash")
+                            }
+                        }
                         if index < sortedZones.count - 1 {
                             Divider()
                         }

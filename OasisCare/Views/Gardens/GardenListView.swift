@@ -2,8 +2,11 @@ import SwiftUI
 import SwiftData
 
 struct GardenListView: View {
+    @Environment(\.modelContext) private var modelContext
+
     @Query(sort: \Garden.name) private var gardens: [Garden]
     @State private var isPresentingAddGarden = false
+    @State private var gardenPendingDeletion: Garden?
 
     var body: some View {
         NavigationStack {
@@ -21,6 +24,13 @@ struct GardenListView: View {
                                 GardenRow(garden: garden)
                             }
                             .accessibilityIdentifier(garden.name)
+                            .swipeActions(edge: .trailing) {
+                                Button(role: .destructive) {
+                                    gardenPendingDeletion = garden
+                                } label: {
+                                    Label("Supprimer", systemImage: "trash")
+                                }
+                            }
                         }
                     }
                     .listStyle(.plain)
@@ -42,6 +52,26 @@ struct GardenListView: View {
             }
             .sheet(isPresented: $isPresentingAddGarden) {
                 GardenFormView(garden: nil)
+            }
+            .confirmationDialog(
+                "Supprimer \(gardenPendingDeletion?.name ?? "ce jardin") ?",
+                isPresented: Binding(
+                    get: { gardenPendingDeletion != nil },
+                    set: { if !$0 { gardenPendingDeletion = nil } }
+                ),
+                titleVisibility: .visible
+            ) {
+                Button("Supprimer", role: .destructive) {
+                    if let garden = gardenPendingDeletion {
+                        DeletionService.delete(garden, in: modelContext)
+                    }
+                    gardenPendingDeletion = nil
+                }
+                Button("Annuler", role: .cancel) {
+                    gardenPendingDeletion = nil
+                }
+            } message: {
+                Text("Les zones de ce jardin seront aussi supprimées. Les végétaux qu'il contient seront conservés, sans jardin associé. Cette action est irréversible.")
             }
         }
     }

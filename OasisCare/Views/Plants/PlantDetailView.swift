@@ -57,6 +57,7 @@ struct PlantDetailView: View {
     var plant: Plant
 
     @Environment(\.modelContext) private var modelContext
+    @Environment(\.dismiss) private var dismiss
 
     @State private var activeSheet: ActiveSheet?
     @State private var historyFilter: HistoryFilterBucket?
@@ -65,6 +66,7 @@ struct PlantDetailView: View {
     @State private var isPhotosPickerPresented = false
     @State private var isCameraPresented = false
     @State private var selectedPhoto: PlantPhoto?
+    @State private var isDeleteConfirmationPresented = false
 
     private var filteredHistory: [CareEvent] {
         let events = plant.sortedCareEvents
@@ -94,6 +96,27 @@ struct PlantDetailView: View {
             ToolbarItem(placement: .topBarTrailing) {
                 Button("Modifier") { activeSheet = .edit }
             }
+            ToolbarItem(placement: .topBarTrailing) {
+                Button(role: .destructive) {
+                    isDeleteConfirmationPresented = true
+                } label: {
+                    Image(systemName: "trash")
+                }
+                .accessibilityIdentifier("deletePlantButton")
+            }
+        }
+        .confirmationDialog(
+            "Supprimer \(plant.customName) ?",
+            isPresented: $isDeleteConfirmationPresented,
+            titleVisibility: .visible
+        ) {
+            Button("Supprimer", role: .destructive) {
+                DeletionService.delete(plant, in: modelContext)
+                dismiss()
+            }
+            Button("Annuler", role: .cancel) {}
+        } message: {
+            Text("Cette action supprimera aussi son historique et ses photos. Cette action est irréversible.")
         }
         .sheet(item: $activeSheet) { sheet in
             switch sheet {

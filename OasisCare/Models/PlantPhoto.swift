@@ -12,6 +12,7 @@ final class PlantPhoto {
     var date: Date
     var notes: String
     var plant: Plant?
+    var syncStatus: SyncStatus?
 
     init(plant: Plant?, imageData: Data, thumbnailData: Data, date: Date = .now, notes: String = "") {
         self.id = UUID()
@@ -20,5 +21,6 @@ final class PlantPhoto {
         self.thumbnailData = thumbnailData
         self.date = date
         self.notes = notes
+        self.syncStatus = .pendingCreate
     }
 }

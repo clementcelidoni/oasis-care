@@ -21,6 +21,7 @@ struct PlantListView: View {
     @State private var selectedPlantIDs = Set<UUID>()
     @State private var isBulkAddEventPresented = false
     @State private var isBulkChangeZonePresented = false
+    @State private var plantPendingDeletion: Plant?
 
     private var isFocusedSelectionMode: Bool { gardenFilter != nil }
 
@@ -72,6 +73,13 @@ struct PlantListView: View {
                                     PlantRow(plant: plant)
                                 }
                                 .accessibilityIdentifier(plant.customName)
+                                .swipeActions(edge: .trailing) {
+                                    Button(role: .destructive) {
+                                        plantPendingDeletion = plant
+                                    } label: {
+                                        Label("Supprimer", systemImage: "trash")
+                                    }
+                                }
                             }
                         }
                     }
@@ -143,6 +151,26 @@ struct PlantListView: View {
             }
             .onChange(of: isBulkChangeZonePresented) { _, isPresented in
                 if !isPresented { finishBulkAction() }
+            }
+            .confirmationDialog(
+                "Supprimer \(plantPendingDeletion?.customName ?? "ce végétal") ?",
+                isPresented: Binding(
+                    get: { plantPendingDeletion != nil },
+                    set: { if !$0 { plantPendingDeletion = nil } }
+                ),
+                titleVisibility: .visible
+            ) {
+                Button("Supprimer", role: .destructive) {
+                    if let plant = plantPendingDeletion {
+                        DeletionService.delete(plant, in: modelContext)
+                    }
+                    plantPendingDeletion = nil
+                }
+                Button("Annuler", role: .cancel) {
+                    plantPendingDeletion = nil
+                }
+            } message: {
+                Text("Cette action supprimera aussi son historique et ses photos. Cette action est irréversible.")
             }
             .safeAreaInset(edge: .bottom) {
                 if editMode.isEditing && !selectedPlantIDs.isEmpty {

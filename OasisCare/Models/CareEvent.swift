@@ -19,6 +19,7 @@ final class CareEvent {
     /// gallery, which is about the plant over time, not one event.
     var photoData: Data?
     var plant: Plant?
+    var syncStatus: SyncStatus?
 
     init(
         plant: Plant?,
@@ -40,5 +41,6 @@ final class CareEvent {
         self.unit = unit
         self.product = product
         self.photoData = photoData
+        self.syncStatus = .pendingCreate
     }
 }

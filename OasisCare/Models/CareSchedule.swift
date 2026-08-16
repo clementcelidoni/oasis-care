@@ -18,6 +18,8 @@ final class CareSchedule {
     var preferredTime: Date?
     var reminderEnabled: Bool
     var plant: Plant?
+    var syncStatus: SyncStatus?
+    var updatedAt: Date?
 
     init(
         plant: Plant?,
@@ -36,6 +38,8 @@ final class CareSchedule {
         self.notes = notes
         self.preferredTime = preferredTime
         self.reminderEnabled = reminderEnabled
+        self.syncStatus = .pendingCreate
+        self.updatedAt = .now
     }
 
     /// True once this schedule needs attention: never completed yet, or its

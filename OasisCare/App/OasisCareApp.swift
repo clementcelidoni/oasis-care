@@ -11,7 +11,8 @@ struct OasisCareApp: App {
             GardenZone.self,
             CareEvent.self,
             CareSchedule.self,
-            PlantPhoto.self
+            PlantPhoto.self,
+            PendingDeletion.self
         ])
         let configuration = ModelConfiguration(schema: schema)
 

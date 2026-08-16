@@ -8,6 +8,8 @@ final class Garden {
     var address: String?
     var notes: String
     var dateCreated: Date
+    var syncStatus: SyncStatus?
+    var updatedAt: Date?
 
     @Relationship(deleteRule: .cascade, inverse: \GardenZone.garden)
     var zones: [GardenZone] = []
@@ -21,5 +23,7 @@ final class Garden {
         self.address = address
         self.notes = notes
         self.dateCreated = dateCreated
+        self.syncStatus = .pendingCreate
+        self.updatedAt = .now
     }
 }

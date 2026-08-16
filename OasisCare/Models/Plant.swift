@@ -15,6 +15,11 @@ final class Plant {
     var isArchived: Bool
     var photoData: Data?
     var thumbnailData: Data?
+    /// Nil means "created before Phase 3B sync existed" — treat as
+    /// .pendingCreate. Optional purely for lightweight-migration safety on
+    /// already-persisted rows; always set explicitly for new objects.
+    var syncStatus: SyncStatus?
+    var updatedAt: Date?
 
     var garden: Garden?
     var zone: GardenZone?
@@ -56,6 +61,8 @@ final class Plant {
         self.zone = zone
         self.photoData = photoData
         self.thumbnailData = thumbnailData
+        self.syncStatus = .pendingCreate
+        self.updatedAt = .now
     }
 
     /// Care history, most recent first.

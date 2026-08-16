@@ -7,6 +7,8 @@ final class GardenZone {
     var name: String
     var notes: String
     var garden: Garden?
+    var syncStatus: SyncStatus?
+    var updatedAt: Date?
 
     @Relationship(deleteRule: .nullify, inverse: \Plant.zone)
     var plants: [Plant] = []
@@ -16,5 +18,7 @@ final class GardenZone {
         self.name = name
         self.notes = notes
         self.garden = garden
+        self.syncStatus = .pendingCreate
+        self.updatedAt = .now
     }
 }
