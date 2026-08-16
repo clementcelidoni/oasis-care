@@ -86,6 +86,8 @@ jobs:
           <dict>
               <key>method</key>
               <string>app-store-connect</string>
+              <key>destination</key>
+              <string>upload</string>
               <key>teamID</key>
               <string>${{ secrets.APPLE_TEAM_ID }}</string>
               <key>signingStyle</key>
