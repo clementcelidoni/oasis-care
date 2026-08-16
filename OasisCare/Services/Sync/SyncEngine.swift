@@ -42,6 +42,8 @@ final class SyncEngine: ObservableObject {
             try await pushEvents(context: context)
             try await pushPlantMeasurements(workspaceID: workspaceID, context: context)
             try await pushTreeInspections(workspaceID: workspaceID, context: context)
+            try await pushGardenCheckups(workspaceID: workspaceID, context: context)
+            try await pushGardenCheckupEntries(context: context)
             try await pushPlantPhotos(workspaceID: workspaceID, context: context)
             try await pushAIAnalyses(context: context)
             try await pushSmartTags(workspaceID: workspaceID, context: context)
@@ -72,9 +74,11 @@ final class SyncEngine: ObservableObject {
         let smartTags = (try? context.fetch(FetchDescriptor<SmartTag>()))?.filter { $0.syncStatus != .synced }.count ?? 0
         let measurements = (try? context.fetch(FetchDescriptor<PlantMeasurement>()))?.filter { $0.syncStatus != .synced }.count ?? 0
         let inspections = (try? context.fetch(FetchDescriptor<TreeInspection>()))?.filter { $0.syncStatus != .synced }.count ?? 0
+        let checkups = (try? context.fetch(FetchDescriptor<GardenCheckup>()))?.filter { $0.syncStatus != .synced }.count ?? 0
+        let checkupEntries = (try? context.fetch(FetchDescriptor<GardenCheckupEntry>()))?.filter { $0.syncStatus != .synced }.count ?? 0
         let deletions = (try? context.fetchCount(FetchDescriptor<PendingDeletion>())) ?? 0
         return gardens + zones + plants + schedules + events + photos + analyses + preferences + irrigationZones
-            + irrigationEvents + smartTags + measurements + inspections + deletions
+            + irrigationEvents + smartTags + measurements + inspections + checkups + checkupEntries + deletions
     }
 
     private static let photoBucket = "plant-photos"
@@ -259,6 +263,34 @@ final class SyncEngine: ObservableObject {
             treeInspectionsByID[row.id] = inspection
         }
 
+        // Also restored before plant_photos, same FK reason as
+        // tree_inspections above.
+        let remoteCheckups: [GardenCheckupRow] = try await AuthService.client.from("garden_checkups").select().execute().value
+        var checkupsByID: [UUID: GardenCheckup] = [:]
+        for row in remoteCheckups {
+            guard let garden = gardensByID[row.gardenId] else { continue }
+            let checkup = GardenCheckup(garden: garden, filterCategory: row.filterCategory, filterZoneID: row.filterZoneId)
+            checkup.id = row.id
+            checkup.startedAt = row.startedAt
+            checkup.completedAt = row.completedAt
+            checkup.syncStatus = .synced
+            checkup.updatedAt = row.updatedAt
+            context.insert(checkup)
+            checkupsByID[row.id] = checkup
+        }
+
+        let remoteCheckupEntries: [GardenCheckupEntryRow] = try await AuthService.client.from("garden_checkup_entries").select().execute().value
+        var checkupEntriesByID: [UUID: GardenCheckupEntry] = [:]
+        for row in remoteCheckupEntries {
+            guard let checkup = checkupsByID[row.checkupId], let plant = plantsByID[row.plantId] else { continue }
+            let entry = GardenCheckupEntry(checkup: checkup, plant: plant, result: row.result, notes: row.notes)
+            entry.id = row.id
+            entry.date = row.date
+            entry.syncStatus = .synced
+            context.insert(entry)
+            checkupEntriesByID[row.id] = entry
+        }
+
         let remotePhotos: [PlantPhotoRow] = try await AuthService.client.from("plant_photos").select().execute().value
         for row in remotePhotos {
             guard let plant = plantsByID[row.plantId] else { continue }
@@ -267,6 +299,7 @@ final class SyncEngine: ObservableObject {
             let photo = PlantPhoto(plant: plant, imageData: imageData, thumbnailData: thumbnailData, date: row.date, notes: row.notes)
             photo.id = row.id
             photo.treeInspection = row.treeInspectionId.flatMap { treeInspectionsByID[$0] }
+            photo.checkupEntry = row.checkupEntryId.flatMap { checkupEntriesByID[$0] }
             photo.syncStatus = .synced
             context.insert(photo)
         }
@@ -557,6 +590,42 @@ final class SyncEngine: ObservableObject {
         }
     }
 
+    private struct GardenCheckupRow: Decodable {
+        var id: UUID
+        var gardenId: UUID
+        var startedAt: Date
+        var completedAt: Date?
+        var filterCategory: GardenCheckupFilter
+        var filterZoneId: UUID?
+        var updatedAt: Date?
+
+        enum CodingKeys: String, CodingKey {
+            case id
+            case gardenId = "garden_id"
+            case startedAt = "started_at"
+            case completedAt = "completed_at"
+            case filterCategory = "filter_category"
+            case filterZoneId = "filter_zone_id"
+            case updatedAt = "updated_at"
+        }
+    }
+
+    private struct GardenCheckupEntryRow: Decodable {
+        var id: UUID
+        var checkupId: UUID
+        var plantId: UUID
+        var date: Date
+        var result: TreeInspectionResult
+        var notes: String
+
+        enum CodingKeys: String, CodingKey {
+            case id
+            case checkupId = "checkup_id"
+            case plantId = "plant_id"
+            case date, result, notes
+        }
+    }
+
     private struct PlantPhotoRow: Decodable {
         var id: UUID
         var plantId: UUID
@@ -565,6 +634,7 @@ final class SyncEngine: ObservableObject {
         var date: Date
         var notes: String
         var treeInspectionId: UUID?
+        var checkupEntryId: UUID?
 
         enum CodingKeys: String, CodingKey {
             case id
@@ -573,6 +643,7 @@ final class SyncEngine: ObservableObject {
             case thumbnailStoragePath = "thumbnail_storage_path"
             case date, notes
             case treeInspectionId = "tree_inspection_id"
+            case checkupEntryId = "checkup_entry_id"
         }
     }
 
@@ -1058,6 +1129,81 @@ final class SyncEngine: ObservableObject {
         for inspection in pending where inspection.plant != nil { inspection.syncStatus = .synced }
     }
 
+    // MARK: - Garden checkups
+    // Both pushed before plant photos: a photo can reference the
+    // checkup entry it was taken during, and that foreign key needs
+    // the entry row (which itself needs its checkup row) to already
+    // exist.
+
+    private struct GardenCheckupDTO: Encodable {
+        var id: UUID
+        var workspaceId: UUID
+        var gardenId: UUID
+        var startedAt: Date
+        var completedAt: Date?
+        var filterCategory: GardenCheckupFilter
+        var filterZoneId: UUID?
+        var updatedAt: Date
+
+        enum CodingKeys: String, CodingKey {
+            case id
+            case workspaceId = "workspace_id"
+            case gardenId = "garden_id"
+            case startedAt = "started_at"
+            case completedAt = "completed_at"
+            case filterCategory = "filter_category"
+            case filterZoneId = "filter_zone_id"
+            case updatedAt = "updated_at"
+        }
+    }
+
+    private func pushGardenCheckups(workspaceID: UUID, context: ModelContext) async throws {
+        let pending = try context.fetch(FetchDescriptor<GardenCheckup>()).filter { $0.syncStatus != .synced }
+        guard !pending.isEmpty else { return }
+        let dtos = pending.compactMap { checkup -> GardenCheckupDTO? in
+            guard let gardenID = checkup.garden?.id else { return nil }
+            return GardenCheckupDTO(
+                id: checkup.id, workspaceId: workspaceID, gardenId: gardenID, startedAt: checkup.startedAt,
+                completedAt: checkup.completedAt, filterCategory: checkup.filterCategory,
+                filterZoneId: checkup.filterZoneID, updatedAt: checkup.updatedAt ?? .now
+            )
+        }
+        guard !dtos.isEmpty else { return }
+        try await AuthService.client.from("garden_checkups").upsert(dtos).execute()
+        for checkup in pending where checkup.garden != nil { checkup.syncStatus = .synced }
+    }
+
+    private struct GardenCheckupEntryDTO: Encodable {
+        var id: UUID
+        var checkupId: UUID
+        var plantId: UUID
+        var date: Date
+        var result: TreeInspectionResult
+        var notes: String
+
+        enum CodingKeys: String, CodingKey {
+            case id
+            case checkupId = "checkup_id"
+            case plantId = "plant_id"
+            case date, result, notes
+        }
+    }
+
+    private func pushGardenCheckupEntries(context: ModelContext) async throws {
+        let pending = try context.fetch(FetchDescriptor<GardenCheckupEntry>()).filter { $0.syncStatus != .synced }
+        guard !pending.isEmpty else { return }
+        let dtos = pending.compactMap { entry -> GardenCheckupEntryDTO? in
+            guard let checkupID = entry.checkup?.id, let plantID = entry.plant?.id else { return nil }
+            return GardenCheckupEntryDTO(
+                id: entry.id, checkupId: checkupID, plantId: plantID, date: entry.date,
+                result: entry.result, notes: entry.notes
+            )
+        }
+        guard !dtos.isEmpty else { return }
+        try await AuthService.client.from("garden_checkup_entries").upsert(dtos).execute()
+        for entry in pending where entry.checkup != nil && entry.plant != nil { entry.syncStatus = .synced }
+    }
+
     // MARK: - Plant photos (Évolution gallery)
 
     private struct PlantPhotoDTO: Encodable {
@@ -1068,6 +1214,7 @@ final class SyncEngine: ObservableObject {
         var date: Date
         var notes: String
         var treeInspectionId: UUID?
+        var checkupEntryId: UUID?
 
         enum CodingKeys: String, CodingKey {
             case id
@@ -1076,6 +1223,7 @@ final class SyncEngine: ObservableObject {
             case thumbnailStoragePath = "thumbnail_storage_path"
             case date, notes
             case treeInspectionId = "tree_inspection_id"
+            case checkupEntryId = "checkup_entry_id"
         }
     }
 
@@ -1092,7 +1240,7 @@ final class SyncEngine: ObservableObject {
             dtos.append(PlantPhotoDTO(
                 id: photo.id, plantId: plantID, storagePath: path,
                 thumbnailStoragePath: thumbnailPath, date: photo.date, notes: photo.notes,
-                treeInspectionId: photo.treeInspection?.id
+                treeInspectionId: photo.treeInspection?.id, checkupEntryId: photo.checkupEntry?.id
             ))
         }
         guard !dtos.isEmpty else { return }

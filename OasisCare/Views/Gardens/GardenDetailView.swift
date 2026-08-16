@@ -68,11 +68,16 @@ struct GardenDetailView: View {
 
     @State private var activeSheet: ActiveSheet?
     @State private var isBulkWaterSheetPresented = false
+    @State private var isCheckupPresented = false
     @State private var zonePendingDeletion: ZoneDeletionTarget?
     @State private var viewMode: ViewMode = .list
 
     private var plantsDueForWatering: [Plant] {
         garden.plants.filter { $0.schedule(for: .watering)?.isDue ?? false }
+    }
+
+    private var hasActiveCheckup: Bool {
+        garden.checkups.contains { !$0.isComplete }
     }
 
     var body: some View {
@@ -120,6 +125,9 @@ struct GardenDetailView: View {
         .sheet(isPresented: $isBulkWaterSheetPresented) {
             PlantListView(gardenFilter: garden)
         }
+        .sheet(isPresented: $isCheckupPresented) {
+            GardenCheckupSheet(garden: garden)
+        }
         .confirmationDialog(
             "Supprimer \(zonePendingDeletion?.name ?? "cette zone") ?",
             isPresented: Binding(
@@ -163,6 +171,10 @@ struct GardenDetailView: View {
                     quickWaterBanner
                 }
 
+                if !garden.plants.isEmpty {
+                    checkupBanner
+                }
+
                 zonesSection
                 irrigationSection
                 plantsSection
@@ -189,6 +201,23 @@ struct GardenDetailView: View {
         }
         .padding()
         .background(Color.blue.opacity(0.08), in: RoundedRectangle(cornerRadius: 14, style: .continuous))
+    }
+
+    /// Spec §61 — "Commencer le check-up" from within Garden.
+    private var checkupBanner: some View {
+        Button {
+            isCheckupPresented = true
+        } label: {
+            Label(
+                hasActiveCheckup ? "Reprendre le check-up" : "Commencer le check-up",
+                systemImage: "checklist"
+            )
+            .font(.subheadline.weight(.medium))
+            .frame(maxWidth: .infinity)
+        }
+        .buttonStyle(.borderedProminent)
+        .tint(.green)
+        .accessibilityIdentifier("startGardenCheckupButton")
     }
 
     private var zonesSection: some View {

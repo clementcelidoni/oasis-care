@@ -15,6 +15,7 @@ enum DeletionService {
         case irrigationZone = "irrigation_zones"
         case smartTag = "smart_tags"
         case treeInspection = "tree_inspections"
+        case gardenCheckup = "garden_checkups"
     }
 
     static func delete(_ garden: Garden, in context: ModelContext) {
@@ -45,6 +46,15 @@ enum DeletionService {
     static func delete(_ inspection: TreeInspection, in context: ModelContext) {
         recordPendingDeletion(id: inspection.id, type: .treeInspection, in: context)
         context.delete(inspection)
+    }
+
+    /// Abandons an in-progress check-up (its entries cascade-delete
+    /// with it) — without this, activeOrNewCheckup would resume the
+    /// same session forever, with no way to restart with a different
+    /// filter once progress exists.
+    static func delete(_ checkup: GardenCheckup, in context: ModelContext) {
+        recordPendingDeletion(id: checkup.id, type: .gardenCheckup, in: context)
+        context.delete(checkup)
     }
 
     private static func recordPendingDeletion(id: UUID, type: EntityType, in context: ModelContext) {

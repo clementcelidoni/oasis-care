@@ -17,6 +17,9 @@ final class PlantPhoto {
     /// the inspection is later removed: the photo stays valid plant
     /// history either way.
     var treeInspection: TreeInspection?
+    /// Set when this photo was taken during a garden check-up entry
+    /// (spec §62's "Photo" button) — same nullify-not-cascade rule.
+    var checkupEntry: GardenCheckupEntry?
     var syncStatus: SyncStatus?
 
     init(plant: Plant?, imageData: Data, thumbnailData: Data, date: Date = .now, notes: String = "") {

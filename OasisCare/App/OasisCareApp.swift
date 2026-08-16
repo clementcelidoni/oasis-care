@@ -20,7 +20,9 @@ struct OasisCareApp: App {
             IrrigationEvent.self,
             SmartTag.self,
             PlantMeasurement.self,
-            TreeInspection.self
+            TreeInspection.self,
+            GardenCheckup.self,
+            GardenCheckupEntry.self
         ])
         let configuration = ModelConfiguration(schema: schema)
 
