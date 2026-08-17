@@ -9,6 +9,7 @@ struct AutomationRulesListView: View {
 
     @State private var editingRule: AutomationRule?
     @State private var isCreatingRule = false
+    @State private var isProposingRule = false
 
     var body: some View {
         List {
@@ -34,7 +35,16 @@ struct AutomationRulesListView: View {
         .navigationBarTitleDisplayMode(.inline)
         .toolbar {
             ToolbarItem(placement: .primaryAction) {
-                Button { isCreatingRule = true } label: { Image(systemName: "plus") }
+                Menu {
+                    Button { isCreatingRule = true } label: {
+                        Label("Créer manuellement", systemImage: "slider.horizontal.3")
+                    }
+                    Button { isProposingRule = true } label: {
+                        Label("Proposer avec Oasis AI", systemImage: "sparkles")
+                    }
+                } label: {
+                    Image(systemName: "plus")
+                }
             }
         }
         .sheet(item: $editingRule) { rule in
@@ -43,18 +53,14 @@ struct AutomationRulesListView: View {
         .sheet(isPresented: $isCreatingRule) {
             AutomationRuleFormView(rule: nil)
         }
+        .sheet(isPresented: $isProposingRule) {
+            AutomationProposalSheet()
+        }
     }
 
     private func delete(at offsets: IndexSet) {
         for index in offsets {
-            let rule = rules[index]
-            if rule.syncStatus == .synced {
-                // Rules follow the same tombstone pattern as everything
-                // else — DeletionService doesn't have a case for this
-                // yet since it's new this phase; recorded directly here.
-                modelContext.insert(PendingDeletion(id: rule.id, entityType: "automation_rules"))
-            }
-            modelContext.delete(rule)
+            DeletionService.delete(rules[index], in: modelContext)
         }
         try? modelContext.save()
     }

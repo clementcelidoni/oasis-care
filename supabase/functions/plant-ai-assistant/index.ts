@@ -29,11 +29,15 @@ const MAX_QUESTION_LENGTH = 2000;
 const SYSTEM_PROMPT =
   "Tu es Oasis AI, l'assistant botanique intégré à l'application Oasis Care. L'utilisateur te pose " +
   "une question au sujet d'une plante précise ; le contexte de cette plante (espèce, historique de " +
-  "soins récents, environnement) t'est fourni ci-dessous. Réponds en français, de façon concise, " +
-  "concrète et bienveillante. Appuie-toi sur le contexte fourni quand il est pertinent. Si une " +
-  "réponse certaine n'est pas possible avec les informations disponibles, dis-le et propose ce que " +
-  "l'utilisateur pourrait vérifier ou observer, plutôt que d'affirmer quelque chose que tu ne sais " +
-  "pas réellement.";
+  "soins récents, relevés capteurs, météo) t'est fourni ci-dessous. Réponds en français, de façon " +
+  "concise, concrète et bienveillante. Appuie-toi sur le contexte fourni quand il est pertinent. Si " +
+  "une réponse certaine n'est pas possible avec les informations disponibles, dis-le et propose ce " +
+  "que l'utilisateur pourrait vérifier ou observer, plutôt que d'affirmer quelque chose que tu ne " +
+  "sais pas réellement. Distingue toujours, dans ta réponse, ce qui est une donnée mesurée par un " +
+  "capteur, une donnée saisie par l'utilisateur, une donnée météo, une information botanique " +
+  "générale sur l'espèce, une estimation de ta part, et une simple hypothèse — ne présente jamais " +
+  "l'une comme une autre. Si un relevé capteur est signalé ci-dessous comme potentiellement " +
+  "obsolète, dis-le explicitement plutôt que de le traiter comme une valeur actuelle fiable.";
 
 interface CareEventContext {
   type: string;
@@ -47,6 +51,20 @@ interface CareScheduleContext {
   frequencyDays: number;
   lastCompletedDate?: string | null;
 }
+interface SensorReadingContext {
+  label: string;
+  value: number;
+  unit: string;
+  measuredAt: string;
+  isStale: boolean;
+  source: string;
+}
+interface WeatherContext {
+  condition?: string | null;
+  temperatureCelsius?: number | null;
+  precipitationForecastMm?: number | null;
+  asOf?: string | null;
+}
 interface PlantAIContextDTO {
   scientificName?: string | null;
   commonName?: string | null;
@@ -56,6 +74,10 @@ interface PlantAIContextDTO {
   recentCareEvents?: CareEventContext[];
   careSchedules?: CareScheduleContext[];
   environment?: { temperatureCelsius?: number | null; humidityPercent?: number | null } | null;
+  currentReadings?: SensorReadingContext[];
+  recentReadingHistory?: SensorReadingContext[];
+  lastIrrigation?: CareEventContext | null;
+  weather?: WeatherContext | null;
 }
 interface AssistantRequestBody {
   question?: string;
@@ -123,13 +145,47 @@ function formatContext(context: PlantAIContextDTO | undefined): string {
   if (context.isIndoor !== undefined && context.isIndoor !== null) {
     lines.push(`Emplacement : ${context.isIndoor ? "intérieur" : "extérieur"}`);
   }
-  if (context.environment?.temperatureCelsius != null) {
-    lines.push(`Température connue : ${context.environment.temperatureCelsius} °C`);
+  if (context.currentReadings?.length) {
+    lines.push("Relevés capteurs actuels (donnée mesurée) :");
+    for (const r of context.currentReadings) {
+      const staleness = r.isStale
+        ? " — ATTENTION : plus de 6h sans nouvelle mesure, à traiter comme potentiellement obsolète"
+        : "";
+      lines.push(`- ${r.label} : ${r.value} ${r.unit} (mesuré le ${r.measuredAt}, source : ${r.source})${staleness}`);
+    }
+  } else if (context.environment?.temperatureCelsius != null || context.environment?.humidityPercent != null) {
+    if (context.environment.temperatureCelsius != null) lines.push(`Température connue : ${context.environment.temperatureCelsius} °C`);
+    if (context.environment.humidityPercent != null) lines.push(`Humidité connue : ${context.environment.humidityPercent} %`);
   }
-  if (context.environment?.humidityPercent != null) {
-    lines.push(`Humidité connue : ${context.environment.humidityPercent} %`);
+
+  if (context.recentReadingHistory?.length) {
+    lines.push("Historique récent des capteurs (donnée mesurée, tendance sur ~7 jours) :");
+    for (const r of context.recentReadingHistory) {
+      lines.push(`- ${r.label} : ${r.value} ${r.unit} le ${r.measuredAt}`);
+    }
   }
-  if (context.notes) lines.push(`Notes de l'utilisateur : ${context.notes}`);
+
+  if (context.lastIrrigation) {
+    // "Zone connectée" means this came from a real IrrigationEvent
+    // (hardware-triggered or logged from an actual cycle) — a measured
+    // fact. Otherwise it's a plain CareEvent the user typed in by hand —
+    // still true, but user-reported rather than measured.
+    const qty = context.lastIrrigation.quantity != null
+      ? ` (${context.lastIrrigation.quantity}${context.lastIrrigation.unit ?? ""})`
+      : "";
+    const provenance = context.lastIrrigation.type.includes("connectée") ? "donnée mesurée" : "donnée utilisateur";
+    lines.push(`Dernier arrosage (${provenance}) : ${context.lastIrrigation.date}${qty}`);
+  }
+
+  if (context.weather) {
+    lines.push("Météo (donnée météo, fournisseur externe) :");
+    if (context.weather.condition) lines.push(`- Condition : ${context.weather.condition}`);
+    if (context.weather.temperatureCelsius != null) lines.push(`- Température : ${context.weather.temperatureCelsius} °C`);
+    if (context.weather.precipitationForecastMm != null) lines.push(`- Pluie prévue : ${context.weather.precipitationForecastMm} mm`);
+    if (context.weather.asOf) lines.push(`- Dernière mise à jour de cette météo : ${context.weather.asOf}`);
+  }
+
+  if (context.notes) lines.push(`Notes de l'utilisateur (donnée utilisateur) : ${context.notes}`);
 
   if (context.careSchedules?.length) {
     lines.push("Programmes de soins actifs :");
@@ -139,7 +195,7 @@ function formatContext(context: PlantAIContextDTO | undefined): string {
   }
 
   if (context.recentCareEvents?.length) {
-    lines.push("Historique récent :");
+    lines.push("Historique récent (donnée utilisateur — saisi par la personne, pas mesuré) :");
     for (const e of context.recentCareEvents.slice(0, 20)) {
       const qty = e.quantity != null ? ` (${e.quantity}${e.unit ?? ""})` : "";
       const notes = e.notes ? ` — ${e.notes}` : "";

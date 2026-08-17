@@ -63,7 +63,13 @@ const SYSTEM_PROMPT =
   "3) checksToPerform doit lister des vérifications concrètes que l'utilisateur peut faire lui-même " +
   "(ex: humidité réelle du substrat, odeur des racines, dessous des feuilles). " +
   "4) confidence reflète honnêtement ta certitude réelle — utilise \"low\" ou \"unknown\" si les " +
-  "photos sont peu claires ou le tableau ambigu, plutôt que de forcer une réponse assurée.";
+  "photos sont peu claires ou le tableau ambigu, plutôt que de forcer une réponse assurée. " +
+  "5) Distingue toujours dans ton raisonnement ce qui relève d'une donnée mesurée (capteur, " +
+  "historique d'arrosage réel), d'une donnée saisie par l'utilisateur, d'une donnée météo, d'une " +
+  "information botanique générale sur l'espèce, d'une estimation de ta part, et d'une simple " +
+  "hypothèse — ne présente jamais l'une comme une autre. Si un relevé capteur fourni est signalé " +
+  "comme potentiellement obsolète, dis-le explicitement plutôt que de t'appuyer dessus comme sur " +
+  "une valeur actuelle fiable.";
 
 interface CareEventContext {
   type: string;
@@ -77,6 +83,20 @@ interface CareScheduleContext {
   frequencyDays: number;
   lastCompletedDate?: string | null;
 }
+interface SensorReadingContext {
+  label: string;
+  value: number;
+  unit: string;
+  measuredAt: string;
+  isStale: boolean;
+  source: string;
+}
+interface WeatherContext {
+  condition?: string | null;
+  temperatureCelsius?: number | null;
+  precipitationForecastMm?: number | null;
+  asOf?: string | null;
+}
 interface PlantAIContextDTO {
   scientificName?: string | null;
   commonName?: string | null;
@@ -86,6 +106,10 @@ interface PlantAIContextDTO {
   recentCareEvents?: CareEventContext[];
   careSchedules?: CareScheduleContext[];
   environment?: { temperatureCelsius?: number | null; humidityPercent?: number | null } | null;
+  currentReadings?: SensorReadingContext[];
+  recentReadingHistory?: SensorReadingContext[];
+  lastIrrigation?: CareEventContext | null;
+  weather?: WeatherContext | null;
 }
 interface DiagnoseRequestBody {
   images?: string[];
@@ -163,13 +187,43 @@ function formatContext(context: PlantAIContextDTO | undefined): string {
   if (context.isIndoor !== undefined && context.isIndoor !== null) {
     lines.push(`Emplacement : ${context.isIndoor ? "intérieur" : "extérieur"}`);
   }
-  if (context.environment?.temperatureCelsius != null) {
-    lines.push(`Température connue : ${context.environment.temperatureCelsius} °C`);
+  if (context.currentReadings?.length) {
+    lines.push("Relevés capteurs actuels (donnée mesurée) :");
+    for (const r of context.currentReadings) {
+      const staleness = r.isStale
+        ? " — ATTENTION : plus de 6h sans nouvelle mesure, à traiter comme potentiellement obsolète"
+        : "";
+      lines.push(`- ${r.label} : ${r.value} ${r.unit} (mesuré le ${r.measuredAt}, source : ${r.source})${staleness}`);
+    }
+  } else if (context.environment?.temperatureCelsius != null || context.environment?.humidityPercent != null) {
+    if (context.environment.temperatureCelsius != null) lines.push(`Température connue : ${context.environment.temperatureCelsius} °C`);
+    if (context.environment.humidityPercent != null) lines.push(`Humidité connue : ${context.environment.humidityPercent} %`);
   }
-  if (context.environment?.humidityPercent != null) {
-    lines.push(`Humidité connue : ${context.environment.humidityPercent} %`);
+
+  if (context.recentReadingHistory?.length) {
+    lines.push("Historique récent des capteurs (donnée mesurée, tendance sur ~7 jours) :");
+    for (const r of context.recentReadingHistory) {
+      lines.push(`- ${r.label} : ${r.value} ${r.unit} le ${r.measuredAt}`);
+    }
   }
-  if (context.notes) lines.push(`Notes de l'utilisateur : ${context.notes}`);
+
+  if (context.lastIrrigation) {
+    const qty = context.lastIrrigation.quantity != null
+      ? ` (${context.lastIrrigation.quantity}${context.lastIrrigation.unit ?? ""})`
+      : "";
+    const provenance = context.lastIrrigation.type.includes("connectée") ? "donnée mesurée" : "donnée utilisateur";
+    lines.push(`Dernier arrosage (${provenance}) : ${context.lastIrrigation.date}${qty}`);
+  }
+
+  if (context.weather) {
+    lines.push("Météo (donnée météo, fournisseur externe) :");
+    if (context.weather.condition) lines.push(`- Condition : ${context.weather.condition}`);
+    if (context.weather.temperatureCelsius != null) lines.push(`- Température : ${context.weather.temperatureCelsius} °C`);
+    if (context.weather.precipitationForecastMm != null) lines.push(`- Pluie prévue : ${context.weather.precipitationForecastMm} mm`);
+    if (context.weather.asOf) lines.push(`- Dernière mise à jour de cette météo : ${context.weather.asOf}`);
+  }
+
+  if (context.notes) lines.push(`Notes de l'utilisateur (donnée utilisateur) : ${context.notes}`);
 
   if (context.careSchedules?.length) {
     lines.push("Programmes de soins actifs :");
@@ -179,7 +233,7 @@ function formatContext(context: PlantAIContextDTO | undefined): string {
   }
 
   if (context.recentCareEvents?.length) {
-    lines.push("Historique récent :");
+    lines.push("Historique récent (donnée utilisateur — saisi par la personne, pas mesuré) :");
     for (const e of context.recentCareEvents.slice(0, 20)) {
       const qty = e.quantity != null ? ` (${e.quantity}${e.unit ?? ""})` : "";
       const notes = e.notes ? ` — ${e.notes}` : "";

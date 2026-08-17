@@ -360,6 +360,7 @@ struct WeatherCard: View {
                     .buttonStyle(.bordered)
                     .controlSize(.small)
             }
+            WhyDisclosureView(reasons: rainReasons(suggestion))
         }
         .padding(10)
         .background(Color.blue.opacity(0.1), in: RoundedRectangle(cornerRadius: 10, style: .continuous))
@@ -374,6 +375,25 @@ struct WeatherCard: View {
         } message: {
             Text("\(count) programme\(count > 1 ? "s" : "") d'arrosage seront reportés de 2 jours.")
         }
+    }
+
+    /// Spec §69's own worked example: "humidité sol : 38 %, pluie
+    /// prévue : 12 mm, dernier arrosage : hier" — the rain figure is
+    /// shared across the whole suggestion; soil moisture/last watering
+    /// come from the first affected plant (labeled by name once there's
+    /// more than one, since those two numbers do vary per plant).
+    private func rainReasons(_ suggestion: SmartWateringService.RainSuggestion) -> [String] {
+        var reasons = ["Pluie prévue \(suggestion.dayLabel) : \(Int(suggestion.rainAmountMm)) mm"]
+        guard let first = suggestion.plants.first?.plant else { return reasons }
+        let label = suggestion.plants.count > 1 ? " (\(first.customName))" : ""
+
+        if let soilSensor = first.sensors.first(where: { $0.type == .soilMoisture }), let reading = soilSensor.latestReading {
+            reasons.append("Humidité du sol\(label) : \(Int(reading.value)) %")
+        }
+        if let lastWatering = first.sortedCareEvents.first(where: { $0.type == .watering }) {
+            reasons.append("Dernier arrosage\(label) : \(lastWatering.date.formatted(.relative(presentation: .named)))")
+        }
+        return reasons
     }
 
     private func heatwaveBanner(_ alert: SmartWateringService.HeatwaveAlert) -> some View {

@@ -224,10 +224,7 @@ struct AutomationRuleFormView: View {
 
     private func deleteRule() {
         guard let rule else { return }
-        if rule.syncStatus == .synced {
-            modelContext.insert(PendingDeletion(id: rule.id, entityType: "automation_rules"))
-        }
-        modelContext.delete(rule)
+        DeletionService.delete(rule, in: modelContext)
         try? modelContext.save()
         dismiss()
     }
