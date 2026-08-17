@@ -65,10 +65,11 @@ struct PlantAIContext: Encodable {
 
     /// Spec §66's "météo" — sourced from WeatherCache (the same
     /// device-local, non-synced cache the dashboard's own weather card
-    /// reads), never a fresh network call from here. `asOf` is when that
-    /// cached snapshot was actually fetched, not "now" — see
-    /// WeatherCache.fetchedAt's own doc comment for why that distinction
-    /// matters for §70.
+    /// reads), never a fresh network call from here. `asOf` is
+    /// WeatherData's own `fetchedAt` — when that cached snapshot was
+    /// actually fetched, not "now" — since presenting a multi-day-old
+    /// forecast as current would be exactly the kind of unlabeled
+    /// staleness spec §70 warns against.
     struct WeatherContext: Encodable {
         var condition: String?
         var temperatureCelsius: Double?
@@ -166,7 +167,7 @@ struct PlantAIContext: Encodable {
                     condition: data.conditionDescription,
                     temperatureCelsius: data.temperatureCelsius,
                     precipitationForecastMm: data.dailyForecast.first?.precipitationMm,
-                    asOf: WeatherCache.fetchedAt(for: garden.id).map(dateTimeFormatter.string(from:))
+                    asOf: dateTimeFormatter.string(from: data.fetchedAt)
                 )
             }
         }
