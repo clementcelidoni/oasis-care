@@ -57,6 +57,8 @@ final class SyncEngine: ObservableObject {
             try await pushAutomationExecutions(context: context)
             try await pushGreenhouses(workspaceID: workspaceID, context: context)
             try await pushPonds(workspaceID: workspaceID, context: context)
+            try await pushScenes(workspaceID: workspaceID, context: context)
+            try await pushSceneActions(context: context)
             try await pushIrrigationEvents(context: context)
             try await pushDashboardPreferences(workspaceID: workspaceID, context: context)
             try await pushSmartModeSettings(workspaceID: workspaceID, context: context)
@@ -96,11 +98,12 @@ final class SyncEngine: ObservableObject {
         let checkups = (try? context.fetch(FetchDescriptor<GardenCheckup>()))?.filter { $0.syncStatus != .synced }.count ?? 0
         let checkupEntries = (try? context.fetch(FetchDescriptor<GardenCheckupEntry>()))?.filter { $0.syncStatus != .synced }.count ?? 0
         let smartModeSettings = (try? context.fetch(FetchDescriptor<SmartModeSettings>()))?.filter { $0.syncStatus != .synced }.count ?? 0
+        let scenes = (try? context.fetch(FetchDescriptor<OasisScene>()))?.filter { $0.syncStatus != .synced }.count ?? 0
         let deletions = (try? context.fetchCount(FetchDescriptor<PendingDeletion>())) ?? 0
         return gardens + zones + plants + schedules + events + photos + analyses + preferences + irrigationZones
             + irrigationEvents + smartTags + connectedDevices + sensors + sensorReadings + commandLogs
             + automationRules + automationExecutions + greenhouses + ponds + measurements + inspections + checkups
-            + checkupEntries + smartModeSettings + deletions
+            + checkupEntries + smartModeSettings + scenes + deletions
     }
 
     private static let photoBucket = "plant-photos"
@@ -280,6 +283,7 @@ final class SyncEngine: ObservableObject {
             context.insert(reading)
         }
 
+        var greenhousesByID: [UUID: Greenhouse] = [:]
         let remoteGreenhouses: [GreenhouseRow] = try await AuthService.client.from("greenhouses").select().execute().value
         for row in remoteGreenhouses {
             let greenhouse = Greenhouse(
@@ -305,6 +309,7 @@ final class SyncEngine: ObservableObject {
             greenhouse.syncStatus = .synced
             greenhouse.updatedAt = row.updatedAt
             context.insert(greenhouse)
+            greenhousesByID[row.id] = greenhouse
         }
 
         let remotePonds: [PondRow] = try await AuthService.client.from("ponds").select().execute().value
@@ -329,6 +334,31 @@ final class SyncEngine: ObservableObject {
             pond.syncStatus = .synced
             pond.updatedAt = row.updatedAt
             context.insert(pond)
+        }
+
+        var scenesByID: [UUID: OasisScene] = [:]
+        let remoteScenes: [OasisSceneRow] = try await AuthService.client.from("scenes").select().execute().value
+        for row in remoteScenes {
+            let scene = OasisScene(name: row.name, icon: row.icon, garden: row.gardenId.flatMap { gardensByID[$0] })
+            scene.id = row.id
+            scene.greenhouse = row.greenhouseId.flatMap { greenhousesByID[$0] }
+            scene.setClimateControlEnabled = row.setClimateControlEnabled
+            scene.syncStatus = .synced
+            scene.updatedAt = row.updatedAt
+            context.insert(scene)
+            scenesByID[row.id] = scene
+        }
+
+        let remoteSceneActions: [OasisSceneActionRow] = try await AuthService.client.from("scene_actions").select().execute().value
+        for row in remoteSceneActions {
+            guard let scene = scenesByID[row.sceneId] else { continue }
+            let action = OasisSceneAction(
+                device: row.deviceId.flatMap { connectedDevicesByID[$0] }, capability: row.capability,
+                targetOn: row.targetOn, order: row.order
+            )
+            action.id = row.id
+            action.scene = scene
+            context.insert(action)
         }
 
         let remoteSchedules: [CareScheduleRow] = try await AuthService.client.from("care_schedules").select().execute().value
@@ -961,6 +991,44 @@ final class SyncEngine: ObservableObject {
             case uvLampInstalledAt = "uv_lamp_installed_at"
             case uvLampReminderAfterDays = "uv_lamp_reminder_after_days"
             case updatedAt = "updated_at"
+        }
+    }
+
+    private struct OasisSceneRow: Decodable {
+        var id: UUID
+        var gardenId: UUID?
+        var name: String
+        var icon: String
+        var greenhouseId: UUID?
+        var setClimateControlEnabled: Bool?
+        var updatedAt: Date?
+
+        enum CodingKeys: String, CodingKey {
+            case id
+            case gardenId = "garden_id"
+            case name
+            case icon
+            case greenhouseId = "greenhouse_id"
+            case setClimateControlEnabled = "set_climate_control_enabled"
+            case updatedAt = "updated_at"
+        }
+    }
+
+    private struct OasisSceneActionRow: Decodable {
+        var id: UUID
+        var sceneId: UUID
+        var deviceId: UUID?
+        var capability: DeviceCapability
+        var targetOn: Bool
+        var order: Int
+
+        enum CodingKeys: String, CodingKey {
+            case id
+            case sceneId = "scene_id"
+            case deviceId = "device_id"
+            case capability
+            case targetOn = "target_on"
+            case order
         }
     }
 
@@ -2170,6 +2238,78 @@ final class SyncEngine: ObservableObject {
         }
         try await AuthService.client.from("ponds").upsert(dtos).execute()
         for pond in pending { pond.syncStatus = .synced }
+    }
+
+    // MARK: - Scenes
+
+    private struct OasisSceneDTO: Encodable {
+        var id: UUID
+        var workspaceId: UUID
+        var gardenId: UUID?
+        var name: String
+        var icon: String
+        var greenhouseId: UUID?
+        var setClimateControlEnabled: Bool?
+        var updatedAt: Date
+
+        enum CodingKeys: String, CodingKey {
+            case id
+            case workspaceId = "workspace_id"
+            case gardenId = "garden_id"
+            case name
+            case icon
+            case greenhouseId = "greenhouse_id"
+            case setClimateControlEnabled = "set_climate_control_enabled"
+            case updatedAt = "updated_at"
+        }
+    }
+
+    private func pushScenes(workspaceID: UUID, context: ModelContext) async throws {
+        let pending = try context.fetch(FetchDescriptor<OasisScene>()).filter { $0.syncStatus != .synced }
+        guard !pending.isEmpty else { return }
+        let dtos = pending.map { scene in
+            OasisSceneDTO(
+                id: scene.id, workspaceId: workspaceID, gardenId: scene.garden?.id, name: scene.name, icon: scene.icon,
+                greenhouseId: scene.greenhouse?.id, setClimateControlEnabled: scene.setClimateControlEnabled,
+                updatedAt: scene.updatedAt ?? .now
+            )
+        }
+        try await AuthService.client.from("scenes").upsert(dtos).execute()
+        for scene in pending { scene.syncStatus = .synced }
+    }
+
+    private struct OasisSceneActionDTO: Encodable {
+        var id: UUID
+        var sceneId: UUID
+        var deviceId: UUID?
+        var capability: DeviceCapability
+        var targetOn: Bool
+        var order: Int
+
+        enum CodingKeys: String, CodingKey {
+            case id
+            case sceneId = "scene_id"
+            case deviceId = "device_id"
+            case capability
+            case targetOn = "target_on"
+            case order
+        }
+    }
+
+    /// Same "push every child of every parent, no per-child syncStatus"
+    /// shape as pushAutomationConditions/pushAutomationActions —
+    /// OasisSceneAction has no sync fields of its own either.
+    private func pushSceneActions(context: ModelContext) async throws {
+        let actions = try context.fetch(FetchDescriptor<OasisSceneAction>()).filter { $0.scene != nil }
+        guard !actions.isEmpty else { return }
+        let dtos = actions.compactMap { action -> OasisSceneActionDTO? in
+            guard let sceneID = action.scene?.id else { return nil }
+            return OasisSceneActionDTO(
+                id: action.id, sceneId: sceneID, deviceId: action.device?.id,
+                capability: action.capability, targetOn: action.targetOn, order: action.order
+            )
+        }
+        try await AuthService.client.from("scene_actions").upsert(dtos).execute()
     }
 
     // MARK: - Irrigation events

@@ -12,6 +12,8 @@ struct GardenDetailView: View {
         case addPond
         case addSensor
         case sensorDetail(Sensor)
+        case addScene
+        case editScene(OasisScene)
 
         var id: String {
             switch self {
@@ -24,6 +26,8 @@ struct GardenDetailView: View {
             case .addPond: return "addPond"
             case .addSensor: return "addSensor"
             case .sensorDetail(let sensor): return "sensorDetail-\(sensor.id.uuidString)"
+            case .addScene: return "addScene"
+            case .editScene(let scene): return "editScene-\(scene.id.uuidString)"
             }
         }
     }
@@ -78,6 +82,7 @@ struct GardenDetailView: View {
     @State private var isBulkWaterSheetPresented = false
     @State private var isCheckupPresented = false
     @State private var zonePendingDeletion: ZoneDeletionTarget?
+    @State private var activatingSceneID: UUID?
     @State private var viewMode: ViewMode = .list
 
     private var plantsDueForWatering: [Plant] {
@@ -136,6 +141,10 @@ struct GardenDetailView: View {
                 SensorFormSheet(garden: garden)
             case .sensorDetail(let sensor):
                 SensorDetailSheet(sensor: sensor)
+            case .addScene:
+                SceneFormView(garden: garden, scene: nil)
+            case .editScene(let scene):
+                SceneFormView(garden: garden, scene: scene)
             }
         }
         .sheet(isPresented: $isBulkWaterSheetPresented) {
@@ -195,6 +204,7 @@ struct GardenDetailView: View {
                 irrigationSection
                 greenhousesSection
                 pondsSection
+                scenesSection
                 capteursSection
                 plantsSection
             }
@@ -436,6 +446,70 @@ struct GardenDetailView: View {
                     }
                 }
             }
+        }
+    }
+
+    /// Spec §79-80 — tapping a scene activates it immediately (spec's
+    /// own "one tap/one phrase" framing), "Modifier" opens the builder;
+    /// unlike greenhouses/ponds there's no dashboard to navigate to,
+    /// activating IS the primary action.
+    private var scenesSection: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            HStack {
+                Text("Scènes")
+                    .font(.headline)
+                Spacer()
+                Button {
+                    activeSheet = .addScene
+                } label: {
+                    Label("Ajouter", systemImage: "plus.circle")
+                        .labelStyle(.iconOnly)
+                }
+            }
+            if garden.scenes.isEmpty {
+                Text("Aucune scène pour l'instant.")
+                    .font(.subheadline)
+                    .foregroundStyle(.secondary)
+            } else {
+                VStack(spacing: 0) {
+                    ForEach(Array(garden.scenes.sorted { $0.name < $1.name }.enumerated()), id: \.element.id) { index, scene in
+                        HStack {
+                            Button {
+                                activateScene(scene)
+                            } label: {
+                                HStack {
+                                    Image(systemName: scene.icon)
+                                        .foregroundStyle(activatingSceneID == scene.id ? Color.secondary : Color.accentColor)
+                                    Text(scene.name)
+                                        .foregroundStyle(.primary)
+                                    Spacer()
+                                    if activatingSceneID == scene.id {
+                                        ProgressView()
+                                    }
+                                }
+                                .padding(.vertical, 6)
+                            }
+                            .buttonStyle(.plain)
+                            .disabled(activatingSceneID != nil)
+                            Button("Modifier") { activeSheet = .editScene(scene) }
+                                .font(.caption)
+                                .buttonStyle(.borderless)
+                        }
+                        if index < garden.scenes.count - 1 {
+                            Divider()
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    private func activateScene(_ scene: OasisScene) {
+        activatingSceneID = scene.id
+        Task {
+            await SceneService.activate(scene, context: modelContext)
+            activatingSceneID = nil
+            Haptics.success()
         }
     }
 

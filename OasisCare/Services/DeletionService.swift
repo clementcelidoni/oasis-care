@@ -21,6 +21,7 @@ enum DeletionService {
         case greenhouse = "greenhouses"
         case pond = "ponds"
         case automationRule = "automation_rules"
+        case scene = "scenes"
     }
 
     static func delete(_ garden: Garden, in context: ModelContext) {
@@ -89,6 +90,11 @@ enum DeletionService {
     static func delete(_ rule: AutomationRule, in context: ModelContext) {
         recordPendingDeletion(id: rule.id, type: .automationRule, in: context)
         context.delete(rule)
+    }
+
+    static func delete(_ scene: OasisScene, in context: ModelContext) {
+        recordPendingDeletion(id: scene.id, type: .scene, in: context)
+        context.delete(scene)
     }
 
     private static func recordPendingDeletion(id: UUID, type: EntityType, in context: ModelContext) {

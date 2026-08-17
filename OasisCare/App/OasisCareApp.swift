@@ -4,46 +4,6 @@ import UserNotifications
 
 @main
 struct OasisCareApp: App {
-    var sharedModelContainer: ModelContainer = {
-        let schema = Schema([
-            Plant.self,
-            Garden.self,
-            GardenZone.self,
-            CareEvent.self,
-            CareSchedule.self,
-            PlantPhoto.self,
-            PendingDeletion.self,
-            SpeciesProfile.self,
-            AIAnalysis.self,
-            DashboardPreferences.self,
-            IrrigationZone.self,
-            IrrigationEvent.self,
-            SmartTag.self,
-            PlantMeasurement.self,
-            TreeInspection.self,
-            GardenCheckup.self,
-            GardenCheckupEntry.self,
-            Sensor.self,
-            SensorReading.self,
-            ConnectedDevice.self,
-            DeviceCommandLog.self,
-            AutomationRule.self,
-            AutomationCondition.self,
-            AutomationAction.self,
-            AutomationExecution.self,
-            Greenhouse.self,
-            Pond.self,
-            SmartModeSettings.self
-        ])
-        let configuration = ModelConfiguration(schema: schema)
-
-        do {
-            return try ModelContainer(for: schema, configurations: [configuration])
-        } catch {
-            fatalError("Impossible de créer le conteneur SwiftData : \(error)")
-        }
-    }()
-
     init() {
         UNUserNotificationCenter.current().delegate = NotificationRouter.shared
     }
@@ -52,6 +12,6 @@ struct OasisCareApp: App {
         WindowGroup {
             RootContainerView()
         }
-        .modelContainer(sharedModelContainer)
+        .modelContainer(SharedModelContainer.shared)
     }
 }
