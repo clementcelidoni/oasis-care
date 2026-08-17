@@ -56,11 +56,13 @@ struct SensorFormSheet: View {
                     Text("Source")
                 }
 
-                Section("Plage attendue (facultatif)") {
+                Section {
                     TextField("Minimum", text: $minimumExpected)
                         .keyboardType(.decimalPad)
                     TextField("Maximum", text: $maximumExpected)
                         .keyboardType(.decimalPad)
+                } header: {
+                    Text("Plage attendue (facultatif)")
                 } footer: {
                     Text("Utilisée pour repérer les valeurs impossibles (Phase 5I).")
                 }
