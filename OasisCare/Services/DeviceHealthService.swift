@@ -46,9 +46,15 @@ enum DeviceHealthService {
     /// Spec §65 — groups newly-surfaced alerts by kind before notifying
     /// (one notification for "3 capteurs sans données", not three
     /// identical-shaped ones) and skips anything already notified
-    /// within the last 24h via HealthAlertNotificationTracker.
-    static func notifyIfNeeded(_ alerts: [HealthAlert]) {
-        let newOnes = alerts.filter { !HealthAlertNotificationTracker.wasRecentlyNotified($0.dedupeKey) }
+    /// within the last 24h via HealthAlertNotificationTracker. Spec
+    /// §72's Mode Vacances adds a second filter on top — "envoyer
+    /// seulement alertes importantes" — so a stale-sensor `.warning`
+    /// stays silent while away but a `.critical` still gets through.
+    static func notifyIfNeeded(_ alerts: [HealthAlert], vacationModeActive: Bool = false) {
+        var newOnes = alerts.filter { !HealthAlertNotificationTracker.wasRecentlyNotified($0.dedupeKey) }
+        if vacationModeActive {
+            newOnes = newOnes.filter { $0.level >= .important }
+        }
         guard !newOnes.isEmpty else { return }
 
         for (kind, group) in Dictionary(grouping: newOnes, by: \.kind) {

@@ -18,6 +18,7 @@ struct HomeView: View {
     @Query private var automationRules: [AutomationRule]
     @Query private var greenhouses: [Greenhouse]
     @Query private var allSensors: [Sensor]
+    @Query private var smartModeSettingsQuery: [SmartModeSettings]
     @ObservedObject private var homeKitService = HomeKitService.shared
 
     @State private var selectedGarden: Garden?
@@ -31,6 +32,10 @@ struct HomeView: View {
 
     private var preferences: DashboardPreferences {
         preferencesQuery.first ?? DashboardPreferences()
+    }
+
+    private var smartModeSettings: SmartModeSettings {
+        smartModeSettingsQuery.first ?? SmartModeSettings()
     }
 
     private var plants: [Plant] {
@@ -148,6 +153,8 @@ struct HomeView: View {
                         VStack(alignment: .leading, spacing: 24) {
                             header
 
+                            SmartModesBanner(settings: smartModeSettings)
+
                             if preferences.showHealth {
                                 GlobalSummaryCard(plants: plants)
                                 HealthScoreCard(score: DashboardService.healthScore(plants: plants))
@@ -163,7 +170,7 @@ struct HomeView: View {
                             }
 
                             if preferences.showWeather {
-                                WeatherCard(garden: weatherGarden, plants: plants)
+                                WeatherCard(garden: weatherGarden, plants: plants, waterSavingModeEnabled: smartModeSettings.waterSavingModeEnabled)
                             }
 
                             let frequencySuggestions = SmartWateringService.frequencySuggestions(plants: plants)
@@ -286,12 +293,13 @@ struct HomeView: View {
             }
             .task {
                 _ = DashboardService.preferences(in: modelContext)
+                _ = SmartModeService.settings(in: modelContext)
                 await runAutomaticRules()
                 for greenhouse in greenhouses where greenhouse.climateControlEnabled {
                     await GreenhouseClimateService.evaluate(greenhouse, context: modelContext)
                 }
                 let allHealthAlerts = DeviceHealthService.evaluate(devices: connectedDevices, sensors: allSensors, irrigationZones: allIrrigationZones)
-                DeviceHealthService.notifyIfNeeded(allHealthAlerts)
+                DeviceHealthService.notifyIfNeeded(allHealthAlerts, vacationModeActive: smartModeSettings.isVacationActiveNow())
             }
         }
     }

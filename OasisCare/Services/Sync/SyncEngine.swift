@@ -59,6 +59,7 @@ final class SyncEngine: ObservableObject {
             try await pushPonds(workspaceID: workspaceID, context: context)
             try await pushIrrigationEvents(context: context)
             try await pushDashboardPreferences(workspaceID: workspaceID, context: context)
+            try await pushSmartModeSettings(workspaceID: workspaceID, context: context)
             try await pushPendingDeletions(context: context)
             try context.save()
             lastSyncError = nil
@@ -94,11 +95,12 @@ final class SyncEngine: ObservableObject {
         let inspections = (try? context.fetch(FetchDescriptor<TreeInspection>()))?.filter { $0.syncStatus != .synced }.count ?? 0
         let checkups = (try? context.fetch(FetchDescriptor<GardenCheckup>()))?.filter { $0.syncStatus != .synced }.count ?? 0
         let checkupEntries = (try? context.fetch(FetchDescriptor<GardenCheckupEntry>()))?.filter { $0.syncStatus != .synced }.count ?? 0
+        let smartModeSettings = (try? context.fetch(FetchDescriptor<SmartModeSettings>()))?.filter { $0.syncStatus != .synced }.count ?? 0
         let deletions = (try? context.fetchCount(FetchDescriptor<PendingDeletion>())) ?? 0
         return gardens + zones + plants + schedules + events + photos + analyses + preferences + irrigationZones
             + irrigationEvents + smartTags + connectedDevices + sensors + sensorReadings + commandLogs
             + automationRules + automationExecutions + greenhouses + ponds + measurements + inspections + checkups
-            + checkupEntries + deletions
+            + checkupEntries + smartModeSettings + deletions
     }
 
     private static let photoBucket = "plant-photos"
@@ -500,6 +502,23 @@ final class SyncEngine: ObservableObject {
                 prefs.syncStatus = .synced
                 prefs.updatedAt = row.updatedAt
                 context.insert(prefs)
+            }
+        }
+
+        let hasLocalSmartModeSettings = ((try? context.fetchCount(FetchDescriptor<SmartModeSettings>())) ?? 0) > 0
+        if !hasLocalSmartModeSettings {
+            let remoteSmartModeSettings: [SmartModeSettingsRow] = try await AuthService.client.from("smart_mode_settings").select().execute().value
+            if let row = remoteSmartModeSettings.first {
+                let settings = SmartModeSettings()
+                settings.id = row.id
+                settings.vacationModeEnabled = row.vacationModeEnabled
+                settings.vacationStartDate = row.vacationStartDate
+                settings.vacationEndDate = row.vacationEndDate
+                settings.winterModeEnabled = row.winterModeEnabled
+                settings.waterSavingModeEnabled = row.waterSavingModeEnabled
+                settings.syncStatus = .synced
+                settings.updatedAt = row.updatedAt
+                context.insert(settings)
             }
         }
 
@@ -1045,6 +1064,26 @@ final class SyncEngine: ObservableObject {
             case showEvolution = "show_evolution"
             case showConnectedHome = "show_connected_home"
             case showDeviceHealth = "show_device_health"
+            case updatedAt = "updated_at"
+        }
+    }
+
+    private struct SmartModeSettingsRow: Decodable {
+        var id: UUID
+        var vacationModeEnabled: Bool
+        var vacationStartDate: Date?
+        var vacationEndDate: Date?
+        var winterModeEnabled: Bool
+        var waterSavingModeEnabled: Bool
+        var updatedAt: Date?
+
+        enum CodingKeys: String, CodingKey {
+            case id
+            case vacationModeEnabled = "vacation_mode_enabled"
+            case vacationStartDate = "vacation_start_date"
+            case vacationEndDate = "vacation_end_date"
+            case winterModeEnabled = "winter_mode_enabled"
+            case waterSavingModeEnabled = "water_saving_mode_enabled"
             case updatedAt = "updated_at"
         }
     }
@@ -2232,6 +2271,46 @@ final class SyncEngine: ObservableObject {
         }
         try await AuthService.client.from("dashboard_preferences").upsert(dtos, onConflict: "workspace_id").execute()
         for prefs in pending { prefs.syncStatus = .synced }
+    }
+
+    // MARK: - Smart mode settings
+
+    private struct SmartModeSettingsDTO: Encodable {
+        var id: UUID
+        var workspaceId: UUID
+        var vacationModeEnabled: Bool
+        var vacationStartDate: Date?
+        var vacationEndDate: Date?
+        var winterModeEnabled: Bool
+        var waterSavingModeEnabled: Bool
+        var updatedAt: Date
+
+        enum CodingKeys: String, CodingKey {
+            case id
+            case workspaceId = "workspace_id"
+            case vacationModeEnabled = "vacation_mode_enabled"
+            case vacationStartDate = "vacation_start_date"
+            case vacationEndDate = "vacation_end_date"
+            case winterModeEnabled = "winter_mode_enabled"
+            case waterSavingModeEnabled = "water_saving_mode_enabled"
+            case updatedAt = "updated_at"
+        }
+    }
+
+    /// Same upsert-on-workspace_id reasoning as pushDashboardPreferences.
+    private func pushSmartModeSettings(workspaceID: UUID, context: ModelContext) async throws {
+        let pending = try context.fetch(FetchDescriptor<SmartModeSettings>()).filter { $0.syncStatus != .synced }
+        guard !pending.isEmpty else { return }
+        let dtos = pending.map { settings in
+            SmartModeSettingsDTO(
+                id: settings.id, workspaceId: workspaceID, vacationModeEnabled: settings.vacationModeEnabled,
+                vacationStartDate: settings.vacationStartDate, vacationEndDate: settings.vacationEndDate,
+                winterModeEnabled: settings.winterModeEnabled, waterSavingModeEnabled: settings.waterSavingModeEnabled,
+                updatedAt: settings.updatedAt ?? .now
+            )
+        }
+        try await AuthService.client.from("smart_mode_settings").upsert(dtos, onConflict: "workspace_id").execute()
+        for settings in pending { settings.syncStatus = .synced }
     }
 
     // MARK: - Pending deletions

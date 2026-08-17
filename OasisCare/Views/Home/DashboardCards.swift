@@ -251,6 +251,7 @@ struct HealthAlertRow: View {
 struct WeatherCard: View {
     var garden: Garden?
     var plants: [Plant]
+    var waterSavingModeEnabled: Bool = false
 
     @State private var weather: WeatherService.WeatherData?
     @State private var isLoading = false
@@ -283,12 +284,18 @@ struct WeatherCard: View {
                         .foregroundStyle(.orange)
                 }
 
-                if let rain = SmartWateringService.rainSuggestion(plants: plants, weather: weather) {
+                if let rain = SmartWateringService.rainSuggestion(
+                    plants: plants, weather: weather, minimumRainMm: waterSavingModeEnabled ? 5 : 10
+                ) {
                     rainBanner(rain)
                 }
 
                 if let heatwave = SmartWateringService.heatwaveAlert(plants: plants, weather: weather) {
                     heatwaveBanner(heatwave)
+                }
+
+                if let frost = SmartWateringService.frostAlert(weather: weather) {
+                    frostBanner(frost)
                 }
             } else if isLoading {
                 ProgressView()
@@ -411,6 +418,20 @@ struct WeatherCard: View {
         }
         .padding(10)
         .background(Color.orange.opacity(0.1), in: RoundedRectangle(cornerRadius: 10, style: .continuous))
+    }
+
+    private func frostBanner(_ alert: SmartWateringService.FrostAlert) -> some View {
+        VStack(alignment: .leading, spacing: 4) {
+            Text("❄️ Risque de gel")
+                .font(.subheadline.weight(.medium))
+            Text("\(Int(alert.minTemperatureCelsius))°C prévus \(alert.dayLabel).")
+                .font(.caption)
+            Text("Pensez au chauffage des serres et à protéger les zones sensibles.")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+        }
+        .padding(10)
+        .background(Color.cyan.opacity(0.1), in: RoundedRectangle(cornerRadius: 10, style: .continuous))
     }
 
     private var placeholder: some View {

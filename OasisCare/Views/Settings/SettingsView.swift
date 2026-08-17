@@ -74,6 +74,9 @@ struct SettingsView: View {
                 NavigationLink("Maison connectée") {
                     MaisonConnecteeView()
                 }
+                NavigationLink("Modes intelligents") {
+                    SmartModesView()
+                }
             }
 
             Section {

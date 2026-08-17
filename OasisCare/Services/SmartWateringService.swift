@@ -13,9 +13,12 @@ enum SmartWateringService {
     }
 
     /// Outdoor plants with an active watering schedule due in the next
-    /// 2 days, when meaningful rain (≥10mm) is forecast for tomorrow.
-    static func rainSuggestion(plants: [Plant], weather: WeatherService.WeatherData) -> RainSuggestion? {
-        guard let tomorrow = weather.dailyForecast.first, let mm = tomorrow.precipitationMm, mm >= 10 else { return nil }
+    /// 2 days, when meaningful rain is forecast for tomorrow — ≥10mm
+    /// normally, or a lower `minimumRainMm` when spec §76's Économie
+    /// d'eau mode is active ("seuils raisonnables" biased toward
+    /// postponing more readily, not a fixed hardcoded number).
+    static func rainSuggestion(plants: [Plant], weather: WeatherService.WeatherData, minimumRainMm: Double = 10) -> RainSuggestion? {
+        guard let tomorrow = weather.dailyForecast.first, let mm = tomorrow.precipitationMm, mm >= minimumRainMm else { return nil }
 
         let horizon = Calendar.current.date(byAdding: .day, value: 2, to: .now) ?? .now
         var affected: [(Plant, CareSchedule)] = []
@@ -51,6 +54,24 @@ enum SmartWateringService {
         let young = plants.filter { $0.dateAdded >= cutoff }
 
         return HeatwaveAlert(maxTemperatureCelsius: maxTemp, dayCount: heatwaveMinConsecutiveDays, youngPlants: young)
+    }
+
+    // MARK: - Frost alert (spec §74)
+
+    struct FrostAlert {
+        var minTemperatureCelsius: Double
+        var dayLabel: String
+    }
+
+    /// "Température proche du seuil" — warns a couple degrees before
+    /// actual freezing, not only once the forecast already reads
+    /// sub-zero, so there's still time to act (spec §74's own
+    /// possibilities: alert, greenhouse heating, protecting zones).
+    private static let frostThresholdCelsius = 2.0
+
+    static func frostAlert(weather: WeatherService.WeatherData) -> FrostAlert? {
+        guard let tomorrow = weather.dailyForecast.first, let minTemp = tomorrow.minCelsius, minTemp <= frostThresholdCelsius else { return nil }
+        return FrostAlert(minTemperatureCelsius: minTemp, dayLabel: "demain")
     }
 
     // MARK: - Learning from real history (spec §22)
