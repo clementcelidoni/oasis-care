@@ -170,28 +170,20 @@ final class HomeKitService: NSObject, ObservableObject {
     }
 
     private static func connectedAccessory(from accessory: HMAccessory) -> ConnectedAccessory {
-        let services = accessory.services.map(connectedService(from:))
-        let infoCharacteristics = accessory.services
-            .first { $0.serviceType == HMServiceTypeAccessoryInformation }?
-            .characteristics ?? []
-        return ConnectedAccessory(
+        ConnectedAccessory(
             id: accessory.uniqueIdentifier,
             name: accessory.name,
             category: accessory.category.localizedDescription,
-            manufacturer: cachedStringValue(infoCharacteristics, type: HMCharacteristicTypeManufacturer),
-            model: cachedStringValue(infoCharacteristics, type: HMCharacteristicTypeModel),
-            firmwareVersion: cachedStringValue(infoCharacteristics, type: HMCharacteristicTypeFirmwareVersion),
+            // HMCharacteristicTypeManufacturer/Model/FirmwareVersion were
+            // deprecated in iOS 11 in favor of these direct properties.
+            manufacturer: accessory.manufacturer,
+            model: accessory.model,
+            firmwareVersion: accessory.firmwareVersion,
             roomName: accessory.room?.name,
             isReachable: accessory.isReachable,
             isBridged: accessory.isBridged,
-            services: services
+            services: accessory.services.map(connectedService(from:))
         )
-    }
-
-    /// Only reads a characteristic's already-cached value — never
-    /// triggers a network round-trip just to populate a display label.
-    private static func cachedStringValue(_ characteristics: [HMCharacteristic], type: String) -> String? {
-        characteristics.first { $0.characteristicType == type }?.value as? String
     }
 
     private static func connectedService(from service: HMService) -> ConnectedService {
@@ -212,8 +204,8 @@ final class HomeKitService: NSObject, ObservableObject {
             isReadable: characteristic.properties.contains(HMCharacteristicPropertyReadable),
             isWritable: characteristic.properties.contains(HMCharacteristicPropertyWritable),
             units: characteristic.metadata?.units,
-            minValue: characteristic.metadata?.minValue?.doubleValue,
-            maxValue: characteristic.metadata?.maxValue?.doubleValue
+            minValue: characteristic.metadata?.minimumValue?.doubleValue,
+            maxValue: characteristic.metadata?.maximumValue?.doubleValue
         )
     }
 
@@ -254,7 +246,7 @@ final class HomeKitService: NSObject, ObservableObject {
             return [.light]
         case HMServiceTypeSwitch, HMServiceTypeOutlet:
             return [.switchDevice]
-        case HMServiceTypeFanV2:
+        case HMServiceTypeFan:
             return [.fan]
         case HMServiceTypeThermostat, HMServiceTypeHeaterCooler:
             return [.heater]
