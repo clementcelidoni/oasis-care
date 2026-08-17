@@ -16,6 +16,7 @@ struct HomeView: View {
     @Query private var preferencesQuery: [DashboardPreferences]
     @Query private var connectedDevices: [ConnectedDevice]
     @Query private var automationRules: [AutomationRule]
+    @Query private var greenhouses: [Greenhouse]
     @ObservedObject private var homeKitService = HomeKitService.shared
 
     @State private var selectedGarden: Garden?
@@ -260,6 +261,9 @@ struct HomeView: View {
             .task {
                 _ = DashboardService.preferences(in: modelContext)
                 await runAutomaticRules()
+                for greenhouse in greenhouses where greenhouse.climateControlEnabled {
+                    await GreenhouseClimateService.evaluate(greenhouse, context: modelContext)
+                }
             }
         }
     }

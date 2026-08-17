@@ -18,6 +18,8 @@ enum DeletionService {
         case gardenCheckup = "garden_checkups"
         case connectedDevice = "connected_devices"
         case sensor = "sensors"
+        case greenhouse = "greenhouses"
+        case pond = "ponds"
     }
 
     static func delete(_ garden: Garden, in context: ModelContext) {
@@ -71,6 +73,16 @@ enum DeletionService {
     static func delete(_ sensor: Sensor, in context: ModelContext) {
         recordPendingDeletion(id: sensor.id, type: .sensor, in: context)
         context.delete(sensor)
+    }
+
+    static func delete(_ greenhouse: Greenhouse, in context: ModelContext) {
+        recordPendingDeletion(id: greenhouse.id, type: .greenhouse, in: context)
+        context.delete(greenhouse)
+    }
+
+    static func delete(_ pond: Pond, in context: ModelContext) {
+        recordPendingDeletion(id: pond.id, type: .pond, in: context)
+        context.delete(pond)
     }
 
     private static func recordPendingDeletion(id: UUID, type: EntityType, in context: ModelContext) {

@@ -177,10 +177,7 @@ struct GreenhouseFormView: View {
 
     private func delete() {
         guard let greenhouse else { return }
-        if greenhouse.syncStatus == .synced {
-            modelContext.insert(PendingDeletion(id: greenhouse.id, entityType: "greenhouses"))
-        }
-        modelContext.delete(greenhouse)
+        DeletionService.delete(greenhouse, in: modelContext)
         try? modelContext.save()
         dismiss()
     }

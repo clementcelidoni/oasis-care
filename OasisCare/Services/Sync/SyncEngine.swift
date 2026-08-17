@@ -56,6 +56,7 @@ final class SyncEngine: ObservableObject {
             try await pushAutomationActions(context: context)
             try await pushAutomationExecutions(context: context)
             try await pushGreenhouses(workspaceID: workspaceID, context: context)
+            try await pushPonds(workspaceID: workspaceID, context: context)
             try await pushIrrigationEvents(context: context)
             try await pushDashboardPreferences(workspaceID: workspaceID, context: context)
             try await pushPendingDeletions(context: context)
@@ -88,6 +89,7 @@ final class SyncEngine: ObservableObject {
         let automationRules = (try? context.fetch(FetchDescriptor<AutomationRule>()))?.filter { $0.syncStatus != .synced }.count ?? 0
         let automationExecutions = (try? context.fetch(FetchDescriptor<AutomationExecution>()))?.filter { $0.syncStatus != .synced }.count ?? 0
         let greenhouses = (try? context.fetch(FetchDescriptor<Greenhouse>()))?.filter { $0.syncStatus != .synced }.count ?? 0
+        let ponds = (try? context.fetch(FetchDescriptor<Pond>()))?.filter { $0.syncStatus != .synced }.count ?? 0
         let measurements = (try? context.fetch(FetchDescriptor<PlantMeasurement>()))?.filter { $0.syncStatus != .synced }.count ?? 0
         let inspections = (try? context.fetch(FetchDescriptor<TreeInspection>()))?.filter { $0.syncStatus != .synced }.count ?? 0
         let checkups = (try? context.fetch(FetchDescriptor<GardenCheckup>()))?.filter { $0.syncStatus != .synced }.count ?? 0
@@ -95,7 +97,7 @@ final class SyncEngine: ObservableObject {
         let deletions = (try? context.fetchCount(FetchDescriptor<PendingDeletion>())) ?? 0
         return gardens + zones + plants + schedules + events + photos + analyses + preferences + irrigationZones
             + irrigationEvents + smartTags + connectedDevices + sensors + sensorReadings + commandLogs
-            + automationRules + automationExecutions + greenhouses + measurements + inspections + checkups
+            + automationRules + automationExecutions + greenhouses + ponds + measurements + inspections + checkups
             + checkupEntries + deletions
     }
 
@@ -301,6 +303,30 @@ final class SyncEngine: ObservableObject {
             greenhouse.syncStatus = .synced
             greenhouse.updatedAt = row.updatedAt
             context.insert(greenhouse)
+        }
+
+        let remotePonds: [PondRow] = try await AuthService.client.from("ponds").select().execute().value
+        for row in remotePonds {
+            let pond = Pond(name: row.name, garden: row.gardenId.flatMap { gardensByID[$0] })
+            pond.id = row.id
+            pond.volumeLiters = row.volumeLiters
+            pond.targetTemperatureMin = row.targetTemperatureMin
+            pond.targetTemperatureMax = row.targetTemperatureMax
+            pond.targetWaterLevelPercent = row.targetWaterLevelPercent
+            pond.waterTemperatureSensor = row.waterTemperatureSensorId.flatMap { sensorsByID[$0] }
+            pond.waterLevelSensor = row.waterLevelSensorId.flatMap { sensorsByID[$0] }
+            pond.flowSensor = row.flowSensorId.flatMap { sensorsByID[$0] }
+            pond.phSensor = row.phSensorId.flatMap { sensorsByID[$0] }
+            pond.conductivitySensor = row.conductivitySensorId.flatMap { sensorsByID[$0] }
+            pond.pumpDevice = row.pumpDeviceId.flatMap { connectedDevicesByID[$0] }
+            pond.filtrationDevice = row.filtrationDeviceId.flatMap { connectedDevicesByID[$0] }
+            pond.uvDevice = row.uvDeviceId.flatMap { connectedDevicesByID[$0] }
+            pond.lastFiltrationCleanedAt = row.lastFiltrationCleanedAt
+            pond.uvLampInstalledAt = row.uvLampInstalledAt
+            pond.uvLampReminderAfterDays = row.uvLampReminderAfterDays
+            pond.syncStatus = .synced
+            pond.updatedAt = row.updatedAt
+            context.insert(pond)
         }
 
         let remoteSchedules: [CareScheduleRow] = try await AuthService.client.from("care_schedules").select().execute().value
@@ -870,6 +896,50 @@ final class SyncEngine: ObservableObject {
             case misterDeviceId = "mister_device_id"
             case lightDeviceId = "light_device_id"
             case valveDeviceId = "valve_device_id"
+            case updatedAt = "updated_at"
+        }
+    }
+
+    private struct PondRow: Decodable {
+        var id: UUID
+        var gardenId: UUID?
+        var name: String
+        var volumeLiters: Double?
+        var targetTemperatureMin: Double?
+        var targetTemperatureMax: Double?
+        var targetWaterLevelPercent: Double?
+        var waterTemperatureSensorId: UUID?
+        var waterLevelSensorId: UUID?
+        var flowSensorId: UUID?
+        var phSensorId: UUID?
+        var conductivitySensorId: UUID?
+        var pumpDeviceId: UUID?
+        var filtrationDeviceId: UUID?
+        var uvDeviceId: UUID?
+        var lastFiltrationCleanedAt: Date?
+        var uvLampInstalledAt: Date?
+        var uvLampReminderAfterDays: Int?
+        var updatedAt: Date?
+
+        enum CodingKeys: String, CodingKey {
+            case id
+            case gardenId = "garden_id"
+            case name
+            case volumeLiters = "volume_liters"
+            case targetTemperatureMin = "target_temperature_min"
+            case targetTemperatureMax = "target_temperature_max"
+            case targetWaterLevelPercent = "target_water_level_percent"
+            case waterTemperatureSensorId = "water_temperature_sensor_id"
+            case waterLevelSensorId = "water_level_sensor_id"
+            case flowSensorId = "flow_sensor_id"
+            case phSensorId = "ph_sensor_id"
+            case conductivitySensorId = "conductivity_sensor_id"
+            case pumpDeviceId = "pump_device_id"
+            case filtrationDeviceId = "filtration_device_id"
+            case uvDeviceId = "uv_device_id"
+            case lastFiltrationCleanedAt = "last_filtration_cleaned_at"
+            case uvLampInstalledAt = "uv_lamp_installed_at"
+            case uvLampReminderAfterDays = "uv_lamp_reminder_after_days"
             case updatedAt = "updated_at"
         }
     }
@@ -1990,6 +2060,74 @@ final class SyncEngine: ObservableObject {
         }
         try await AuthService.client.from("greenhouses").upsert(dtos).execute()
         for greenhouse in pending { greenhouse.syncStatus = .synced }
+    }
+
+    // MARK: - Ponds
+
+    private struct PondDTO: Encodable {
+        var id: UUID
+        var workspaceId: UUID
+        var gardenId: UUID?
+        var name: String
+        var volumeLiters: Double?
+        var targetTemperatureMin: Double?
+        var targetTemperatureMax: Double?
+        var targetWaterLevelPercent: Double?
+        var waterTemperatureSensorId: UUID?
+        var waterLevelSensorId: UUID?
+        var flowSensorId: UUID?
+        var phSensorId: UUID?
+        var conductivitySensorId: UUID?
+        var pumpDeviceId: UUID?
+        var filtrationDeviceId: UUID?
+        var uvDeviceId: UUID?
+        var lastFiltrationCleanedAt: Date?
+        var uvLampInstalledAt: Date?
+        var uvLampReminderAfterDays: Int?
+        var updatedAt: Date
+
+        enum CodingKeys: String, CodingKey {
+            case id
+            case workspaceId = "workspace_id"
+            case gardenId = "garden_id"
+            case name
+            case volumeLiters = "volume_liters"
+            case targetTemperatureMin = "target_temperature_min"
+            case targetTemperatureMax = "target_temperature_max"
+            case targetWaterLevelPercent = "target_water_level_percent"
+            case waterTemperatureSensorId = "water_temperature_sensor_id"
+            case waterLevelSensorId = "water_level_sensor_id"
+            case flowSensorId = "flow_sensor_id"
+            case phSensorId = "ph_sensor_id"
+            case conductivitySensorId = "conductivity_sensor_id"
+            case pumpDeviceId = "pump_device_id"
+            case filtrationDeviceId = "filtration_device_id"
+            case uvDeviceId = "uv_device_id"
+            case lastFiltrationCleanedAt = "last_filtration_cleaned_at"
+            case uvLampInstalledAt = "uv_lamp_installed_at"
+            case uvLampReminderAfterDays = "uv_lamp_reminder_after_days"
+            case updatedAt = "updated_at"
+        }
+    }
+
+    private func pushPonds(workspaceID: UUID, context: ModelContext) async throws {
+        let pending = try context.fetch(FetchDescriptor<Pond>()).filter { $0.syncStatus != .synced }
+        guard !pending.isEmpty else { return }
+        let dtos = pending.map { pond in
+            PondDTO(
+                id: pond.id, workspaceId: workspaceID, gardenId: pond.garden?.id, name: pond.name,
+                volumeLiters: pond.volumeLiters, targetTemperatureMin: pond.targetTemperatureMin,
+                targetTemperatureMax: pond.targetTemperatureMax, targetWaterLevelPercent: pond.targetWaterLevelPercent,
+                waterTemperatureSensorId: pond.waterTemperatureSensor?.id, waterLevelSensorId: pond.waterLevelSensor?.id,
+                flowSensorId: pond.flowSensor?.id, phSensorId: pond.phSensor?.id,
+                conductivitySensorId: pond.conductivitySensor?.id, pumpDeviceId: pond.pumpDevice?.id,
+                filtrationDeviceId: pond.filtrationDevice?.id, uvDeviceId: pond.uvDevice?.id,
+                lastFiltrationCleanedAt: pond.lastFiltrationCleanedAt, uvLampInstalledAt: pond.uvLampInstalledAt,
+                uvLampReminderAfterDays: pond.uvLampReminderAfterDays, updatedAt: pond.updatedAt ?? .now
+            )
+        }
+        try await AuthService.client.from("ponds").upsert(dtos).execute()
+        for pond in pending { pond.syncStatus = .synced }
     }
 
     // MARK: - Irrigation events

@@ -9,6 +9,7 @@ struct GardenDetailView: View {
         case addIrrigationZone
         case editIrrigationZone(IrrigationZone)
         case addGreenhouse
+        case addPond
 
         var id: String {
             switch self {
@@ -18,6 +19,7 @@ struct GardenDetailView: View {
             case .addIrrigationZone: return "addIrrigationZone"
             case .editIrrigationZone(let zone): return "editIrrigationZone-\(zone.id.uuidString)"
             case .addGreenhouse: return "addGreenhouse"
+            case .addPond: return "addPond"
             }
         }
     }
@@ -124,6 +126,8 @@ struct GardenDetailView: View {
                 IrrigationZoneFormView(garden: garden, zone: zone)
             case .addGreenhouse:
                 GreenhouseFormView(garden: garden, greenhouse: nil)
+            case .addPond:
+                PondFormView(garden: garden, pond: nil)
             }
         }
         .sheet(isPresented: $isBulkWaterSheetPresented) {
@@ -182,6 +186,7 @@ struct GardenDetailView: View {
                 zonesSection
                 irrigationSection
                 greenhousesSection
+                pondsSection
                 plantsSection
             }
             .padding()
@@ -373,6 +378,50 @@ struct GardenDetailView: View {
                             .padding(.vertical, 6)
                         }
                         if index < garden.greenhouses.count - 1 {
+                            Divider()
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    private var pondsSection: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            HStack {
+                Text("Bassins")
+                    .font(.headline)
+                Spacer()
+                Button {
+                    activeSheet = .addPond
+                } label: {
+                    Label("Ajouter", systemImage: "plus.circle")
+                        .labelStyle(.iconOnly)
+                }
+            }
+            if garden.ponds.isEmpty {
+                Text("Aucun bassin pour l'instant.")
+                    .font(.subheadline)
+                    .foregroundStyle(.secondary)
+            } else {
+                VStack(spacing: 0) {
+                    ForEach(Array(garden.ponds.sorted { $0.name < $1.name }.enumerated()), id: \.element.id) { index, pond in
+                        NavigationLink {
+                            PondDashboardView(pond: pond)
+                        } label: {
+                            HStack {
+                                Image(systemName: "water.waves")
+                                    .foregroundStyle((pond.lowWaterAlert || pond.uvLampDue) ? Color.orange : Color.secondary)
+                                Text(pond.name)
+                                    .foregroundStyle(.primary)
+                                Spacer()
+                                Image(systemName: "chevron.right")
+                                    .font(.caption2)
+                                    .foregroundStyle(.tertiary)
+                            }
+                            .padding(.vertical, 6)
+                        }
+                        if index < garden.ponds.count - 1 {
                             Divider()
                         }
                     }

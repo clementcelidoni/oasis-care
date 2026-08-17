@@ -31,7 +31,8 @@ struct OasisCareApp: App {
             AutomationCondition.self,
             AutomationAction.self,
             AutomationExecution.self,
-            Greenhouse.self
+            Greenhouse.self,
+            Pond.self
         ])
         let configuration = ModelConfiguration(schema: schema)
 
