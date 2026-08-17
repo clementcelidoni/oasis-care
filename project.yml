@@ -56,6 +56,10 @@ targets:
       properties:
         com.apple.developer.applesignin:
           - Default
+        com.apple.developer.nfc.readersession.formats:
+          - NDEF
+          - TAG
+          - PACE
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: com.oasisrarecare.app
