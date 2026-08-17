@@ -36,6 +36,9 @@ final class ConnectedDevice: Syncable {
     var garden: Garden?
     var zone: GardenZone?
 
+    @Relationship(deleteRule: .nullify, inverse: \Sensor.device)
+    var sensors: [Sensor] = []
+
     var capabilitiesRaw: [String]
     var capabilities: [DeviceCapability] {
         get { capabilitiesRaw.compactMap(DeviceCapability.init(rawValue:)) }

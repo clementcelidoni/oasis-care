@@ -228,7 +228,10 @@ final class HomeKitService: NSObject, ObservableObject {
     /// offering those return no capability here — the "Associer" flow
     /// (Phase 5B) lets the user assign the Oasis-specific meaning
     /// instead of this guessing at it.
-    static func capabilities(forServiceType serviceType: String) -> [DeviceCapability] {
+    /// nonisolated: a pure function of its input, no `self` access — so
+    /// it can be unit-tested synchronously without needing MainActor,
+    /// unlike the rest of this @MainActor-isolated class.
+    nonisolated static func capabilities(forServiceType serviceType: String) -> [DeviceCapability] {
         switch serviceType {
         case HMServiceTypeTemperatureSensor:
             return [.temperatureSensor]

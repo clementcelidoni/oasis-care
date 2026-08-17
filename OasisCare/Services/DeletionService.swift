@@ -17,6 +17,7 @@ enum DeletionService {
         case treeInspection = "tree_inspections"
         case gardenCheckup = "garden_checkups"
         case connectedDevice = "connected_devices"
+        case sensor = "sensors"
     }
 
     static func delete(_ garden: Garden, in context: ModelContext) {
@@ -61,6 +62,15 @@ enum DeletionService {
     static func delete(_ device: ConnectedDevice, in context: ModelContext) {
         recordPendingDeletion(id: device.id, type: .connectedDevice, in: context)
         context.delete(device)
+    }
+
+    /// Its SensorReadings cascade-delete locally (Sensor's own
+    /// @Relationship rule) and server-side too, via sensor_readings'
+    /// `on delete cascade` foreign key — no separate tombstone needed
+    /// for them.
+    static func delete(_ sensor: Sensor, in context: ModelContext) {
+        recordPendingDeletion(id: sensor.id, type: .sensor, in: context)
+        context.delete(sensor)
     }
 
     private static func recordPendingDeletion(id: UUID, type: EntityType, in context: ModelContext) {

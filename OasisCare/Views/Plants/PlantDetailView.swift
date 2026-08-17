@@ -18,6 +18,8 @@ struct PlantDetailView: View {
         case addInspection
         case editInspection(TreeInspection)
         case photoComparison
+        case addSensor
+        case sensorDetail(Sensor)
 
         var id: String {
             switch self {
@@ -34,6 +36,8 @@ struct PlantDetailView: View {
             case .addInspection: return "addInspection"
             case .editInspection(let inspection): return "editInspection-\(inspection.id.uuidString)"
             case .photoComparison: return "photoComparison"
+            case .addSensor: return "addSensor"
+            case .sensorDetail(let sensor): return "sensorDetail-\(sensor.id.uuidString)"
             }
         }
     }
@@ -106,6 +110,11 @@ struct PlantDetailView: View {
                     treeTrackingSection
                 }
                 smartTagSection
+                SensorSectionView(
+                    sensors: plant.sensors,
+                    onAdd: { activeSheet = .addSensor },
+                    onSelect: { sensor in activeSheet = .sensorDetail(sensor) }
+                )
                 if !plant.photos.isEmpty {
                     evolutionSection
                 }
@@ -192,6 +201,10 @@ struct PlantDetailView: View {
                 TreeInspectionFormView(plant: plant, inspection: inspection)
             case .photoComparison:
                 PhotoComparisonView(plant: plant)
+            case .addSensor:
+                SensorFormSheet(plant: plant)
+            case .sensorDetail(let sensor):
+                SensorDetailSheet(sensor: sensor)
             }
         }
         .onChange(of: selectedPhotoItem) { _, newItem in
