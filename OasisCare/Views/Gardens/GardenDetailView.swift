@@ -375,9 +375,17 @@ private struct IrrigationZoneRow: View {
                     .foregroundStyle(.secondary)
             }
             Spacer()
-            Button("Cycle", action: onLogCycle)
-                .buttonStyle(.bordered)
+            if zone.valveDevice != nil {
+                NavigationLink("Piloter") {
+                    ConnectedIrrigationZoneView(zone: zone)
+                }
+                .buttonStyle(.borderedProminent)
                 .controlSize(.small)
+            } else {
+                Button("Cycle", action: onLogCycle)
+                    .buttonStyle(.bordered)
+                    .controlSize(.small)
+            }
         }
         .padding(.vertical, 6)
     }

@@ -22,6 +22,15 @@ final class IrrigationEvent {
     var notes: String
     var zone: IrrigationZone?
     var syncStatus: SyncStatus?
+    /// Phase 5E — spec §37's before/after readout, from the zone's
+    /// linked soilSensor when one exists. Nil for any cycle logged
+    /// without real hardware (every Phase 4D event, and any Phase 5E
+    /// zone with no soil sensor linked).
+    var soilMoistureBefore: Double?
+    var soilMoistureAfter: Double?
+    /// Real flow-sensor total when available; nil means estimatedLiters
+    /// came from the flowRate-based calculation instead (spec §38).
+    var measuredLiters: Double?
 
     init(
         zone: IrrigationZone?,
@@ -29,7 +38,10 @@ final class IrrigationEvent {
         durationMinutes: Int,
         estimatedLiters: Double,
         isAutomatic: Bool = false,
-        notes: String = ""
+        notes: String = "",
+        soilMoistureBefore: Double? = nil,
+        soilMoistureAfter: Double? = nil,
+        measuredLiters: Double? = nil
     ) {
         self.id = UUID()
         self.zone = zone
@@ -38,6 +50,9 @@ final class IrrigationEvent {
         self.estimatedLiters = estimatedLiters
         self.isAutomatic = isAutomatic
         self.notes = notes
+        self.soilMoistureBefore = soilMoistureBefore
+        self.soilMoistureAfter = soilMoistureAfter
+        self.measuredLiters = measuredLiters
         self.syncStatus = .pendingCreate
     }
 }

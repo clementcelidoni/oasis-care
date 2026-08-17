@@ -204,6 +204,15 @@ final class SyncEngine: ObservableObject {
             zone.id = row.id
             zone.syncStatus = .synced
             zone.updatedAt = row.updatedAt
+            zone.valveDevice = row.valveDeviceId.flatMap { connectedDevicesByID[$0] }
+            zone.pumpDevice = row.pumpDeviceId.flatMap { connectedDevicesByID[$0] }
+            // soilSensor/flowSensor deliberately left unwired here: Sensor
+            // restoration runs after Plants (Sensor can reference Plant,
+            // Plant can reference IrrigationZone — resolving that cycle
+            // needs a second pass this doesn't do yet). A fresh-install
+            // restore recovers the zone/valve/pump correctly; re-picking
+            // its soil/flow sensor is a one-time manual step on that
+            // specific new device.
             context.insert(zone)
             irrigationZonesByID[row.id] = zone
         }
@@ -400,7 +409,9 @@ final class SyncEngine: ObservableObject {
             guard let zone = irrigationZonesByID[row.zoneId] else { continue }
             let event = IrrigationEvent(
                 zone: zone, date: row.date, durationMinutes: row.durationMinutes,
-                estimatedLiters: row.estimatedLiters, isAutomatic: row.isAutomatic, notes: row.notes
+                estimatedLiters: row.estimatedLiters, isAutomatic: row.isAutomatic, notes: row.notes,
+                soilMoistureBefore: row.soilMoistureBefore, soilMoistureAfter: row.soilMoistureAfter,
+                measuredLiters: row.measuredLiters
             )
             event.id = row.id
             event.syncStatus = .synced
@@ -491,6 +502,8 @@ final class SyncEngine: ObservableObject {
         var active: Bool
         var notes: String
         var updatedAt: Date?
+        var valveDeviceId: UUID?
+        var pumpDeviceId: UUID?
 
         enum CodingKeys: String, CodingKey {
             case id
@@ -501,6 +514,8 @@ final class SyncEngine: ObservableObject {
             case durationMinutes = "duration_minutes"
             case active, notes
             case updatedAt = "updated_at"
+            case valveDeviceId = "valve_device_id"
+            case pumpDeviceId = "pump_device_id"
         }
     }
 
@@ -835,6 +850,9 @@ final class SyncEngine: ObservableObject {
         var estimatedLiters: Double
         var isAutomatic: Bool
         var notes: String
+        var soilMoistureBefore: Double?
+        var soilMoistureAfter: Double?
+        var measuredLiters: Double?
 
         enum CodingKeys: String, CodingKey {
             case id
@@ -844,6 +862,9 @@ final class SyncEngine: ObservableObject {
             case estimatedLiters = "estimated_liters"
             case isAutomatic = "is_automatic"
             case notes
+            case soilMoistureBefore = "soil_moisture_before"
+            case soilMoistureAfter = "soil_moisture_after"
+            case measuredLiters = "measured_liters"
         }
     }
 
@@ -963,6 +984,10 @@ final class SyncEngine: ObservableObject {
         var active: Bool
         var notes: String
         var updatedAt: Date
+        var valveDeviceId: UUID?
+        var pumpDeviceId: UUID?
+        var soilSensorId: UUID?
+        var flowSensorId: UUID?
 
         enum CodingKeys: String, CodingKey {
             case id
@@ -974,6 +999,10 @@ final class SyncEngine: ObservableObject {
             case durationMinutes = "duration_minutes"
             case active, notes
             case updatedAt = "updated_at"
+            case valveDeviceId = "valve_device_id"
+            case pumpDeviceId = "pump_device_id"
+            case soilSensorId = "soil_sensor_id"
+            case flowSensorId = "flow_sensor_id"
         }
     }
 
@@ -985,7 +1014,9 @@ final class SyncEngine: ObservableObject {
             return IrrigationZoneDTO(
                 id: zone.id, workspaceId: workspaceID, gardenId: gardenID, name: zone.name, type: zone.type,
                 flowRate: zone.flowRate, flowRateUnit: zone.flowRateUnit, durationMinutes: zone.durationMinutes,
-                active: zone.active, notes: zone.notes, updatedAt: zone.updatedAt ?? .now
+                active: zone.active, notes: zone.notes, updatedAt: zone.updatedAt ?? .now,
+                valveDeviceId: zone.valveDevice?.id, pumpDeviceId: zone.pumpDevice?.id,
+                soilSensorId: zone.soilSensor?.id, flowSensorId: zone.flowSensor?.id
             )
         }
         guard !dtos.isEmpty else { return }
@@ -1820,6 +1851,9 @@ final class SyncEngine: ObservableObject {
         var estimatedLiters: Double
         var isAutomatic: Bool
         var notes: String
+        var soilMoistureBefore: Double?
+        var soilMoistureAfter: Double?
+        var measuredLiters: Double?
 
         enum CodingKeys: String, CodingKey {
             case id
@@ -1829,6 +1863,9 @@ final class SyncEngine: ObservableObject {
             case estimatedLiters = "estimated_liters"
             case isAutomatic = "is_automatic"
             case notes
+            case soilMoistureBefore = "soil_moisture_before"
+            case soilMoistureAfter = "soil_moisture_after"
+            case measuredLiters = "measured_liters"
         }
     }
 
@@ -1839,7 +1876,9 @@ final class SyncEngine: ObservableObject {
             guard let zoneID = event.zone?.id else { return nil }
             return IrrigationEventDTO(
                 id: event.id, zoneId: zoneID, date: event.date, durationMinutes: event.durationMinutes,
-                estimatedLiters: event.estimatedLiters, isAutomatic: event.isAutomatic, notes: event.notes
+                estimatedLiters: event.estimatedLiters, isAutomatic: event.isAutomatic, notes: event.notes,
+                soilMoistureBefore: event.soilMoistureBefore, soilMoistureAfter: event.soilMoistureAfter,
+                measuredLiters: event.measuredLiters
             )
         }
         guard !dtos.isEmpty else { return }
