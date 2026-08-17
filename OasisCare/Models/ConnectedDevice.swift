@@ -29,6 +29,13 @@ final class ConnectedDevice: Syncable {
     var firmwareVersion: String?
     var online: Bool
     var lastSeenAt: Date?
+    /// Spec §20 — a coarse human-readable summary ("Ouvert", "Fermé",
+    /// "Marche"), refreshed after every DeviceCommandService call and
+    /// on refresh() poll. Not the source of truth for logic — that's
+    /// always the live HMCharacteristic value via HomeKitService —
+    /// this is purely a fast, offline-readable display cache.
+    var currentState: String?
+    var lastActionAt: Date?
     var createdAt: Date
     var syncStatus: SyncStatus?
     var updatedAt: Date?

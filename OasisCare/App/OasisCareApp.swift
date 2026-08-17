@@ -25,7 +25,8 @@ struct OasisCareApp: App {
             GardenCheckupEntry.self,
             Sensor.self,
             SensorReading.self,
-            ConnectedDevice.self
+            ConnectedDevice.self,
+            DeviceCommandLog.self
         ])
         let configuration = ModelConfiguration(schema: schema)
 

@@ -8,10 +8,13 @@ import SwiftData
 struct MaisonConnecteeView: View {
     @Environment(\.modelContext) private var modelContext
     @ObservedObject private var service = HomeKitService.shared
+    @ObservedObject private var commandService = DeviceCommandService.shared
+    @Query private var allDevices: [ConnectedDevice]
 
     @State private var isAddingAccessory = false
     @State private var addAccessoryError: String?
     @State private var accessoryToAssociate: (home: ConnectedHome, accessory: ConnectedAccessory)?
+    @State private var isEmergencyStopping = false
 
     var body: some View {
         Group {
@@ -107,6 +110,27 @@ struct MaisonConnecteeView: View {
 
     private var homesList: some View {
         List {
+            if !commandService.activeValves.isEmpty {
+                Section {
+                    Button(role: .destructive) {
+                        Task { await emergencyStop() }
+                    } label: {
+                        HStack {
+                            if isEmergencyStopping {
+                                ProgressView()
+                            } else {
+                                Label("ARRÊT DE L'ARROSAGE", systemImage: "stop.circle.fill")
+                            }
+                            Spacer()
+                            Text("\(commandService.activeValves.count) en cours")
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                        }
+                    }
+                    .disabled(isEmergencyStopping)
+                }
+            }
+
             ForEach(service.homes) { home in
                 Section(home.name) {
                     if home.accessories.isEmpty {
@@ -127,6 +151,12 @@ struct MaisonConnecteeView: View {
             }
         }
         .refreshable { service.refresh() }
+    }
+
+    private func emergencyStop() async {
+        isEmergencyStopping = true
+        await commandService.emergencyStopAll(devices: allDevices, context: modelContext)
+        isEmergencyStopping = false
     }
 
     private func addAccessory(to home: ConnectedHome) async {

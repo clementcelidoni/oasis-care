@@ -82,6 +82,64 @@ final class HomeKitService: NSObject, ObservableObject {
         refresh()
     }
 
+    // MARK: - Actuator commands (Phase 5C)
+
+    /// Semantic actions DeviceCommandService can request without ever
+    /// needing `import HomeKit` itself — this stays the one file that
+    /// knows which HMCharacteristicType corresponds to each action, so
+    /// that invariant (spec §2/§3) holds for the command path too, not
+    /// just for reading state.
+    enum ActuatorAction {
+        case setActive(Bool)
+        case setPower(Bool)
+        case setBrightness(Double)
+        /// Best-effort: only some valve accessories expose this: not
+        /// finding it is not an error, see performActuatorAction.
+        case setValveDuration(TimeInterval)
+    }
+
+    func performActuatorAction(_ action: ActuatorAction, providerDeviceId: String, capability: DeviceCapability) async throws {
+        guard let (homeID, accessory) = locate(providerDeviceId: providerDeviceId) else {
+            throw HomeKitServiceError.accessoryNotFound
+        }
+        guard let service = accessory.services.first(where: { $0.impliedCapabilities.contains(capability) }) else {
+            throw HomeKitServiceError.serviceNotFound
+        }
+        let characteristicType: String
+        let value: ConnectedCharacteristicValue
+        switch action {
+        case .setActive(let on):
+            characteristicType = HMCharacteristicTypeActive
+            value = .bool(on)
+        case .setPower(let on):
+            characteristicType = HMCharacteristicTypePowerState
+            value = .bool(on)
+        case .setBrightness(let level):
+            characteristicType = HMCharacteristicTypeBrightness
+            value = .number(level)
+        case .setValveDuration(let seconds):
+            characteristicType = HMCharacteristicTypeSetDuration
+            value = .number(seconds)
+        }
+        guard let characteristic = service.characteristics.first(where: { $0.characteristicType == characteristicType }) else {
+            if case .setValveDuration = action { return }
+            throw HomeKitServiceError.characteristicNotFound
+        }
+        try await writeCharacteristic(
+            homeID: homeID, accessoryID: accessory.id, serviceID: service.id,
+            characteristicID: characteristic.id, value: value
+        )
+    }
+
+    private func locate(providerDeviceId: String) -> (homeID: UUID, accessory: ConnectedAccessory)? {
+        for home in homes {
+            if let accessory = home.accessories.first(where: { $0.id.uuidString == providerDeviceId }) {
+                return (home.id, accessory)
+            }
+        }
+        return nil
+    }
+
     // MARK: - Characteristic read/write
 
     func writeCharacteristic(

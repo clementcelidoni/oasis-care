@@ -15,11 +15,15 @@ struct AssociateDeviceSheet: View {
     @Environment(\.modelContext) private var modelContext
     @Query(sort: \Garden.name) private var gardens: [Garden]
     @Query private var existingDevices: [ConnectedDevice]
+    @ObservedObject private var commandService = DeviceCommandService.shared
 
     @State private var selectedGarden: Garden?
     @State private var selectedZone: GardenZone?
     @State private var selectedCapabilities: Set<DeviceCapability> = []
     @State private var didLoadExisting = false
+    @State private var valveDurationMinutes = 8
+    @State private var isCommandInProgress = false
+    @State private var commandError: String?
 
     private var existingDevice: ConnectedDevice? {
         existingDevices.first { $0.providerDeviceId == accessory.id.uuidString }
@@ -34,6 +38,10 @@ struct AssociateDeviceSheet: View {
                     if let manufacturer = accessory.manufacturer {
                         LabeledContent("Fabricant", value: manufacturer)
                     }
+                }
+
+                if let device = existingDevice, device.isActuator {
+                    controlsSection(for: device)
                 }
 
                 Section("Emplacement") {
@@ -95,6 +103,84 @@ struct AssociateDeviceSheet: View {
                 }
             }
         }
+    }
+
+    @ViewBuilder
+    private func controlsSection(for device: ConnectedDevice) -> some View {
+        Section {
+            if let active = commandService.activeValves[device.id] {
+                HStack {
+                    Label("En cours — \(Int(active.endsAt.timeIntervalSinceNow / 60)) min restantes", systemImage: "drop.fill")
+                        .foregroundStyle(.blue)
+                    Spacer()
+                    Button("Arrêter") { Task { await stopValve(device) } }
+                        .buttonStyle(.bordered)
+                        .disabled(isCommandInProgress)
+                }
+            } else if device.hasCapability(.valve) {
+                Stepper("Durée : \(valveDurationMinutes) min", value: $valveDurationMinutes, in: 1...60)
+                Button("Ouvrir") { Task { await startValve(device) } }
+                    .disabled(isCommandInProgress || !device.online)
+            }
+
+            if device.hasCapability(.switchDevice) || device.hasCapability(.light)
+                || device.hasCapability(.fan) || device.hasCapability(.heater) {
+                HStack {
+                    Text(device.currentState ?? "État inconnu")
+                        .foregroundStyle(.secondary)
+                    Spacer()
+                    Button("Marche") { Task { await setPower(device, on: true) } }
+                        .buttonStyle(.bordered)
+                        .disabled(isCommandInProgress || !device.online)
+                    Button("Arrêt") { Task { await setPower(device, on: false) } }
+                        .buttonStyle(.bordered)
+                        .disabled(isCommandInProgress || !device.online)
+                }
+            }
+
+            if !device.online {
+                Text("Cet équipement est hors ligne — commandes indisponibles.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+            if let commandError {
+                Text(commandError)
+                    .font(.caption)
+                    .foregroundStyle(.red)
+            }
+        } header: {
+            Text("Contrôles")
+        }
+    }
+
+    private func startValve(_ device: ConnectedDevice) async {
+        isCommandInProgress = true
+        commandError = nil
+        let result = await commandService.openValve(
+            device, durationSeconds: TimeInterval(valveDurationMinutes * 60), context: modelContext
+        )
+        if case .failure(let error) = result { commandError = error.localizedDescription }
+        isCommandInProgress = false
+    }
+
+    private func stopValve(_ device: ConnectedDevice) async {
+        isCommandInProgress = true
+        commandError = nil
+        let result = await commandService.closeValve(device, context: modelContext)
+        if case .failure(let error) = result { commandError = error.localizedDescription }
+        isCommandInProgress = false
+    }
+
+    private func setPower(_ device: ConnectedDevice, on: Bool) async {
+        isCommandInProgress = true
+        commandError = nil
+        let capability: DeviceCapability = device.hasCapability(.switchDevice) ? .switchDevice
+            : device.hasCapability(.light) ? .light
+            : device.hasCapability(.fan) ? .fan
+            : .heater
+        let result = await commandService.setPower(device, on: on, capability: capability, context: modelContext)
+        if case .failure(let error) = result { commandError = error.localizedDescription }
+        isCommandInProgress = false
     }
 
     private func capabilityBinding(_ capability: DeviceCapability) -> Binding<Bool> {

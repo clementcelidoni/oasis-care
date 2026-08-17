@@ -50,6 +50,7 @@ final class SyncEngine: ObservableObject {
             try await pushConnectedDevices(workspaceID: workspaceID, context: context)
             try await pushSensors(workspaceID: workspaceID, context: context)
             try await pushSensorReadings(context: context)
+            try await pushDeviceCommandLogs(workspaceID: workspaceID, context: context)
             try await pushIrrigationEvents(context: context)
             try await pushDashboardPreferences(workspaceID: workspaceID, context: context)
             try await pushPendingDeletions(context: context)
@@ -78,14 +79,15 @@ final class SyncEngine: ObservableObject {
         let connectedDevices = (try? context.fetch(FetchDescriptor<ConnectedDevice>()))?.filter { $0.syncStatus != .synced }.count ?? 0
         let sensors = (try? context.fetch(FetchDescriptor<Sensor>()))?.filter { $0.syncStatus != .synced }.count ?? 0
         let sensorReadings = (try? context.fetch(FetchDescriptor<SensorReading>()))?.filter { $0.syncStatus != .synced }.count ?? 0
+        let commandLogs = (try? context.fetch(FetchDescriptor<DeviceCommandLog>()))?.filter { $0.syncStatus != .synced }.count ?? 0
         let measurements = (try? context.fetch(FetchDescriptor<PlantMeasurement>()))?.filter { $0.syncStatus != .synced }.count ?? 0
         let inspections = (try? context.fetch(FetchDescriptor<TreeInspection>()))?.filter { $0.syncStatus != .synced }.count ?? 0
         let checkups = (try? context.fetch(FetchDescriptor<GardenCheckup>()))?.filter { $0.syncStatus != .synced }.count ?? 0
         let checkupEntries = (try? context.fetch(FetchDescriptor<GardenCheckupEntry>()))?.filter { $0.syncStatus != .synced }.count ?? 0
         let deletions = (try? context.fetchCount(FetchDescriptor<PendingDeletion>())) ?? 0
         return gardens + zones + plants + schedules + events + photos + analyses + preferences + irrigationZones
-            + irrigationEvents + smartTags + connectedDevices + sensors + sensorReadings + measurements + inspections
-            + checkups + checkupEntries + deletions
+            + irrigationEvents + smartTags + connectedDevices + sensors + sensorReadings + commandLogs + measurements
+            + inspections + checkups + checkupEntries + deletions
     }
 
     private static let photoBucket = "plant-photos"
@@ -1591,6 +1593,48 @@ final class SyncEngine: ObservableObject {
         guard !dtos.isEmpty else { return }
         try await AuthService.client.from("sensor_readings").upsert(dtos).execute()
         for reading in pending where reading.sensor != nil { reading.syncStatus = .synced }
+    }
+
+    // MARK: - Device command audit log
+
+    private struct DeviceCommandLogDTO: Encodable {
+        var id: UUID
+        var workspaceId: UUID
+        var deviceId: UUID?
+        var command: DeviceCommandKind
+        var trigger: DeviceCommandTriggerKind
+        var triggerRuleId: UUID?
+        var requestedAt: Date
+        var succeeded: Bool
+        var errorMessage: String?
+        var requestedDurationSeconds: Double?
+
+        enum CodingKeys: String, CodingKey {
+            case id
+            case workspaceId = "workspace_id"
+            case deviceId = "device_id"
+            case command, trigger
+            case triggerRuleId = "trigger_rule_id"
+            case requestedAt = "requested_at"
+            case succeeded
+            case errorMessage = "error_message"
+            case requestedDurationSeconds = "requested_duration_seconds"
+        }
+    }
+
+    private func pushDeviceCommandLogs(workspaceID: UUID, context: ModelContext) async throws {
+        let pending = try context.fetch(FetchDescriptor<DeviceCommandLog>()).filter { $0.syncStatus != .synced }
+        guard !pending.isEmpty else { return }
+        let dtos = pending.map { log in
+            DeviceCommandLogDTO(
+                id: log.id, workspaceId: workspaceID, deviceId: log.device?.id, command: log.command,
+                trigger: log.trigger, triggerRuleId: log.triggerRuleID, requestedAt: log.requestedAt,
+                succeeded: log.succeeded, errorMessage: log.errorMessage,
+                requestedDurationSeconds: log.requestedDurationSeconds
+            )
+        }
+        try await AuthService.client.from("device_commands").upsert(dtos).execute()
+        for log in pending { log.syncStatus = .synced }
     }
 
     // MARK: - Irrigation events
