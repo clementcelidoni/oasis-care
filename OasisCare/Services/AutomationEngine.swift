@@ -163,6 +163,13 @@ enum AutomationEngine {
         var isSuccess: Bool { if case .success = self { return true }; return false }
     }
 
+    private static func actionResult(from result: Result<Void, DeviceCommandError>) -> ActionResult {
+        switch result {
+        case .success: return .success
+        case .failure(let error): return .failure(error.localizedDescription)
+        }
+    }
+
     private static func perform(_ action: AutomationAction, rule: AutomationRule, context: ModelContext) async -> ActionResult {
         guard !action.type.requiresDevice || action.device != nil else {
             return .failure("Aucun équipement configuré.")
@@ -175,18 +182,18 @@ enum AutomationEngine {
             let result = await commandService.openValve(
                 device, durationSeconds: action.durationSeconds ?? 480, trigger: .automation, ruleID: ruleID, context: context
             )
-            return result.isSuccess
+            return actionResult(from: result)
         case .closeValve:
             guard let device = action.device else { return .failure("Aucun équipement configuré.") }
             let result = await commandService.closeValve(device, trigger: .automation, ruleID: ruleID, context: context)
-            return result.isSuccess
+            return actionResult(from: result)
         case .startPump, .stopPump, .turnFanOn, .turnFanOff, .turnHeaterOn, .turnHeaterOff,
              .turnMisterOn, .turnMisterOff, .turnLightOn, .turnLightOff:
             guard let device = action.device else { return .failure("Aucun équipement configuré.") }
             let on = [.startPump, .turnFanOn, .turnHeaterOn, .turnMisterOn, .turnLightOn].contains(action.type)
             let targetCapability = capability(for: action.type)
             let result = await commandService.setPower(device, on: on, capability: targetCapability, trigger: .automation, ruleID: ruleID, context: context)
-            return result.isSuccess
+            return actionResult(from: result)
         case .sendNotification:
             NotificationService.sendImmediate(title: "Oasis Care", body: action.message ?? "Une automatisation s'est déclenchée.")
             return .success
