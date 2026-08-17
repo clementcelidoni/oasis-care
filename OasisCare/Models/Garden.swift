@@ -39,6 +39,13 @@ final class Garden: Syncable {
     @Relationship(deleteRule: .cascade, inverse: \Sensor.garden)
     var sensors: [Sensor] = []
 
+    // .nullify, not .cascade like sensors above: a ConnectedDevice
+    // represents a real physical accessory that keeps existing (and
+    // stays visible via HomeKitService) even if its garden assignment
+    // in Oasis Care is removed.
+    @Relationship(deleteRule: .nullify, inverse: \ConnectedDevice.garden)
+    var connectedDevices: [ConnectedDevice] = []
+
     init(name: String, address: String? = nil, notes: String = "", dateCreated: Date = .now) {
         self.id = UUID()
         self.name = name

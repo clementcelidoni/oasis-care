@@ -47,6 +47,7 @@ final class SyncEngine: ObservableObject {
             try await pushPlantPhotos(workspaceID: workspaceID, context: context)
             try await pushAIAnalyses(context: context)
             try await pushSmartTags(workspaceID: workspaceID, context: context)
+            try await pushConnectedDevices(workspaceID: workspaceID, context: context)
             try await pushIrrigationEvents(context: context)
             try await pushDashboardPreferences(workspaceID: workspaceID, context: context)
             try await pushPendingDeletions(context: context)
@@ -72,13 +73,14 @@ final class SyncEngine: ObservableObject {
         let irrigationZones = (try? context.fetch(FetchDescriptor<IrrigationZone>()))?.filter { $0.syncStatus != .synced }.count ?? 0
         let irrigationEvents = (try? context.fetch(FetchDescriptor<IrrigationEvent>()))?.filter { $0.syncStatus != .synced }.count ?? 0
         let smartTags = (try? context.fetch(FetchDescriptor<SmartTag>()))?.filter { $0.syncStatus != .synced }.count ?? 0
+        let connectedDevices = (try? context.fetch(FetchDescriptor<ConnectedDevice>()))?.filter { $0.syncStatus != .synced }.count ?? 0
         let measurements = (try? context.fetch(FetchDescriptor<PlantMeasurement>()))?.filter { $0.syncStatus != .synced }.count ?? 0
         let inspections = (try? context.fetch(FetchDescriptor<TreeInspection>()))?.filter { $0.syncStatus != .synced }.count ?? 0
         let checkups = (try? context.fetch(FetchDescriptor<GardenCheckup>()))?.filter { $0.syncStatus != .synced }.count ?? 0
         let checkupEntries = (try? context.fetch(FetchDescriptor<GardenCheckupEntry>()))?.filter { $0.syncStatus != .synced }.count ?? 0
         let deletions = (try? context.fetchCount(FetchDescriptor<PendingDeletion>())) ?? 0
         return gardens + zones + plants + schedules + events + photos + analyses + preferences + irrigationZones
-            + irrigationEvents + smartTags + measurements + inspections + checkups + checkupEntries + deletions
+            + irrigationEvents + smartTags + connectedDevices + measurements + inspections + checkups + checkupEntries + deletions
     }
 
     private static let photoBucket = "plant-photos"
@@ -159,6 +161,21 @@ final class SyncEngine: ObservableObject {
             zone.updatedAt = row.updatedAt
             context.insert(zone)
             zonesByID[row.id] = zone
+        }
+
+        let remoteConnectedDevices: [ConnectedDeviceRow] = try await AuthService.client.from("connected_devices").select().execute().value
+        for row in remoteConnectedDevices {
+            let device = ConnectedDevice(
+                provider: row.provider, providerDeviceId: row.providerDeviceId, name: row.name, category: row.category,
+                capabilities: row.capabilities.compactMap(DeviceCapability.init(rawValue:)), manufacturer: row.manufacturer,
+                model: row.model, firmwareVersion: row.firmwareVersion, online: row.online,
+                garden: row.gardenId.flatMap { gardensByID[$0] }, zone: row.zoneId.flatMap { zonesByID[$0] }
+            )
+            device.id = row.id
+            device.lastSeenAt = row.lastSeenAt
+            device.syncStatus = .synced
+            device.updatedAt = row.updatedAt
+            context.insert(device)
         }
 
         let remoteIrrigationZones: [IrrigationZoneRow] = try await AuthService.client.from("irrigation_zones").select().execute().value
@@ -367,6 +384,7 @@ final class SyncEngine: ObservableObject {
                 prefs.showUpcoming = row.showUpcoming
                 prefs.showHealth = row.showHealth
                 prefs.showEvolution = row.showEvolution
+                prefs.showConnectedHome = row.showConnectedHome
                 prefs.syncStatus = .synced
                 prefs.updatedAt = row.updatedAt
                 context.insert(prefs)
@@ -689,6 +707,36 @@ final class SyncEngine: ObservableObject {
         }
     }
 
+    private struct ConnectedDeviceRow: Decodable {
+        var id: UUID
+        var gardenId: UUID?
+        var zoneId: UUID?
+        var provider: DeviceProvider
+        var providerDeviceId: String
+        var name: String
+        var category: String
+        var manufacturer: String?
+        var model: String?
+        var firmwareVersion: String?
+        var capabilities: [String]
+        var online: Bool
+        var lastSeenAt: Date?
+        var updatedAt: Date?
+
+        enum CodingKeys: String, CodingKey {
+            case id
+            case gardenId = "garden_id"
+            case zoneId = "zone_id"
+            case provider
+            case providerDeviceId = "provider_device_id"
+            case name, category, manufacturer, model
+            case firmwareVersion = "firmware_version"
+            case capabilities, online
+            case lastSeenAt = "last_seen_at"
+            case updatedAt = "updated_at"
+        }
+    }
+
     private struct IrrigationEventRow: Decodable {
         var id: UUID
         var zoneId: UUID
@@ -720,6 +768,7 @@ final class SyncEngine: ObservableObject {
         var showUpcoming: Bool
         var showHealth: Bool
         var showEvolution: Bool
+        var showConnectedHome: Bool
         var updatedAt: Date?
 
         enum CodingKeys: String, CodingKey {
@@ -733,6 +782,7 @@ final class SyncEngine: ObservableObject {
             case showUpcoming = "show_upcoming"
             case showHealth = "show_health"
             case showEvolution = "show_evolution"
+            case showConnectedHome = "show_connected_home"
             case updatedAt = "updated_at"
         }
     }
@@ -1328,6 +1378,58 @@ final class SyncEngine: ObservableObject {
         for tag in pending where tag.plant != nil { tag.syncStatus = .synced }
     }
 
+    // MARK: - Connected devices
+
+    private struct ConnectedDeviceDTO: Encodable {
+        var id: UUID
+        var workspaceId: UUID
+        var gardenId: UUID?
+        var zoneId: UUID?
+        var provider: DeviceProvider
+        var providerDeviceId: String
+        var name: String
+        var category: String
+        var manufacturer: String?
+        var model: String?
+        var firmwareVersion: String?
+        var capabilities: [String]
+        var online: Bool
+        var lastSeenAt: Date?
+        var createdAt: Date
+        var updatedAt: Date
+
+        enum CodingKeys: String, CodingKey {
+            case id
+            case workspaceId = "workspace_id"
+            case gardenId = "garden_id"
+            case zoneId = "zone_id"
+            case provider
+            case providerDeviceId = "provider_device_id"
+            case name, category, manufacturer, model
+            case firmwareVersion = "firmware_version"
+            case capabilities, online
+            case lastSeenAt = "last_seen_at"
+            case createdAt = "created_at"
+            case updatedAt = "updated_at"
+        }
+    }
+
+    private func pushConnectedDevices(workspaceID: UUID, context: ModelContext) async throws {
+        let pending = try context.fetch(FetchDescriptor<ConnectedDevice>()).filter { $0.syncStatus != .synced }
+        guard !pending.isEmpty else { return }
+        let dtos = pending.map { device in
+            ConnectedDeviceDTO(
+                id: device.id, workspaceId: workspaceID, gardenId: device.garden?.id, zoneId: device.zone?.id,
+                provider: device.provider, providerDeviceId: device.providerDeviceId, name: device.name,
+                category: device.category, manufacturer: device.manufacturer, model: device.model,
+                firmwareVersion: device.firmwareVersion, capabilities: device.capabilitiesRaw, online: device.online,
+                lastSeenAt: device.lastSeenAt, createdAt: device.createdAt, updatedAt: device.updatedAt ?? .now
+            )
+        }
+        try await AuthService.client.from("connected_devices").upsert(dtos).execute()
+        for device in pending { device.syncStatus = .synced }
+    }
+
     // MARK: - Irrigation events
 
     private struct IrrigationEventDTO: Encodable {
@@ -1379,6 +1481,7 @@ final class SyncEngine: ObservableObject {
         var showUpcoming: Bool
         var showHealth: Bool
         var showEvolution: Bool
+        var showConnectedHome: Bool
         var updatedAt: Date
 
         enum CodingKeys: String, CodingKey {
@@ -1393,6 +1496,7 @@ final class SyncEngine: ObservableObject {
             case showUpcoming = "show_upcoming"
             case showHealth = "show_health"
             case showEvolution = "show_evolution"
+            case showConnectedHome = "show_connected_home"
             case updatedAt = "updated_at"
         }
     }
@@ -1408,7 +1512,8 @@ final class SyncEngine: ObservableObject {
                 id: prefs.id, workspaceId: workspaceID, showToday: prefs.showToday, showAlerts: prefs.showAlerts,
                 showWeather: prefs.showWeather, showOasisAI: prefs.showOasisAI, showWater: prefs.showWater,
                 showRecentActivity: prefs.showRecentActivity, showUpcoming: prefs.showUpcoming,
-                showHealth: prefs.showHealth, showEvolution: prefs.showEvolution, updatedAt: prefs.updatedAt ?? .now
+                showHealth: prefs.showHealth, showEvolution: prefs.showEvolution,
+                showConnectedHome: prefs.showConnectedHome, updatedAt: prefs.updatedAt ?? .now
             )
         }
         try await AuthService.client.from("dashboard_preferences").upsert(dtos, onConflict: "workspace_id").execute()

@@ -14,6 +14,8 @@ struct HomeView: View {
     @Query private var allIrrigationZones: [IrrigationZone]
     @Query(sort: \Garden.name) private var gardens: [Garden]
     @Query private var preferencesQuery: [DashboardPreferences]
+    @Query private var connectedDevices: [ConnectedDevice]
+    @ObservedObject private var homeKitService = HomeKitService.shared
 
     @State private var selectedGarden: Garden?
     @State private var isOasisSheetPresented = false
@@ -173,6 +175,10 @@ struct HomeView: View {
 
                             if preferences.showEvolution {
                                 EvolutionCard(evolution: DashboardService.evolution(plants: plants, photos: photos))
+                            }
+
+                            if preferences.showConnectedHome {
+                                ConnectedHomeCard(homes: homeKitService.homes, deviceCount: connectedDevices.count)
                             }
 
                             if preferences.showOasisAI {

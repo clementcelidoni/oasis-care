@@ -71,6 +71,9 @@ struct SettingsView: View {
                 NavigationLink("Personnaliser l'accueil") {
                     DashboardCustomizationView()
                 }
+                NavigationLink("Maison connectée") {
+                    MaisonConnecteeView()
+                }
             }
 
             Section {

@@ -22,6 +22,10 @@ final class DashboardPreferences: Syncable {
     var showUpcoming: Bool
     var showHealth: Bool
     var showEvolution: Bool
+    // Inline default (Phase 5A added this to an existing model with
+    // real rows — an init-only default is invisible to SwiftData's
+    // migration inference; see Garden.weatherEnabled's history).
+    var showConnectedHome: Bool = true
     var syncStatus: SyncStatus?
     var updatedAt: Date?
 
@@ -36,6 +40,7 @@ final class DashboardPreferences: Syncable {
         self.showUpcoming = true
         self.showHealth = true
         self.showEvolution = true
+        self.showConnectedHome = true
         self.syncStatus = .pendingCreate
         self.updatedAt = .now
     }

@@ -13,6 +13,9 @@ final class GardenZone: Syncable {
     @Relationship(deleteRule: .nullify, inverse: \Plant.zone)
     var plants: [Plant] = []
 
+    @Relationship(deleteRule: .nullify, inverse: \ConnectedDevice.zone)
+    var connectedDevices: [ConnectedDevice] = []
+
     init(name: String, notes: String = "", garden: Garden? = nil) {
         self.id = UUID()
         self.name = name

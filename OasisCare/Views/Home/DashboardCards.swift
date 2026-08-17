@@ -745,6 +745,43 @@ struct OasisAssistantSheet: View {
     }
 }
 
+// MARK: - Maison connectée (Phase 5, spec §81)
+
+struct ConnectedHomeCard: View {
+    var homes: [ConnectedHome]
+    var deviceCount: Int
+
+    private var onlineCount: Int {
+        homes.flatMap(\.accessories).filter(\.isReachable).count
+    }
+
+    var body: some View {
+        NavigationLink {
+            MaisonConnecteeView()
+        } label: {
+            VStack(alignment: .leading, spacing: 8) {
+                Label("Maison connectée", systemImage: "house.and.flag.fill")
+                    .font(.headline)
+                    .foregroundStyle(.primary)
+
+                if deviceCount == 0 {
+                    Text("Connectez vos capteurs, vannes et autres équipements via HomeKit.")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                } else {
+                    Text("\(onlineCount) / \(deviceCount) équipement\(deviceCount > 1 ? "s" : "") en ligne")
+                        .font(.subheadline)
+                        .foregroundStyle(.secondary)
+                }
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
+        }
+        .buttonStyle(.plain)
+        .padding()
+        .background(Color(.secondarySystemGroupedBackground), in: RoundedRectangle(cornerRadius: 16, style: .continuous))
+    }
+}
+
 // MARK: - Actions rapides (spec §13)
 
 struct QuickActionsGrid: View {

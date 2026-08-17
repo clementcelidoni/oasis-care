@@ -23,6 +23,7 @@ struct DashboardCustomizationView: View {
                 toggle("Prochainement", isOn: bindingFor(\.showUpcoming))
                 toggle("Santé", isOn: bindingFor(\.showHealth))
                 toggle("Évolution", isOn: bindingFor(\.showEvolution))
+                toggle("Maison connectée", isOn: bindingFor(\.showConnectedHome))
             } footer: {
                 Text("Désactivez les sections qui ne vous intéressent pas. L'ordre reste celui par défaut.")
             }
