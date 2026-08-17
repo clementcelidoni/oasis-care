@@ -81,10 +81,10 @@ struct SensorHistoryChartView: View {
             ForEach(points) { point in
                 LineMark(x: .value("Date", point.date), y: .value(sensor.unit, point.value))
                     .interpolationMethod(.monotone)
-                    .foregroundStyle(.accentColor)
+                    .foregroundStyle(Color.accentColor)
                 if points.count < 60 {
                     PointMark(x: .value("Date", point.date), y: .value(sensor.unit, point.value))
-                        .foregroundStyle(.accentColor)
+                        .foregroundStyle(Color.accentColor)
                         .symbolSize(20)
                 }
             }
