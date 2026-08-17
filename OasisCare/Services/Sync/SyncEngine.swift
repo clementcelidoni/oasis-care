@@ -496,6 +496,7 @@ final class SyncEngine: ObservableObject {
                 prefs.showHealth = row.showHealth
                 prefs.showEvolution = row.showEvolution
                 prefs.showConnectedHome = row.showConnectedHome
+                prefs.showDeviceHealth = row.showDeviceHealth
                 prefs.syncStatus = .synced
                 prefs.updatedAt = row.updatedAt
                 context.insert(prefs)
@@ -1028,6 +1029,7 @@ final class SyncEngine: ObservableObject {
         var showHealth: Bool
         var showEvolution: Bool
         var showConnectedHome: Bool
+        var showDeviceHealth: Bool
         var updatedAt: Date?
 
         enum CodingKeys: String, CodingKey {
@@ -1042,6 +1044,7 @@ final class SyncEngine: ObservableObject {
             case showHealth = "show_health"
             case showEvolution = "show_evolution"
             case showConnectedHome = "show_connected_home"
+            case showDeviceHealth = "show_device_health"
             case updatedAt = "updated_at"
         }
     }
@@ -2190,6 +2193,7 @@ final class SyncEngine: ObservableObject {
         var showHealth: Bool
         var showEvolution: Bool
         var showConnectedHome: Bool
+        var showDeviceHealth: Bool
         var updatedAt: Date
 
         enum CodingKeys: String, CodingKey {
@@ -2205,6 +2209,7 @@ final class SyncEngine: ObservableObject {
             case showHealth = "show_health"
             case showEvolution = "show_evolution"
             case showConnectedHome = "show_connected_home"
+            case showDeviceHealth = "show_device_health"
             case updatedAt = "updated_at"
         }
     }
@@ -2221,7 +2226,8 @@ final class SyncEngine: ObservableObject {
                 showWeather: prefs.showWeather, showOasisAI: prefs.showOasisAI, showWater: prefs.showWater,
                 showRecentActivity: prefs.showRecentActivity, showUpcoming: prefs.showUpcoming,
                 showHealth: prefs.showHealth, showEvolution: prefs.showEvolution,
-                showConnectedHome: prefs.showConnectedHome, updatedAt: prefs.updatedAt ?? .now
+                showConnectedHome: prefs.showConnectedHome, showDeviceHealth: prefs.showDeviceHealth,
+                updatedAt: prefs.updatedAt ?? .now
             )
         }
         try await AuthService.client.from("dashboard_preferences").upsert(dtos, onConflict: "workspace_id").execute()

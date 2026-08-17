@@ -181,6 +181,71 @@ struct InsightRow: View {
     }
 }
 
+/// Spec §61-65's device/sensor anomalies — kept as its own card rather
+/// than merged into AlertsCard above: these are a different kind of
+/// signal (hardware/data-quality problems, AlertLevel) from
+/// GardenInsightService's plant-care reminders (Priority), and the spec
+/// itself treats them as a separate phase-level feature, not an
+/// extension of §6's dashboard alerts.
+struct HealthAlertsCard: View {
+    var alerts: [DeviceHealthService.HealthAlert]
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            Text("Anomalies")
+                .font(.headline)
+
+            VStack(spacing: 0) {
+                ForEach(Array(alerts.prefix(5).enumerated()), id: \.element.id) { index, alert in
+                    HealthAlertRow(alert: alert)
+                    if index < min(alerts.count, 5) - 1 {
+                        Divider()
+                    }
+                }
+            }
+
+            if alerts.count > 5 {
+                Text("+ \(alerts.count - 5) autre\(alerts.count - 5 > 1 ? "s" : "")")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+        }
+        .padding()
+        .background(Color(.secondarySystemGroupedBackground), in: RoundedRectangle(cornerRadius: 16, style: .continuous))
+    }
+}
+
+struct HealthAlertRow: View {
+    var alert: DeviceHealthService.HealthAlert
+
+    var body: some View {
+        HStack(spacing: 12) {
+            Image(systemName: alert.kind.icon)
+                .foregroundStyle(levelColor)
+                .frame(width: 20)
+            VStack(alignment: .leading, spacing: 2) {
+                Text(alert.title)
+                    .font(.subheadline.weight(.medium))
+                    .foregroundStyle(.primary)
+                Text(alert.subtitle)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+            Spacer()
+        }
+        .padding(.vertical, 6)
+    }
+
+    private var levelColor: Color {
+        switch alert.level {
+        case .critical: return .red
+        case .important: return .orange
+        case .warning: return .yellow
+        case .info: return .secondary
+        }
+    }
+}
+
 // MARK: - Météo (spec §7, §19-21)
 
 struct WeatherCard: View {

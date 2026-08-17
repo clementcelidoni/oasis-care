@@ -17,6 +17,7 @@ struct HomeView: View {
     @Query private var connectedDevices: [ConnectedDevice]
     @Query private var automationRules: [AutomationRule]
     @Query private var greenhouses: [Greenhouse]
+    @Query private var allSensors: [Sensor]
     @ObservedObject private var homeKitService = HomeKitService.shared
 
     @State private var selectedGarden: Garden?
@@ -57,6 +58,27 @@ struct HomeView: View {
     private var irrigationZones: [IrrigationZone] {
         guard let selectedGarden else { return allIrrigationZones }
         return allIrrigationZones.filter { $0.garden?.id == selectedGarden.id }
+    }
+
+    private var healthDevices: [ConnectedDevice] {
+        guard let selectedGarden else { return connectedDevices }
+        return connectedDevices.filter { $0.garden?.id == selectedGarden.id }
+    }
+
+    private var healthSensors: [Sensor] {
+        guard let selectedGarden else { return allSensors }
+        return allSensors.filter {
+            $0.garden?.id == selectedGarden.id || $0.zone?.garden?.id == selectedGarden.id || $0.plant?.garden?.id == selectedGarden.id
+        }
+    }
+
+    /// Scoped to the selected garden, same as `insights` above — the
+    /// notification pass in `.task` below uses the unscoped queries
+    /// instead, matching `runAutomaticRules()`'s existing precedent that
+    /// background evaluation runs across every garden regardless of
+    /// what's currently on screen.
+    private var healthAlerts: [DeviceHealthService.HealthAlert] {
+        DeviceHealthService.evaluate(devices: healthDevices, sensors: healthSensors, irrigationZones: irrigationZones)
     }
 
     private func scoped<T>(_ items: [T], plantID: (T) -> UUID?) -> [T] {
@@ -183,6 +205,10 @@ struct HomeView: View {
                                 ConnectedHomeCard(homes: homeKitService.homes, deviceCount: connectedDevices.count)
                             }
 
+                            if preferences.showDeviceHealth && !healthAlerts.isEmpty {
+                                HealthAlertsCard(alerts: healthAlerts)
+                            }
+
                             if preferences.showOasisAI {
                                 OasisAICard(
                                     insights: insights,
@@ -264,6 +290,8 @@ struct HomeView: View {
                 for greenhouse in greenhouses where greenhouse.climateControlEnabled {
                     await GreenhouseClimateService.evaluate(greenhouse, context: modelContext)
                 }
+                let allHealthAlerts = DeviceHealthService.evaluate(devices: connectedDevices, sensors: allSensors, irrigationZones: allIrrigationZones)
+                DeviceHealthService.notifyIfNeeded(allHealthAlerts)
             }
         }
     }

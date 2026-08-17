@@ -26,6 +26,7 @@ final class DashboardPreferences: Syncable {
     // real rows — an init-only default is invisible to SwiftData's
     // migration inference; see Garden.weatherEnabled's history).
     var showConnectedHome: Bool = true
+    var showDeviceHealth: Bool = true
     var syncStatus: SyncStatus?
     var updatedAt: Date?
 
@@ -41,6 +42,7 @@ final class DashboardPreferences: Syncable {
         self.showHealth = true
         self.showEvolution = true
         self.showConnectedHome = true
+        self.showDeviceHealth = true
         self.syncStatus = .pendingCreate
         self.updatedAt = .now
     }
