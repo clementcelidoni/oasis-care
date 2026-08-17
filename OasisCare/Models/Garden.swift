@@ -18,7 +18,11 @@ final class Garden: Syncable {
     var latitude: Double?
     var longitude: Double?
     var locationName: String?
-    var weatherEnabled: Bool
+    // Inline default (not just in init) so SwiftData's automatic migration
+    // recognizes this property on devices with pre-existing Garden rows —
+    // an init-only default is invisible to migration inference and left
+    // existing installs unable to open their store (Phase 4B regression).
+    var weatherEnabled: Bool = false
 
     @Relationship(deleteRule: .cascade, inverse: \GardenZone.garden)
     var zones: [GardenZone] = []
