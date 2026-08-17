@@ -8,6 +8,7 @@ struct GardenDetailView: View {
         case editZone(GardenZone)
         case addIrrigationZone
         case editIrrigationZone(IrrigationZone)
+        case addGreenhouse
 
         var id: String {
             switch self {
@@ -16,6 +17,7 @@ struct GardenDetailView: View {
             case .editZone(let zone): return "editZone-\(zone.id.uuidString)"
             case .addIrrigationZone: return "addIrrigationZone"
             case .editIrrigationZone(let zone): return "editIrrigationZone-\(zone.id.uuidString)"
+            case .addGreenhouse: return "addGreenhouse"
             }
         }
     }
@@ -120,6 +122,8 @@ struct GardenDetailView: View {
                 IrrigationZoneFormView(garden: garden, zone: nil)
             case .editIrrigationZone(let zone):
                 IrrigationZoneFormView(garden: garden, zone: zone)
+            case .addGreenhouse:
+                GreenhouseFormView(garden: garden, greenhouse: nil)
             }
         }
         .sheet(isPresented: $isBulkWaterSheetPresented) {
@@ -177,6 +181,7 @@ struct GardenDetailView: View {
 
                 zonesSection
                 irrigationSection
+                greenhousesSection
                 plantsSection
             }
             .padding()
@@ -324,6 +329,50 @@ struct GardenDetailView: View {
                             }
                         }
                         if index < sortedZones.count - 1 {
+                            Divider()
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    private var greenhousesSection: some View {
+        VStack(alignment: .leading, spacing: 8) {
+            HStack {
+                Text("Serres")
+                    .font(.headline)
+                Spacer()
+                Button {
+                    activeSheet = .addGreenhouse
+                } label: {
+                    Label("Ajouter", systemImage: "plus.circle")
+                        .labelStyle(.iconOnly)
+                }
+            }
+            if garden.greenhouses.isEmpty {
+                Text("Aucune serre pour l'instant.")
+                    .font(.subheadline)
+                    .foregroundStyle(.secondary)
+            } else {
+                VStack(spacing: 0) {
+                    ForEach(Array(garden.greenhouses.sorted { $0.name < $1.name }.enumerated()), id: \.element.id) { index, greenhouse in
+                        NavigationLink {
+                            GreenhouseDashboardView(greenhouse: greenhouse)
+                        } label: {
+                            HStack {
+                                Image(systemName: "leaf.arrow.circlepath")
+                                    .foregroundStyle(greenhouse.climateControlEnabled ? Color.green : Color.secondary)
+                                Text(greenhouse.name)
+                                    .foregroundStyle(.primary)
+                                Spacer()
+                                Image(systemName: "chevron.right")
+                                    .font(.caption2)
+                                    .foregroundStyle(.tertiary)
+                            }
+                            .padding(.vertical, 6)
+                        }
+                        if index < garden.greenhouses.count - 1 {
                             Divider()
                         }
                     }

@@ -55,6 +55,7 @@ final class SyncEngine: ObservableObject {
             try await pushAutomationConditions(context: context)
             try await pushAutomationActions(context: context)
             try await pushAutomationExecutions(context: context)
+            try await pushGreenhouses(workspaceID: workspaceID, context: context)
             try await pushIrrigationEvents(context: context)
             try await pushDashboardPreferences(workspaceID: workspaceID, context: context)
             try await pushPendingDeletions(context: context)
@@ -86,6 +87,7 @@ final class SyncEngine: ObservableObject {
         let commandLogs = (try? context.fetch(FetchDescriptor<DeviceCommandLog>()))?.filter { $0.syncStatus != .synced }.count ?? 0
         let automationRules = (try? context.fetch(FetchDescriptor<AutomationRule>()))?.filter { $0.syncStatus != .synced }.count ?? 0
         let automationExecutions = (try? context.fetch(FetchDescriptor<AutomationExecution>()))?.filter { $0.syncStatus != .synced }.count ?? 0
+        let greenhouses = (try? context.fetch(FetchDescriptor<Greenhouse>()))?.filter { $0.syncStatus != .synced }.count ?? 0
         let measurements = (try? context.fetch(FetchDescriptor<PlantMeasurement>()))?.filter { $0.syncStatus != .synced }.count ?? 0
         let inspections = (try? context.fetch(FetchDescriptor<TreeInspection>()))?.filter { $0.syncStatus != .synced }.count ?? 0
         let checkups = (try? context.fetch(FetchDescriptor<GardenCheckup>()))?.filter { $0.syncStatus != .synced }.count ?? 0
@@ -93,7 +95,8 @@ final class SyncEngine: ObservableObject {
         let deletions = (try? context.fetchCount(FetchDescriptor<PendingDeletion>())) ?? 0
         return gardens + zones + plants + schedules + events + photos + analyses + preferences + irrigationZones
             + irrigationEvents + smartTags + connectedDevices + sensors + sensorReadings + commandLogs
-            + automationRules + automationExecutions + measurements + inspections + checkups + checkupEntries + deletions
+            + automationRules + automationExecutions + greenhouses + measurements + inspections + checkups
+            + checkupEntries + deletions
     }
 
     private static let photoBucket = "plant-photos"
@@ -271,6 +274,33 @@ final class SyncEngine: ObservableObject {
             reading.id = row.id
             reading.syncStatus = .synced
             context.insert(reading)
+        }
+
+        let remoteGreenhouses: [GreenhouseRow] = try await AuthService.client.from("greenhouses").select().execute().value
+        for row in remoteGreenhouses {
+            let greenhouse = Greenhouse(
+                name: row.name, garden: row.gardenId.flatMap { gardensByID[$0] }, zone: row.zoneId.flatMap { zonesByID[$0] }
+            )
+            greenhouse.id = row.id
+            greenhouse.targetTemperatureMin = row.targetTemperatureMin
+            greenhouse.targetTemperatureMax = row.targetTemperatureMax
+            greenhouse.targetHumidityMin = row.targetHumidityMin
+            greenhouse.targetHumidityMax = row.targetHumidityMax
+            greenhouse.targetLightMin = row.targetLightMin
+            greenhouse.targetLightMax = row.targetLightMax
+            greenhouse.climateControlEnabled = row.climateControlEnabled
+            greenhouse.temperatureSensor = row.temperatureSensorId.flatMap { sensorsByID[$0] }
+            greenhouse.humiditySensor = row.humiditySensorId.flatMap { sensorsByID[$0] }
+            greenhouse.lightSensor = row.lightSensorId.flatMap { sensorsByID[$0] }
+            greenhouse.soilSensor = row.soilSensorId.flatMap { sensorsByID[$0] }
+            greenhouse.heaterDevice = row.heaterDeviceId.flatMap { connectedDevicesByID[$0] }
+            greenhouse.fanDevice = row.fanDeviceId.flatMap { connectedDevicesByID[$0] }
+            greenhouse.misterDevice = row.misterDeviceId.flatMap { connectedDevicesByID[$0] }
+            greenhouse.lightDevice = row.lightDeviceId.flatMap { connectedDevicesByID[$0] }
+            greenhouse.valveDevice = row.valveDeviceId.flatMap { connectedDevicesByID[$0] }
+            greenhouse.syncStatus = .synced
+            greenhouse.updatedAt = row.updatedAt
+            context.insert(greenhouse)
         }
 
         let remoteSchedules: [CareScheduleRow] = try await AuthService.client.from("care_schedules").select().execute().value
@@ -792,6 +822,54 @@ final class SyncEngine: ObservableObject {
             case firmwareVersion = "firmware_version"
             case capabilities, online
             case lastSeenAt = "last_seen_at"
+            case updatedAt = "updated_at"
+        }
+    }
+
+    private struct GreenhouseRow: Decodable {
+        var id: UUID
+        var gardenId: UUID?
+        var zoneId: UUID?
+        var name: String
+        var targetTemperatureMin: Double?
+        var targetTemperatureMax: Double?
+        var targetHumidityMin: Double?
+        var targetHumidityMax: Double?
+        var targetLightMin: Double?
+        var targetLightMax: Double?
+        var climateControlEnabled: Bool
+        var temperatureSensorId: UUID?
+        var humiditySensorId: UUID?
+        var lightSensorId: UUID?
+        var soilSensorId: UUID?
+        var heaterDeviceId: UUID?
+        var fanDeviceId: UUID?
+        var misterDeviceId: UUID?
+        var lightDeviceId: UUID?
+        var valveDeviceId: UUID?
+        var updatedAt: Date?
+
+        enum CodingKeys: String, CodingKey {
+            case id
+            case gardenId = "garden_id"
+            case zoneId = "zone_id"
+            case name
+            case targetTemperatureMin = "target_temperature_min"
+            case targetTemperatureMax = "target_temperature_max"
+            case targetHumidityMin = "target_humidity_min"
+            case targetHumidityMax = "target_humidity_max"
+            case targetLightMin = "target_light_min"
+            case targetLightMax = "target_light_max"
+            case climateControlEnabled = "climate_control_enabled"
+            case temperatureSensorId = "temperature_sensor_id"
+            case humiditySensorId = "humidity_sensor_id"
+            case lightSensorId = "light_sensor_id"
+            case soilSensorId = "soil_sensor_id"
+            case heaterDeviceId = "heater_device_id"
+            case fanDeviceId = "fan_device_id"
+            case misterDeviceId = "mister_device_id"
+            case lightDeviceId = "light_device_id"
+            case valveDeviceId = "valve_device_id"
             case updatedAt = "updated_at"
         }
     }
@@ -1839,6 +1917,79 @@ final class SyncEngine: ObservableObject {
         }
         try await AuthService.client.from("automation_executions").upsert(dtos).execute()
         for execution in pending { execution.syncStatus = .synced }
+    }
+
+    // MARK: - Greenhouses
+
+    private struct GreenhouseDTO: Encodable {
+        var id: UUID
+        var workspaceId: UUID
+        var gardenId: UUID?
+        var zoneId: UUID?
+        var name: String
+        var targetTemperatureMin: Double?
+        var targetTemperatureMax: Double?
+        var targetHumidityMin: Double?
+        var targetHumidityMax: Double?
+        var targetLightMin: Double?
+        var targetLightMax: Double?
+        var climateControlEnabled: Bool
+        var temperatureSensorId: UUID?
+        var humiditySensorId: UUID?
+        var lightSensorId: UUID?
+        var soilSensorId: UUID?
+        var heaterDeviceId: UUID?
+        var fanDeviceId: UUID?
+        var misterDeviceId: UUID?
+        var lightDeviceId: UUID?
+        var valveDeviceId: UUID?
+        var updatedAt: Date
+
+        enum CodingKeys: String, CodingKey {
+            case id
+            case workspaceId = "workspace_id"
+            case gardenId = "garden_id"
+            case zoneId = "zone_id"
+            case name
+            case targetTemperatureMin = "target_temperature_min"
+            case targetTemperatureMax = "target_temperature_max"
+            case targetHumidityMin = "target_humidity_min"
+            case targetHumidityMax = "target_humidity_max"
+            case targetLightMin = "target_light_min"
+            case targetLightMax = "target_light_max"
+            case climateControlEnabled = "climate_control_enabled"
+            case temperatureSensorId = "temperature_sensor_id"
+            case humiditySensorId = "humidity_sensor_id"
+            case lightSensorId = "light_sensor_id"
+            case soilSensorId = "soil_sensor_id"
+            case heaterDeviceId = "heater_device_id"
+            case fanDeviceId = "fan_device_id"
+            case misterDeviceId = "mister_device_id"
+            case lightDeviceId = "light_device_id"
+            case valveDeviceId = "valve_device_id"
+            case updatedAt = "updated_at"
+        }
+    }
+
+    private func pushGreenhouses(workspaceID: UUID, context: ModelContext) async throws {
+        let pending = try context.fetch(FetchDescriptor<Greenhouse>()).filter { $0.syncStatus != .synced }
+        guard !pending.isEmpty else { return }
+        let dtos = pending.map { greenhouse in
+            GreenhouseDTO(
+                id: greenhouse.id, workspaceId: workspaceID, gardenId: greenhouse.garden?.id, zoneId: greenhouse.zone?.id,
+                name: greenhouse.name, targetTemperatureMin: greenhouse.targetTemperatureMin,
+                targetTemperatureMax: greenhouse.targetTemperatureMax, targetHumidityMin: greenhouse.targetHumidityMin,
+                targetHumidityMax: greenhouse.targetHumidityMax, targetLightMin: greenhouse.targetLightMin,
+                targetLightMax: greenhouse.targetLightMax, climateControlEnabled: greenhouse.climateControlEnabled,
+                temperatureSensorId: greenhouse.temperatureSensor?.id, humiditySensorId: greenhouse.humiditySensor?.id,
+                lightSensorId: greenhouse.lightSensor?.id, soilSensorId: greenhouse.soilSensor?.id,
+                heaterDeviceId: greenhouse.heaterDevice?.id, fanDeviceId: greenhouse.fanDevice?.id,
+                misterDeviceId: greenhouse.misterDevice?.id, lightDeviceId: greenhouse.lightDevice?.id,
+                valveDeviceId: greenhouse.valveDevice?.id, updatedAt: greenhouse.updatedAt ?? .now
+            )
+        }
+        try await AuthService.client.from("greenhouses").upsert(dtos).execute()
+        for greenhouse in pending { greenhouse.syncStatus = .synced }
     }
 
     // MARK: - Irrigation events

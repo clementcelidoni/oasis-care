@@ -166,7 +166,7 @@ final class DeviceCommandService: ObservableObject {
         } catch {
             return fail(.underlying(error.localizedDescription), device: device, command: on ? .turnOn : .turnOff, trigger: trigger, ruleID: ruleID, context: context)
         }
-        device.currentState = on ? "Marche" : "Arrêt"
+        device.currentState = on ? DeviceOnOffState.on.rawValue : DeviceOnOffState.off.rawValue
         device.lastActionAt = .now
         markDirty(device)
         logCommand(on ? .turnOn : .turnOff, device: device, trigger: trigger, ruleID: ruleID, succeeded: true, context: context)
