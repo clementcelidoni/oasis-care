@@ -15,6 +15,7 @@ struct HomeView: View {
     @Query(sort: \Garden.name) private var gardens: [Garden]
     @Query private var preferencesQuery: [DashboardPreferences]
     @Query private var connectedDevices: [ConnectedDevice]
+    @Query private var automationRules: [AutomationRule]
     @ObservedObject private var homeKitService = HomeKitService.shared
 
     @State private var selectedGarden: Garden?
@@ -258,6 +259,7 @@ struct HomeView: View {
             }
             .task {
                 _ = DashboardService.preferences(in: modelContext)
+                await runAutomaticRules()
             }
         }
     }
@@ -351,6 +353,21 @@ struct HomeView: View {
                     }
                 }
             }
+        }
+    }
+
+    /// Spec §84/§86 — runs from local data only, on app-foreground/
+    /// dashboard-load rather than as a guaranteed background daemon;
+    /// see AutomationEngine's own doc comment for why that's an honest
+    /// limitation rather than a silently-assumed guarantee.
+    private func runAutomaticRules() async {
+        let automaticRules = automationRules.filter { $0.enabled && $0.mode == .automatic }
+        guard !automaticRules.isEmpty else { return }
+        for rule in automaticRules {
+            let gardenID = rule.scopeGarden?.id ?? rule.scopeZone?.garden?.id ?? rule.scopePlant?.garden?.id
+            let cachedWeather = gardenID.flatMap { WeatherCache.load(for: $0) }
+            let context = AutomationEngine.WeatherContext(rainForecastMm: cachedWeather?.dailyForecast.first?.precipitationMm)
+            await AutomationEngine.runAutomaticRules([rule], weather: context, context: modelContext)
         }
     }
 

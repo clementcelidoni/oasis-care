@@ -51,6 +51,10 @@ final class SyncEngine: ObservableObject {
             try await pushSensors(workspaceID: workspaceID, context: context)
             try await pushSensorReadings(context: context)
             try await pushDeviceCommandLogs(workspaceID: workspaceID, context: context)
+            try await pushAutomationRules(workspaceID: workspaceID, context: context)
+            try await pushAutomationConditions(context: context)
+            try await pushAutomationActions(context: context)
+            try await pushAutomationExecutions(context: context)
             try await pushIrrigationEvents(context: context)
             try await pushDashboardPreferences(workspaceID: workspaceID, context: context)
             try await pushPendingDeletions(context: context)
@@ -80,14 +84,16 @@ final class SyncEngine: ObservableObject {
         let sensors = (try? context.fetch(FetchDescriptor<Sensor>()))?.filter { $0.syncStatus != .synced }.count ?? 0
         let sensorReadings = (try? context.fetch(FetchDescriptor<SensorReading>()))?.filter { $0.syncStatus != .synced }.count ?? 0
         let commandLogs = (try? context.fetch(FetchDescriptor<DeviceCommandLog>()))?.filter { $0.syncStatus != .synced }.count ?? 0
+        let automationRules = (try? context.fetch(FetchDescriptor<AutomationRule>()))?.filter { $0.syncStatus != .synced }.count ?? 0
+        let automationExecutions = (try? context.fetch(FetchDescriptor<AutomationExecution>()))?.filter { $0.syncStatus != .synced }.count ?? 0
         let measurements = (try? context.fetch(FetchDescriptor<PlantMeasurement>()))?.filter { $0.syncStatus != .synced }.count ?? 0
         let inspections = (try? context.fetch(FetchDescriptor<TreeInspection>()))?.filter { $0.syncStatus != .synced }.count ?? 0
         let checkups = (try? context.fetch(FetchDescriptor<GardenCheckup>()))?.filter { $0.syncStatus != .synced }.count ?? 0
         let checkupEntries = (try? context.fetch(FetchDescriptor<GardenCheckupEntry>()))?.filter { $0.syncStatus != .synced }.count ?? 0
         let deletions = (try? context.fetchCount(FetchDescriptor<PendingDeletion>())) ?? 0
         return gardens + zones + plants + schedules + events + photos + analyses + preferences + irrigationZones
-            + irrigationEvents + smartTags + connectedDevices + sensors + sensorReadings + commandLogs + measurements
-            + inspections + checkups + checkupEntries + deletions
+            + irrigationEvents + smartTags + connectedDevices + sensors + sensorReadings + commandLogs
+            + automationRules + automationExecutions + measurements + inspections + checkups + checkupEntries + deletions
     }
 
     private static let photoBucket = "plant-photos"
@@ -1635,6 +1641,173 @@ final class SyncEngine: ObservableObject {
         }
         try await AuthService.client.from("device_commands").upsert(dtos).execute()
         for log in pending { log.syncStatus = .synced }
+    }
+
+    // MARK: - Automation
+
+    private struct AutomationRuleDTO: Encodable {
+        var id: UUID
+        var workspaceId: UUID
+        var name: String
+        var enabled: Bool
+        var mode: AutomationMode
+        var scopeGardenId: UUID?
+        var scopeZoneId: UUID?
+        var scopePlantId: UUID?
+        var maxDurationSeconds: Double?
+        var maxVolumeLiters: Double?
+        var maxRunsPerDay: Int?
+        var minimumDelayBetweenRunsMinutes: Int?
+        var createdAt: Date
+        var updatedAt: Date
+        var lastTriggeredAt: Date?
+
+        enum CodingKeys: String, CodingKey {
+            case id
+            case workspaceId = "workspace_id"
+            case name, enabled, mode
+            case scopeGardenId = "scope_garden_id"
+            case scopeZoneId = "scope_zone_id"
+            case scopePlantId = "scope_plant_id"
+            case maxDurationSeconds = "max_duration_seconds"
+            case maxVolumeLiters = "max_volume_liters"
+            case maxRunsPerDay = "max_runs_per_day"
+            case minimumDelayBetweenRunsMinutes = "minimum_delay_between_runs_minutes"
+            case createdAt = "created_at"
+            case updatedAt = "updated_at"
+            case lastTriggeredAt = "last_triggered_at"
+        }
+    }
+
+    /// AutomationCondition/AutomationAction have no syncStatus of their
+    /// own (they're small configuration children of a rule, not
+    /// accumulating history) — pushed in full alongside pending rules
+    /// rather than individually dirty-tracked; upsert makes re-sending
+    /// unchanged ones harmless.
+    private func pushAutomationRules(workspaceID: UUID, context: ModelContext) async throws {
+        let pending = try context.fetch(FetchDescriptor<AutomationRule>()).filter { $0.syncStatus != .synced }
+        guard !pending.isEmpty else { return }
+        let dtos = pending.map { rule in
+            AutomationRuleDTO(
+                id: rule.id, workspaceId: workspaceID, name: rule.name, enabled: rule.enabled, mode: rule.mode,
+                scopeGardenId: rule.scopeGarden?.id, scopeZoneId: rule.scopeZone?.id, scopePlantId: rule.scopePlant?.id,
+                maxDurationSeconds: rule.maxDurationSeconds, maxVolumeLiters: rule.maxVolumeLiters,
+                maxRunsPerDay: rule.maxRunsPerDay, minimumDelayBetweenRunsMinutes: rule.minimumDelayBetweenRunsMinutes,
+                createdAt: rule.createdAt, updatedAt: rule.updatedAt ?? .now, lastTriggeredAt: rule.lastTriggeredAt
+            )
+        }
+        try await AuthService.client.from("automation_rules").upsert(dtos).execute()
+        for rule in pending { rule.syncStatus = .synced }
+    }
+
+    private struct AutomationConditionDTO: Encodable {
+        var id: UUID
+        var ruleId: UUID
+        var type: AutomationConditionType
+        var order: Int
+        var numericThreshold: Double?
+        var hoursThreshold: Double?
+        var timeRangeStartMinutes: Int?
+        var timeRangeEndMinutes: Int?
+        var daysOfWeek: [Int]
+        var sensorId: UUID?
+        var deviceId: UUID?
+
+        enum CodingKeys: String, CodingKey {
+            case id
+            case ruleId = "rule_id"
+            case type, order
+            case numericThreshold = "numeric_threshold"
+            case hoursThreshold = "hours_threshold"
+            case timeRangeStartMinutes = "time_range_start_minutes"
+            case timeRangeEndMinutes = "time_range_end_minutes"
+            case daysOfWeek = "days_of_week"
+            case sensorId = "sensor_id"
+            case deviceId = "device_id"
+        }
+    }
+
+    private func pushAutomationConditions(context: ModelContext) async throws {
+        let conditions = try context.fetch(FetchDescriptor<AutomationCondition>()).filter { $0.rule != nil }
+        guard !conditions.isEmpty else { return }
+        let dtos = conditions.compactMap { condition -> AutomationConditionDTO? in
+            guard let ruleID = condition.rule?.id else { return nil }
+            return AutomationConditionDTO(
+                id: condition.id, ruleId: ruleID, type: condition.type, order: condition.order,
+                numericThreshold: condition.numericThreshold, hoursThreshold: condition.hoursThreshold,
+                timeRangeStartMinutes: condition.timeRangeStartMinutes, timeRangeEndMinutes: condition.timeRangeEndMinutes,
+                daysOfWeek: condition.daysOfWeek, sensorId: condition.sensor?.id, deviceId: condition.device?.id
+            )
+        }
+        try await AuthService.client.from("automation_conditions").upsert(dtos).execute()
+    }
+
+    private struct AutomationActionDTO: Encodable {
+        var id: UUID
+        var ruleId: UUID
+        var type: AutomationActionType
+        var deviceId: UUID?
+        var durationSeconds: Double?
+        var message: String?
+        var order: Int
+
+        enum CodingKeys: String, CodingKey {
+            case id
+            case ruleId = "rule_id"
+            case type
+            case deviceId = "device_id"
+            case durationSeconds = "duration_seconds"
+            case message, order
+        }
+    }
+
+    private func pushAutomationActions(context: ModelContext) async throws {
+        let actions = try context.fetch(FetchDescriptor<AutomationAction>()).filter { $0.rule != nil }
+        guard !actions.isEmpty else { return }
+        let dtos = actions.compactMap { action -> AutomationActionDTO? in
+            guard let ruleID = action.rule?.id else { return nil }
+            return AutomationActionDTO(
+                id: action.id, ruleId: ruleID, type: action.type, deviceId: action.device?.id,
+                durationSeconds: action.durationSeconds, message: action.message, order: action.order
+            )
+        }
+        try await AuthService.client.from("automation_actions").upsert(dtos).execute()
+    }
+
+    private struct AutomationExecutionDTO: Encodable {
+        var id: UUID
+        var ruleId: UUID?
+        var date: Date
+        var conditionsSummary: String
+        var decision: Bool
+        var actionSummary: String?
+        var succeeded: Bool
+        var errorMessage: String?
+
+        enum CodingKeys: String, CodingKey {
+            case id
+            case ruleId = "rule_id"
+            case date
+            case conditionsSummary = "conditions_summary"
+            case decision
+            case actionSummary = "action_summary"
+            case succeeded
+            case errorMessage = "error_message"
+        }
+    }
+
+    private func pushAutomationExecutions(context: ModelContext) async throws {
+        let pending = try context.fetch(FetchDescriptor<AutomationExecution>()).filter { $0.syncStatus != .synced }
+        guard !pending.isEmpty else { return }
+        let dtos = pending.map { execution in
+            AutomationExecutionDTO(
+                id: execution.id, ruleId: execution.rule?.id, date: execution.date,
+                conditionsSummary: execution.conditionsSummary, decision: execution.decision,
+                actionSummary: execution.actionSummary, succeeded: execution.succeeded, errorMessage: execution.errorMessage
+            )
+        }
+        try await AuthService.client.from("automation_executions").upsert(dtos).execute()
+        for execution in pending { execution.syncStatus = .synced }
     }
 
     // MARK: - Irrigation events

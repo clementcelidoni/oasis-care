@@ -73,6 +73,18 @@ enum NotificationService {
         UNUserNotificationCenter.current().removeAllPendingNotificationRequests()
     }
 
+    /// Fires right away (trigger: nil) rather than at a scheduled date —
+    /// used for automation/anomaly alerts (Phase 5D/5I), which don't
+    /// have a CareSchedule to key off of the way reminders do.
+    static func sendImmediate(title: String, body: String) {
+        guard NotificationSettings.notificationsEnabled else { return }
+        let content = UNMutableNotificationContent()
+        content.title = title
+        content.body = body
+        content.sound = .default
+        UNUserNotificationCenter.current().add(UNNotificationRequest(identifier: UUID().uuidString, content: content, trigger: nil))
+    }
+
     /// Re-derives every active schedule's notification from scratch — used
     /// when notifications are turned on, or a setting affecting scheduling
     /// (default time, remind-overdue) changes.

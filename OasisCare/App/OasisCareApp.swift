@@ -26,7 +26,11 @@ struct OasisCareApp: App {
             Sensor.self,
             SensorReading.self,
             ConnectedDevice.self,
-            DeviceCommandLog.self
+            DeviceCommandLog.self,
+            AutomationRule.self,
+            AutomationCondition.self,
+            AutomationAction.self,
+            AutomationExecution.self
         ])
         let configuration = ModelConfiguration(schema: schema)
 

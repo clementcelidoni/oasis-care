@@ -110,6 +110,14 @@ struct MaisonConnecteeView: View {
 
     private var homesList: some View {
         List {
+            Section {
+                NavigationLink {
+                    AutomationRulesListView()
+                } label: {
+                    Label("Automatisations", systemImage: "wand.and.stars")
+                }
+            }
+
             if !commandService.activeValves.isEmpty {
                 Section {
                     Button(role: .destructive) {
