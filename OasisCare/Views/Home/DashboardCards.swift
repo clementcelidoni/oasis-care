@@ -851,11 +851,28 @@ struct OasisAssistantSheet: View {
     }
 }
 
-// MARK: - Maison connectée (Phase 5, spec §81)
+// MARK: - Maison connectée (spec §81-83)
 
+/// §81's own mockup shows one line per system (Serre/Bassin/Irrigation/
+/// Capteurs) rather than just a bare device count — §82 adds "état
+/// actif" (a running valve with time remaining). §83's alerts aren't
+/// duplicated here — DeviceHealthService's HealthAlertsCard (Phase 5I)
+/// already covers that, this card stays a status summary.
 struct ConnectedHomeCard: View {
+    var garden: Garden?
     var homes: [ConnectedHome]
     var deviceCount: Int
+
+    @ObservedObject private var commandService = DeviceCommandService.shared
+
+    private var greenhouses: [Greenhouse] { garden?.greenhouses ?? [] }
+    private var ponds: [Pond] { garden?.ponds ?? [] }
+    private var irrigationZones: [IrrigationZone] { garden?.irrigationZones ?? [] }
+    private var gardenSensors: [Sensor] {
+        guard let garden else { return [] }
+        var seen = Set<UUID>()
+        return (garden.sensors + garden.zones.flatMap(\.sensors)).filter { seen.insert($0.id).inserted }
+    }
 
     private var onlineCount: Int {
         homes.flatMap(\.accessories).filter(\.isReachable).count
@@ -875,9 +892,17 @@ struct ConnectedHomeCard: View {
                         .font(.caption)
                         .foregroundStyle(.secondary)
                 } else {
-                    Text("\(onlineCount) / \(deviceCount) équipement\(deviceCount > 1 ? "s" : "") en ligne")
-                        .font(.subheadline)
-                        .foregroundStyle(.secondary)
+                    VStack(alignment: .leading, spacing: 4) {
+                        if let line = greenhouseLine { statusRow("leaf.arrow.circlepath", line) }
+                        if let line = pondLine { statusRow("water.waves", line) }
+                        if let line = irrigationLine { statusRow("drop.fill", line) }
+                        if let line = activeValveLine { statusRow("timer", line, tint: .blue) }
+                        if !gardenSensors.isEmpty {
+                            statusRow("sensor.tag.radiowaves.forward.fill", "Capteurs : \(onlineSensorCount) / \(gardenSensors.count) en ligne")
+                        }
+                        statusRow("wifi", "Équipements : \(onlineCount) / \(deviceCount) en ligne")
+                    }
+                    .font(.subheadline)
                 }
             }
             .frame(maxWidth: .infinity, alignment: .leading)
@@ -885,6 +910,54 @@ struct ConnectedHomeCard: View {
         .buttonStyle(.plain)
         .padding()
         .background(Color(.secondarySystemGroupedBackground), in: RoundedRectangle(cornerRadius: 16, style: .continuous))
+    }
+
+    private func statusRow(_ icon: String, _ text: String, tint: Color = .secondary) -> some View {
+        Label(text, systemImage: icon)
+            .foregroundStyle(tint)
+    }
+
+    private var onlineSensorCount: Int {
+        gardenSensors.filter { !$0.isStale }.count
+    }
+
+    private var greenhouseLine: String? {
+        guard !greenhouses.isEmpty else { return nil }
+        if greenhouses.count == 1, let greenhouse = greenhouses.first {
+            let temp = greenhouse.temperatureSensor?.latestReading.map { "\(Int($0.value)) °C" }
+            let humidity = greenhouse.humiditySensor?.latestReading.map { "\(Int($0.value)) %" }
+            let parts = [temp, humidity].compactMap { $0 }
+            return "\(greenhouse.name) : \(parts.isEmpty ? "—" : parts.joined(separator: " · "))"
+        }
+        return "\(greenhouses.count) serres"
+    }
+
+    private var pondLine: String? {
+        guard !ponds.isEmpty else { return nil }
+        if ponds.count == 1, let pond = ponds.first {
+            let temp = pond.waterTemperatureSensor?.latestReading.map { "\(Int($0.value)) °C" }
+            let level = pond.lowWaterAlert ? "Niveau bas" : (pond.waterLevelSensor?.latestReading != nil ? "Niveau OK" : nil)
+            let parts = [temp, level].compactMap { $0 }
+            return "\(pond.name) : \(parts.isEmpty ? "—" : parts.joined(separator: " · "))"
+        }
+        return "\(ponds.count) bassins"
+    }
+
+    private var irrigationLine: String? {
+        guard !irrigationZones.isEmpty else { return nil }
+        let activeCount = irrigationZones.filter { zone in
+            zone.valveDevice.map { commandService.activeValves[$0.id] != nil } ?? false
+        }.count
+        return activeCount == 0 ? "Irrigation : toutes zones à l'arrêt" : "Irrigation : \(activeCount) zone\(activeCount > 1 ? "s" : "") active\(activeCount > 1 ? "s" : "")"
+    }
+
+    /// Spec §82's "Zone Tropicale — Arrosage en cours — 4 min restantes".
+    private var activeValveLine: String? {
+        guard let zone = irrigationZones.first(where: { zone in
+            zone.valveDevice.map { commandService.activeValves[$0.id] != nil } ?? false
+        }), let device = zone.valveDevice, let active = commandService.activeValves[device.id] else { return nil }
+        let remainingMinutes = max(0, Int(active.endsAt.timeIntervalSince(.now) / 60))
+        return "\(zone.name) : arrosage en cours, \(remainingMinutes) min restantes"
     }
 }
 

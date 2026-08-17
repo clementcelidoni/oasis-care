@@ -216,13 +216,11 @@ final class SyncEngine: ObservableObject {
             zone.updatedAt = row.updatedAt
             zone.valveDevice = row.valveDeviceId.flatMap { connectedDevicesByID[$0] }
             zone.pumpDevice = row.pumpDeviceId.flatMap { connectedDevicesByID[$0] }
-            // soilSensor/flowSensor deliberately left unwired here: Sensor
-            // restoration runs after Plants (Sensor can reference Plant,
-            // Plant can reference IrrigationZone — resolving that cycle
-            // needs a second pass this doesn't do yet). A fresh-install
-            // restore recovers the zone/valve/pump correctly; re-picking
-            // its soil/flow sensor is a one-time manual step on that
-            // specific new device.
+            // soilSensor/flowSensor can't resolve yet at this point in the
+            // restore — Sensor restoration runs after Plants (Sensor can
+            // reference Plant, Plant can reference IrrigationZone), so
+            // sensorsByID doesn't exist yet here. Wired in a second pass
+            // right after Sensor restoration instead — see below.
             context.insert(zone)
             irrigationZonesByID[row.id] = zone
         }
@@ -281,6 +279,64 @@ final class SyncEngine: ObservableObject {
             reading.id = row.id
             reading.syncStatus = .synced
             context.insert(reading)
+        }
+
+        // Second pass over the irrigation zones restored earlier, now that
+        // sensorsByID actually exists — see that loop's own comment for
+        // why this can't happen in one pass.
+        for row in remoteIrrigationZones {
+            guard let zone = irrigationZonesByID[row.id] else { continue }
+            zone.soilSensor = row.soilSensorId.flatMap { sensorsByID[$0] }
+            zone.flowSensor = row.flowSensorId.flatMap { sensorsByID[$0] }
+        }
+
+        var automationRulesByID: [UUID: AutomationRule] = [:]
+        let remoteAutomationRules: [AutomationRuleRow] = try await AuthService.client.from("automation_rules").select().execute().value
+        for row in remoteAutomationRules {
+            let rule = AutomationRule(
+                name: row.name, mode: row.mode, scopeGarden: row.scopeGardenId.flatMap { gardensByID[$0] },
+                scopeZone: row.scopeZoneId.flatMap { zonesByID[$0] }, scopePlant: row.scopePlantId.flatMap { plantsByID[$0] }
+            )
+            rule.id = row.id
+            rule.enabled = row.enabled
+            rule.maxDurationSeconds = row.maxDurationSeconds
+            rule.maxVolumeLiters = row.maxVolumeLiters
+            rule.maxRunsPerDay = row.maxRunsPerDay
+            rule.minimumDelayBetweenRunsMinutes = row.minimumDelayBetweenRunsMinutes
+            rule.createdAt = row.createdAt
+            rule.lastTriggeredAt = row.lastTriggeredAt
+            rule.syncStatus = .synced
+            rule.updatedAt = row.updatedAt
+            context.insert(rule)
+            automationRulesByID[row.id] = rule
+        }
+
+        let remoteAutomationConditions: [AutomationConditionRow] = try await AuthService.client.from("automation_conditions").select().execute().value
+        for row in remoteAutomationConditions {
+            guard let rule = automationRulesByID[row.ruleId] else { continue }
+            let condition = AutomationCondition(type: row.type, order: row.order)
+            condition.id = row.id
+            condition.numericThreshold = row.numericThreshold
+            condition.hoursThreshold = row.hoursThreshold
+            condition.timeRangeStartMinutes = row.timeRangeStartMinutes
+            condition.timeRangeEndMinutes = row.timeRangeEndMinutes
+            condition.daysOfWeek = row.daysOfWeek
+            condition.sensor = row.sensorId.flatMap { sensorsByID[$0] }
+            condition.device = row.deviceId.flatMap { connectedDevicesByID[$0] }
+            condition.rule = rule
+            context.insert(condition)
+        }
+
+        let remoteAutomationActions: [AutomationActionRow] = try await AuthService.client.from("automation_actions").select().execute().value
+        for row in remoteAutomationActions {
+            guard let rule = automationRulesByID[row.ruleId] else { continue }
+            let action = AutomationAction(
+                type: row.type, device: row.deviceId.flatMap { connectedDevicesByID[$0] },
+                durationSeconds: row.durationSeconds, message: row.message, order: row.order
+            )
+            action.id = row.id
+            action.rule = rule
+            context.insert(action)
         }
 
         var greenhousesByID: [UUID: Greenhouse] = [:]
@@ -610,6 +666,8 @@ final class SyncEngine: ObservableObject {
         var updatedAt: Date?
         var valveDeviceId: UUID?
         var pumpDeviceId: UUID?
+        var soilSensorId: UUID?
+        var flowSensorId: UUID?
 
         enum CodingKeys: String, CodingKey {
             case id
@@ -622,6 +680,8 @@ final class SyncEngine: ObservableObject {
             case updatedAt = "updated_at"
             case valveDeviceId = "valve_device_id"
             case pumpDeviceId = "pump_device_id"
+            case soilSensorId = "soil_sensor_id"
+            case flowSensorId = "flow_sensor_id"
         }
     }
 
@@ -1029,6 +1089,84 @@ final class SyncEngine: ObservableObject {
             case capability
             case targetOn = "target_on"
             case order
+        }
+    }
+
+    private struct AutomationRuleRow: Decodable {
+        var id: UUID
+        var name: String
+        var enabled: Bool
+        var mode: AutomationMode
+        var scopeGardenId: UUID?
+        var scopeZoneId: UUID?
+        var scopePlantId: UUID?
+        var maxDurationSeconds: Double?
+        var maxVolumeLiters: Double?
+        var maxRunsPerDay: Int?
+        var minimumDelayBetweenRunsMinutes: Int?
+        var createdAt: Date
+        var updatedAt: Date?
+        var lastTriggeredAt: Date?
+
+        enum CodingKeys: String, CodingKey {
+            case id
+            case name, enabled, mode
+            case scopeGardenId = "scope_garden_id"
+            case scopeZoneId = "scope_zone_id"
+            case scopePlantId = "scope_plant_id"
+            case maxDurationSeconds = "max_duration_seconds"
+            case maxVolumeLiters = "max_volume_liters"
+            case maxRunsPerDay = "max_runs_per_day"
+            case minimumDelayBetweenRunsMinutes = "minimum_delay_between_runs_minutes"
+            case createdAt = "created_at"
+            case updatedAt = "updated_at"
+            case lastTriggeredAt = "last_triggered_at"
+        }
+    }
+
+    private struct AutomationConditionRow: Decodable {
+        var id: UUID
+        var ruleId: UUID
+        var type: AutomationConditionType
+        var order: Int
+        var numericThreshold: Double?
+        var hoursThreshold: Double?
+        var timeRangeStartMinutes: Int?
+        var timeRangeEndMinutes: Int?
+        var daysOfWeek: [Int]
+        var sensorId: UUID?
+        var deviceId: UUID?
+
+        enum CodingKeys: String, CodingKey {
+            case id
+            case ruleId = "rule_id"
+            case type, order
+            case numericThreshold = "numeric_threshold"
+            case hoursThreshold = "hours_threshold"
+            case timeRangeStartMinutes = "time_range_start_minutes"
+            case timeRangeEndMinutes = "time_range_end_minutes"
+            case daysOfWeek = "days_of_week"
+            case sensorId = "sensor_id"
+            case deviceId = "device_id"
+        }
+    }
+
+    private struct AutomationActionRow: Decodable {
+        var id: UUID
+        var ruleId: UUID
+        var type: AutomationActionType
+        var deviceId: UUID?
+        var durationSeconds: Double?
+        var message: String?
+        var order: Int
+
+        enum CodingKeys: String, CodingKey {
+            case id
+            case ruleId = "rule_id"
+            case type
+            case deviceId = "device_id"
+            case durationSeconds = "duration_seconds"
+            case message, order
         }
     }
 

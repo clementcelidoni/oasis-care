@@ -209,7 +209,7 @@ struct HomeView: View {
                             }
 
                             if preferences.showConnectedHome {
-                                ConnectedHomeCard(homes: homeKitService.homes, deviceCount: connectedDevices.count)
+                                ConnectedHomeCard(garden: weatherGarden ?? gardens.first, homes: homeKitService.homes, deviceCount: connectedDevices.count)
                             }
 
                             if preferences.showDeviceHealth && !healthAlerts.isEmpty {
