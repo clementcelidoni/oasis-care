@@ -48,10 +48,7 @@ struct SensorDetailSheet: View {
 
                 if sortedReadings.count > 1 {
                     Section("Historique") {
-                        Chart(sortedReadings.reversed()) { reading in
-                            LineMark(x: .value("Date", reading.timestamp), y: .value(sensor.unit, reading.value))
-                        }
-                        .frame(height: 160)
+                        SensorHistoryChartView(sensor: sensor)
                     }
                 }
 

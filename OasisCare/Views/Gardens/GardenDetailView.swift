@@ -10,6 +10,8 @@ struct GardenDetailView: View {
         case editIrrigationZone(IrrigationZone)
         case addGreenhouse
         case addPond
+        case addSensor
+        case sensorDetail(Sensor)
 
         var id: String {
             switch self {
@@ -20,6 +22,8 @@ struct GardenDetailView: View {
             case .editIrrigationZone(let zone): return "editIrrigationZone-\(zone.id.uuidString)"
             case .addGreenhouse: return "addGreenhouse"
             case .addPond: return "addPond"
+            case .addSensor: return "addSensor"
+            case .sensorDetail(let sensor): return "sensorDetail-\(sensor.id.uuidString)"
             }
         }
     }
@@ -128,6 +132,10 @@ struct GardenDetailView: View {
                 GreenhouseFormView(garden: garden, greenhouse: nil)
             case .addPond:
                 PondFormView(garden: garden, pond: nil)
+            case .addSensor:
+                SensorFormSheet(garden: garden)
+            case .sensorDetail(let sensor):
+                SensorDetailSheet(sensor: sensor)
             }
         }
         .sheet(isPresented: $isBulkWaterSheetPresented) {
@@ -187,6 +195,7 @@ struct GardenDetailView: View {
                 irrigationSection
                 greenhousesSection
                 pondsSection
+                capteursSection
                 plantsSection
             }
             .padding()
@@ -428,6 +437,25 @@ struct GardenDetailView: View {
                 }
             }
         }
+    }
+
+    /// Spec §57's "Capteurs" dashboard section, for readings that belong
+    /// to the garden as a whole or to a zone rather than to one plant or
+    /// a greenhouse/pond (those already show their own sensors in their
+    /// own sections above) — reuses the same SensorSectionView that
+    /// PlantDetailView already uses, so grouping/divergence-detection
+    /// behaves identically everywhere in the app.
+    private var gardenLevelSensors: [Sensor] {
+        var seen = Set<UUID>()
+        return (garden.sensors + garden.zones.flatMap(\.sensors)).filter { seen.insert($0.id).inserted }
+    }
+
+    private var capteursSection: some View {
+        SensorSectionView(
+            sensors: gardenLevelSensors,
+            onAdd: { activeSheet = .addSensor },
+            onSelect: { sensor in activeSheet = .sensorDetail(sensor) }
+        )
     }
 
     private var plantsSection: some View {
