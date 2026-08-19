@@ -63,6 +63,11 @@ final class Garden: Syncable {
     @Relationship(deleteRule: .cascade, inverse: \OasisScene.garden)
     var scenes: [OasisScene] = []
 
+    /// Spec Phase 6B — the plan's outline. To-one, not to-many: a
+    /// garden has at most one boundary shape.
+    @Relationship(deleteRule: .cascade, inverse: \GardenBoundary.garden)
+    var boundary: GardenBoundary?
+
     init(name: String, address: String? = nil, notes: String = "", dateCreated: Date = .now) {
         self.id = UUID()
         self.name = name

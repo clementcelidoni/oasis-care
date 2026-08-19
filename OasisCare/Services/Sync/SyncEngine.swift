@@ -62,6 +62,7 @@ final class SyncEngine: ObservableObject {
             try await pushIrrigationEvents(context: context)
             try await pushDashboardPreferences(workspaceID: workspaceID, context: context)
             try await pushSmartModeSettings(workspaceID: workspaceID, context: context)
+            try await pushGardenBoundaries(workspaceID: workspaceID, context: context)
             try await pushPendingDeletions(context: context)
             try context.save()
             lastSyncError = nil
@@ -391,6 +392,17 @@ final class SyncEngine: ObservableObject {
             pond.syncStatus = .synced
             pond.updatedAt = row.updatedAt
             context.insert(pond)
+        }
+
+        let remoteBoundaries: [GardenBoundaryRow] = try await AuthService.client.from("garden_boundaries").select().execute().value
+        for row in remoteBoundaries {
+            let garden = row.gardenId.flatMap { gardensByID[$0] }
+            let boundary = GardenBoundary(garden: garden, points: row.points)
+            boundary.id = row.id
+            boundary.syncStatus = .synced
+            boundary.updatedAt = row.updatedAt
+            context.insert(boundary)
+            garden?.boundary = boundary
         }
 
         var scenesByID: [UUID: OasisScene] = [:]
@@ -1009,6 +1021,20 @@ final class SyncEngine: ObservableObject {
             case misterDeviceId = "mister_device_id"
             case lightDeviceId = "light_device_id"
             case valveDeviceId = "valve_device_id"
+            case updatedAt = "updated_at"
+        }
+    }
+
+    private struct GardenBoundaryRow: Decodable {
+        var id: UUID
+        var gardenId: UUID?
+        var points: [GardenCoordinate]
+        var updatedAt: Date?
+
+        enum CodingKeys: String, CodingKey {
+            case id
+            case gardenId = "garden_id"
+            case points
             case updatedAt = "updated_at"
         }
     }
@@ -2382,6 +2408,37 @@ final class SyncEngine: ObservableObject {
         }
         try await AuthService.client.from("ponds").upsert(dtos).execute()
         for pond in pending { pond.syncStatus = .synced }
+    }
+
+    // MARK: - Garden boundary (Phase 6B)
+
+    private struct GardenBoundaryDTO: Encodable {
+        var id: UUID
+        var workspaceId: UUID
+        var gardenId: UUID?
+        var points: [GardenCoordinate]
+        var updatedAt: Date
+
+        enum CodingKeys: String, CodingKey {
+            case id
+            case workspaceId = "workspace_id"
+            case gardenId = "garden_id"
+            case points
+            case updatedAt = "updated_at"
+        }
+    }
+
+    private func pushGardenBoundaries(workspaceID: UUID, context: ModelContext) async throws {
+        let pending = try context.fetch(FetchDescriptor<GardenBoundary>()).filter { $0.syncStatus != .synced }
+        guard !pending.isEmpty else { return }
+        let dtos = pending.map { boundary in
+            GardenBoundaryDTO(
+                id: boundary.id, workspaceId: workspaceID, gardenId: boundary.garden?.id,
+                points: boundary.points, updatedAt: boundary.updatedAt ?? .now
+            )
+        }
+        try await AuthService.client.from("garden_boundaries").upsert(dtos).execute()
+        for boundary in pending { boundary.syncStatus = .synced }
     }
 
     // MARK: - Scenes
