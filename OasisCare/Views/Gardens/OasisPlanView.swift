@@ -54,6 +54,7 @@ struct OasisPlanView: View {
         case layers
         case sunSimulation
         case timeline
+        case whereToPlant
 
         var id: String {
             switch self {
@@ -64,6 +65,7 @@ struct OasisPlanView: View {
             case .layers: return "layers"
             case .sunSimulation: return "sunSimulation"
             case .timeline: return "timeline"
+            case .whereToPlant: return "whereToPlant"
             }
         }
     }
@@ -119,6 +121,8 @@ struct OasisPlanView: View {
                 SunSimulationSheet(engine: engine)
             case .timeline:
                 GardenTimelineSheet(engine: engine)
+            case .whereToPlant:
+                WhereToPlantSheet(engine: engine)
             }
         }
     }
@@ -932,6 +936,13 @@ struct OasisPlanView: View {
                     Image(systemName: "clock.arrow.circlepath")
                 }
                 .accessibilityLabel("Voyage dans le temps")
+
+                Button {
+                    activeSheet = .whereToPlant
+                } label: {
+                    Image(systemName: "mappin.and.ellipse")
+                }
+                .accessibilityLabel("Où planter ?")
             }
 
             Button {
