@@ -57,7 +57,7 @@ struct GardenTimelineSheet: View {
                         }
                     }
                     if !proximityWarnings.isEmpty {
-                        Section("Proximité des constructions") {
+                        Section {
                             ForEach(Array(proximityWarnings.enumerated()), id: \.offset) { _, warning in
                                 Label(
                                     "Taille adulte estimée proche d'une construction (dégagement estimé \(String(format: "%.1f", warning.clearanceMeters)) m).",
@@ -66,6 +66,8 @@ struct GardenTimelineSheet: View {
                                 .font(.subheadline)
                                 .foregroundStyle(.orange)
                             }
+                        } header: {
+                            Text("Proximité des constructions")
                         } footer: {
                             Text("Signal indicatif seulement — pas une recommandation structurelle (risque pour les fondations, etc.).")
                         }
