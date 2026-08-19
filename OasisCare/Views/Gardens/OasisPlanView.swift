@@ -56,6 +56,7 @@ struct OasisPlanView: View {
         case timeline
         case whereToPlant
         case route
+        case augmentedReality
 
         var id: String {
             switch self {
@@ -68,6 +69,7 @@ struct OasisPlanView: View {
             case .timeline: return "timeline"
             case .whereToPlant: return "whereToPlant"
             case .route: return "route"
+            case .augmentedReality: return "augmentedReality"
             }
         }
     }
@@ -127,6 +129,8 @@ struct OasisPlanView: View {
                 WhereToPlantSheet(engine: engine)
             case .route:
                 GardenRouteSheet(engine: engine)
+            case .augmentedReality:
+                GardenARSheet(engine: engine)
             }
         }
     }
@@ -979,6 +983,15 @@ struct OasisPlanView: View {
                     Image(systemName: "figure.walk.circle.fill")
                 }
                 .accessibilityLabel("Parcours d'inspection")
+
+                if GardenARService.isSupported {
+                    Button {
+                        activeSheet = .augmentedReality
+                    } label: {
+                        Image(systemName: "arkit")
+                    }
+                    .accessibilityLabel("Voir en réalité augmentée")
+                }
             }
 
             Button {

@@ -1,3 +1,4 @@
+import CoreLocation
 import Foundation
 import SwiftData
 import SwiftUI
@@ -623,5 +624,55 @@ final class GardenMapEngine: ObservableObject {
         plants(inArea: area).reduce(0) { total, plant in
             total + plant.careSchedules.filter(\.isDue).count
         }
+    }
+
+    // MARK: - Réalité augmentée (Phase 6J)
+
+    /// Spec Phase 6J — real-world targets for the AR HUD: every placed
+    /// object converted from its local plan position to a real GPS
+    /// coordinate via the garden's own GardenCoordinateSystem (the same
+    /// conversion used by the route planner and "use my location").
+    /// Objects placed before the garden had a latitude/longitude have
+    /// no coordinate system to convert through and are simply skipped —
+    /// there is no origin to measure them from, not a bug to work
+    /// around.
+    func arTargets() -> [ARTarget] {
+        guard let coordinateSystem else { return [] }
+        return garden.mapObjects.compactMap { object -> ARTarget? in
+            let coordinate = coordinateSystem.geographic(from: object.position)
+
+            if let plant = resolvedLinkedPlant(for: object) {
+                var lines = ["Santé : \(plant.healthStatus.displayName)"]
+                if let soilMoisture = latestSoilMoisture(for: plant) {
+                    lines.insert("Humidité : \(Int(soilMoisture)) %", at: 0)
+                }
+                let inspectionDates = plant.treeInspections.map(\.date) + plant.checkupEntries.map(\.date)
+                if let lastInspection = inspectionDates.max() {
+                    lines.append("Dernière inspection : \(lastInspection.formatted(.dateTime.day().month(.wide)))")
+                }
+                return ARTarget(id: object.id, coordinate: coordinate, label: plant.customName, infoLines: lines, systemImage: object.objectType.icon)
+            }
+
+            if let sensor = resolvedLinkedSensor(for: object) {
+                var lines = [sensor.type.displayName]
+                if let latest = sensor.readings.max(by: { $0.timestamp < $1.timestamp }) {
+                    lines.append("\(String(format: "%.1f", latest.value)) \(latest.unit)")
+                }
+                return ARTarget(id: object.id, coordinate: coordinate, label: sensor.name, infoLines: lines, systemImage: object.objectType.icon)
+            }
+
+            guard object.objectType == .sensor else { return nil }
+            return ARTarget(id: object.id, coordinate: coordinate, label: object.label ?? object.objectType.label, infoLines: [], systemImage: object.objectType.icon)
+        }
+    }
+
+    /// Only a sensor directly linked to this exact plant counts — a
+    /// zone- or garden-scoped average shown as if it were this plant's
+    /// own reading would mislabel an estimate as a measurement, exactly
+    /// what this app's data-provenance rules exist to prevent.
+    private func latestSoilMoisture(for plant: Plant) -> Double? {
+        garden.sensors
+            .first { $0.type == .soilMoisture && $0.plant?.id == plant.id }?
+            .readings.max(by: { $0.timestamp < $1.timestamp })?.value
     }
 }
