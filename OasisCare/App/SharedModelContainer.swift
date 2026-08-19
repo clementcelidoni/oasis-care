@@ -41,7 +41,12 @@ enum SharedModelContainer {
             Pond.self,
             SmartModeSettings.self,
             OasisScene.self,
-            OasisSceneAction.self
+            OasisSceneAction.self,
+            GardenBoundary.self,
+            GardenMapObject.self,
+            GardenArea.self,
+            IrrigationPipe.self,
+            GardenPlanImage.self
         ])
         let configuration = ModelConfiguration(schema: schema)
 
