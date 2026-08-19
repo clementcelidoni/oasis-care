@@ -53,6 +53,7 @@ struct OasisPlanView: View {
         case pipes
         case layers
         case sunSimulation
+        case timeline
 
         var id: String {
             switch self {
@@ -62,6 +63,7 @@ struct OasisPlanView: View {
             case .pipes: return "pipes"
             case .layers: return "layers"
             case .sunSimulation: return "sunSimulation"
+            case .timeline: return "timeline"
             }
         }
     }
@@ -115,6 +117,8 @@ struct OasisPlanView: View {
                 GardenLayersSheet(engine: engine)
             case .sunSimulation:
                 SunSimulationSheet(engine: engine)
+            case .timeline:
+                GardenTimelineSheet(engine: engine)
             }
         }
     }
@@ -649,7 +653,14 @@ struct OasisPlanView: View {
 
     private func objectsOverlay(geometry: GeometryProxy) -> some View {
         let camera = liveCamera
-        let objects = engine.garden.mapObjects.filter { engine.isObjectVisible($0) }.sorted { $0.zIndex < $1.zIndex }
+        // Spec Phase 6G — "afficher l'état du jardin... végétaux
+        // présents": a plant not yet added as of the selected past date
+        // (timelineCanopyDiameterMeters returning nil) is hidden, not
+        // just drawn small.
+        let objects = engine.garden.mapObjects
+            .filter { engine.isObjectVisible($0) }
+            .filter { !$0.objectType.isVegetation || engine.timelineCanopyDiameterMeters(for: $0) != nil }
+            .sorted { $0.zIndex < $1.zIndex }
         let showCanopies = engine.visibleLayers.contains(.canopies)
         let healthColorProvider: (GardenMapObject) -> Color? = { engine.resolvedLinkedPlant(for: $0)?.healthStatus.color }
         let healthColor = engine.visibleLayers.contains(.health) ? healthColorProvider : nil
@@ -662,7 +673,8 @@ struct OasisPlanView: View {
 
             GardenObjectMarkerView(
                 object: object, camera: camera, isSelected: engine.selectedObjectIDs.contains(object.id),
-                showCanopy: showCanopies, healthTint: healthColor?(object)
+                showCanopy: showCanopies, healthTint: healthColor?(object),
+                canopyDiameterOverrideMeters: engine.timelineCanopyDiameterMeters(for: object)
             )
                 .position(display)
                 .simultaneousGesture(
@@ -913,6 +925,13 @@ struct OasisPlanView: View {
                     Image(systemName: "sun.max.fill")
                 }
                 .accessibilityLabel("Soleil et ombres")
+
+                Button {
+                    activeSheet = .timeline
+                } label: {
+                    Image(systemName: "clock.arrow.circlepath")
+                }
+                .accessibilityLabel("Voyage dans le temps")
             }
 
             Button {
@@ -972,6 +991,13 @@ private struct GardenObjectMarkerView: View {
     var isSelected: Bool
     var showCanopy: Bool = true
     var healthTint: Color?
+    /// Spec Phase 6G — the timeline's diameter for this object (past
+    /// recorded size, future projection, or today's real value), when
+    /// the caller already resolved one via
+    /// GardenMapEngine.timelineCanopyDiameterMeters. Falls back to the
+    /// object's own current canopy when nil (e.g. this marker isn't
+    /// vegetation, or the caller didn't compute one).
+    var canopyDiameterOverrideMeters: Double?
 
     var body: some View {
         Group {
@@ -990,7 +1016,7 @@ private struct GardenObjectMarkerView: View {
     }
 
     private var vegetationView: some View {
-        let diameterMeters = object.canopyDiameterMeters ?? object.widthMeters
+        let diameterMeters = canopyDiameterOverrideMeters ?? object.canopyDiameterMeters ?? object.widthMeters
         let diameterPoints = max(camera.points(forMeters: diameterMeters), 14)
         return ZStack {
             Circle()

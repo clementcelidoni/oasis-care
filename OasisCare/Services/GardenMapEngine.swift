@@ -60,6 +60,11 @@ final class GardenMapEngine: ObservableObject {
     @Published var sunSimulationHour: Double = Double(Calendar.current.component(.hour, from: .now))
     @Published var sunSimulationDate: Date = .now
 
+    /// Spec Phase 6G — "GardenTimeline," years from today. 0 = present
+    /// (the plan looks exactly as it does everywhere else in the app);
+    /// negative = mode passé, positive = mode futur.
+    @Published var timelineYearOffset: Double = 0
+
     @Published var snappingEnabled = true
     /// Index of the boundary/area point currently under a drag, so the
     /// view can show a live distance label — nil the rest of the time.
@@ -429,6 +434,11 @@ final class GardenMapEngine: ObservableObject {
         markUpdated(object, context: context)
     }
 
+    func setYearsToMaturity(_ object: GardenMapObject, years: Double?, context: ModelContext) {
+        object.estimatedYearsToMaturity = years
+        markUpdated(object, context: context)
+    }
+
     /// Spec Phase 6D — SprinklerMapObject's radiusMeters/startAngle/
     /// endAngle/flowRate. Angles in degrees, startAngle can be greater
     /// than endAngle (the sector still sweeps the shorter way in
@@ -489,5 +499,63 @@ final class GardenMapEngine: ObservableObject {
     func resolvedLinkedSensor(for object: GardenMapObject) -> Sensor? {
         guard object.linkedEntityKind == .sensor, let id = object.linkedEntityId else { return nil }
         return garden.sensors.first { $0.id == id }
+    }
+
+    // MARK: - Timeline (Phase 6G)
+
+    /// Spec Phase 6G — the canopy diameter to actually draw for the
+    /// current timelineYearOffset: recorded history in the past
+    /// (Mesurée, from the linked Plant's own PlantMeasurement log, when
+    /// one exists close enough to the target date), the growth
+    /// projection in the future (Estimée), today's real value at 0.
+    /// nil means "this object shouldn't be shown at all" — a plant that
+    /// wasn't added yet as of the selected past date.
+    func timelineCanopyDiameterMeters(for object: GardenMapObject) -> Double? {
+        guard object.objectType.isVegetation else { return object.canopyDiameterMeters }
+        let currentMeters = object.canopyDiameterMeters ?? object.widthMeters
+
+        if timelineYearOffset < 0 {
+            guard let plant = resolvedLinkedPlant(for: object) else { return currentMeters }
+            let targetDate = Calendar.current.date(byAdding: .day, value: Int(timelineYearOffset * 365.25), to: .now) ?? .now
+            guard plant.dateAdded <= targetDate else { return nil }
+            let priorMeasurements = plant.measurements.filter { $0.date <= targetDate }.sorted { $0.date > $1.date }
+            return priorMeasurements.first?.canopyDiameter ?? currentMeters
+        } else if timelineYearOffset > 0 {
+            guard let adultMeters = object.estimatedAdultCanopyDiameterMeters, adultMeters > currentMeters else { return currentMeters }
+            let yearsToMaturity = object.estimatedYearsToMaturity ?? object.objectType.defaultYearsToMaturity ?? 15
+            return GrowthSimulationService.projectedCanopyDiameterMeters(
+                currentMeters: currentMeters, adultMeters: adultMeters, yearsFromNow: timelineYearOffset, yearsToMaturity: yearsToMaturity
+            )
+        }
+        return currentMeters
+    }
+
+    /// Spec Phase 6G — "détecter : ces deux végétaux pourraient se
+    /// chevaucher fortement à maturité" + "taille adulte estimée proche
+    /// du mur." Only meaningful in mode futur; empty in mode passé/
+    /// present, since there's nothing projected to warn about there.
+    func timelineCollisionWarnings() -> [GrowthSimulationService.CollisionWarning] {
+        guard timelineYearOffset > 0 else { return [] }
+        let projected = garden.mapObjects
+            .filter { $0.objectType.isVegetation }
+            .compactMap { object -> (id: UUID, position: GardenCoordinate, projectedDiameterMeters: Double)? in
+                guard let diameter = timelineCanopyDiameterMeters(for: object) else { return nil }
+                return (object.id, object.position, diameter)
+            }
+        return GrowthSimulationService.detectCollisions(objects: projected)
+    }
+
+    func timelineProximityWarnings() -> [GrowthSimulationService.ProximityWarning] {
+        guard timelineYearOffset > 0 else { return [] }
+        let vegetation = garden.mapObjects
+            .filter { $0.objectType.isVegetation }
+            .compactMap { object -> (id: UUID, position: GardenCoordinate, projectedDiameterMeters: Double)? in
+                guard let diameter = timelineCanopyDiameterMeters(for: object) else { return nil }
+                return (object.id, object.position, diameter)
+            }
+        let structures = garden.mapObjects
+            .filter { $0.objectType == .house || $0.objectType == .wall || $0.objectType == .greenhouse }
+            .map { (id: $0.id, position: $0.position, widthMeters: $0.widthMeters) }
+        return GrowthSimulationService.detectStructureProximity(vegetation: vegetation, structures: structures)
     }
 }

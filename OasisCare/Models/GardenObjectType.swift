@@ -140,4 +140,19 @@ enum GardenObjectType: String, Codable, CaseIterable, Identifiable {
         default: return nil
         }
     }
+
+    /// Spec Phase 6G — GrowthSimulationService's rate assumption
+    /// ("croissance indicative"), Saisie utilisateur with a starting
+    /// default per type. Trees are slower than shrubs/palms in general
+    /// — a coarse, adjustable starting point, not a species-specific
+    /// figure this app has no database for.
+    var defaultYearsToMaturity: Double? {
+        switch self {
+        case .tree: return 20
+        case .palm: return 15
+        case .shrub: return 6
+        case .plant: return 3
+        default: return nil
+        }
+    }
 }

@@ -21,6 +21,7 @@ struct GardenObjectInspectorSheet: View {
     @State private var heightMeters: Double
     @State private var canopyMeters: Double
     @State private var adultCanopyMeters: Double
+    @State private var yearsToMaturity: Double
     @State private var sprinklerRadiusMeters: Double
     @State private var sprinklerStartAngleDegrees: Double
     @State private var sprinklerEndAngleDegrees: Double
@@ -56,6 +57,7 @@ struct GardenObjectInspectorSheet: View {
         _heightMeters = State(initialValue: object.heightMeters)
         _canopyMeters = State(initialValue: object.canopyDiameterMeters ?? object.widthMeters)
         _adultCanopyMeters = State(initialValue: object.estimatedAdultCanopyDiameterMeters ?? object.widthMeters)
+        _yearsToMaturity = State(initialValue: object.estimatedYearsToMaturity ?? object.objectType.defaultYearsToMaturity ?? 15)
         _sprinklerRadiusMeters = State(initialValue: object.sprinklerRadiusMeters ?? 4)
         _sprinklerStartAngleDegrees = State(initialValue: object.sprinklerStartAngleDegrees ?? 0)
         _sprinklerEndAngleDegrees = State(initialValue: object.sprinklerEndAngleDegrees ?? 360)
@@ -123,10 +125,17 @@ struct GardenObjectInspectorSheet: View {
                                 Text(String(format: "%.1f m", adultCanopyMeters)).foregroundStyle(.secondary)
                             }
                         }
+                        Stepper(value: $yearsToMaturity, in: 1...80, step: 1) {
+                            HStack {
+                                Text("Années jusqu'à maturité")
+                                Spacer()
+                                Text("\(Int(yearsToMaturity)) ans").foregroundStyle(.secondary)
+                            }
+                        }
                     } header: {
                         Text("Arbre à l'échelle")
                     } footer: {
-                        Text("Le plan affiche la taille actuelle. La taille adulte estimée servira au mode simulation (Phase 6G).")
+                        Text("Le plan affiche la taille actuelle. Houppier adulte et années jusqu'à maturité alimentent la simulation de croissance (Voyage dans le temps) — une estimation, pas une mesure.")
                     }
                 }
 
@@ -268,6 +277,7 @@ struct GardenObjectInspectorSheet: View {
         engine.resizeObject(object, widthMeters: widthMeters, heightMeters: heightMeters, context: modelContext)
         if object.objectType.isVegetation {
             engine.setCanopy(object, currentMeters: canopyMeters, adultMeters: adultCanopyMeters, context: modelContext)
+            engine.setYearsToMaturity(object, years: yearsToMaturity, context: modelContext)
         }
         if object.objectType == .sprinkler {
             engine.setSprinklerParameters(

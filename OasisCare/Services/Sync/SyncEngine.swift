@@ -430,6 +430,7 @@ final class SyncEngine: ObservableObject {
             object.sprinklerEndAngleDegrees = row.sprinklerEndAngleDegrees
             object.sprinklerFlowRateLitersPerHour = row.sprinklerFlowRateLitersPerHour
             object.structureHeightMeters = row.structureHeightMeters
+            object.estimatedYearsToMaturity = row.estimatedYearsToMaturity
             object.syncStatus = .synced
             object.updatedAt = row.updatedAt
             context.insert(object)
@@ -1115,6 +1116,7 @@ final class SyncEngine: ObservableObject {
         var sprinklerEndAngleDegrees: Double?
         var sprinklerFlowRateLitersPerHour: Double?
         var structureHeightMeters: Double?
+        var estimatedYearsToMaturity: Double?
         var updatedAt: Date?
 
         enum CodingKeys: String, CodingKey {
@@ -1137,6 +1139,7 @@ final class SyncEngine: ObservableObject {
             case sprinklerEndAngleDegrees = "sprinkler_end_angle_degrees"
             case sprinklerFlowRateLitersPerHour = "sprinkler_flow_rate_liters_per_hour"
             case structureHeightMeters = "structure_height_meters"
+            case estimatedYearsToMaturity = "estimated_years_to_maturity"
             case updatedAt = "updated_at"
         }
     }
@@ -2616,6 +2619,7 @@ final class SyncEngine: ObservableObject {
         var sprinklerEndAngleDegrees: Double?
         var sprinklerFlowRateLitersPerHour: Double?
         var structureHeightMeters: Double?
+        var estimatedYearsToMaturity: Double?
         var updatedAt: Date
 
         enum CodingKeys: String, CodingKey {
@@ -2639,6 +2643,7 @@ final class SyncEngine: ObservableObject {
             case sprinklerEndAngleDegrees = "sprinkler_end_angle_degrees"
             case sprinklerFlowRateLitersPerHour = "sprinkler_flow_rate_liters_per_hour"
             case structureHeightMeters = "structure_height_meters"
+            case estimatedYearsToMaturity = "estimated_years_to_maturity"
             case updatedAt = "updated_at"
         }
     }
@@ -2656,7 +2661,8 @@ final class SyncEngine: ObservableObject {
                 estimatedAdultCanopyDiameterMeters: object.estimatedAdultCanopyDiameterMeters,
                 sprinklerRadiusMeters: object.sprinklerRadiusMeters, sprinklerStartAngleDegrees: object.sprinklerStartAngleDegrees,
                 sprinklerEndAngleDegrees: object.sprinklerEndAngleDegrees, sprinklerFlowRateLitersPerHour: object.sprinklerFlowRateLitersPerHour,
-                structureHeightMeters: object.structureHeightMeters, updatedAt: object.updatedAt ?? .now
+                structureHeightMeters: object.structureHeightMeters, estimatedYearsToMaturity: object.estimatedYearsToMaturity,
+                updatedAt: object.updatedAt ?? .now
             )
         }
         try await AuthService.client.from("garden_map_objects").upsert(dtos).execute()

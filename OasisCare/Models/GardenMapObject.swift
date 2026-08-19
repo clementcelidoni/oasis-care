@@ -42,6 +42,10 @@ final class GardenMapObject: Syncable {
     /// the current one — never a measured value Oasis invented itself.
     var canopyDiameterMeters: Double?
     var estimatedAdultCanopyDiameterMeters: Double?
+    /// Spec Phase 6G — GrowthSimulationService's rate assumption for
+    /// this specific plant, Saisie utilisateur (see
+    /// GardenObjectType.defaultYearsToMaturity for the starting default).
+    var estimatedYearsToMaturity: Double?
 
     /// Spec Phase 6D — SprinklerMapObject's parameters, folded into the
     /// same shared model rather than a second one (same reasoning as
@@ -78,6 +82,7 @@ final class GardenMapObject: Syncable {
             self.sprinklerEndAngleDegrees = 360
         }
         self.structureHeightMeters = objectType.defaultStructureHeightMeters
+        self.estimatedYearsToMaturity = objectType.defaultYearsToMaturity
         self.createdAt = .now
         self.updatedAt = .now
         self.syncStatus = .pendingCreate
