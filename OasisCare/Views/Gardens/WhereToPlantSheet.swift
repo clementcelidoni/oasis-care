@@ -33,13 +33,15 @@ struct WhereToPlantSheet: View {
                 }
 
                 if matchedProfile == nil {
-                    Section("Préférences (si connues)") {
+                    Section {
                         Picker("Exposition", selection: $manualSunPreference) {
                             Text("Non renseigné").tag(SiteSuitabilityService.SunPreference?.none)
                             Text("Plein soleil").tag(Optional(SiteSuitabilityService.SunPreference.fullSun))
                             Text("Mi-ombre").tag(Optional(SiteSuitabilityService.SunPreference.partialShade))
                             Text("Ombre").tag(Optional(SiteSuitabilityService.SunPreference.shade))
                         }
+                    } header: {
+                        Text("Préférences (si connues)")
                     } footer: {
                         Text("Sans profil d'espèce, l'exposition doit être renseignée manuellement pour être prise en compte.")
                     }
