@@ -27,6 +27,10 @@ struct IrrigationPipesSheet: View {
                         description: Text("Ajoutez une alimentation principale, une ligne secondaire ou une ligne goutte-à-goutte.")
                     )
                 } else {
+                    if pipes.count > 1 {
+                        LabeledContent("Longueur totale du réseau", value: String(format: "%.1f m", GardenMeasurementTool.totalIrrigationLengthMeters(pipes)))
+                            .font(.subheadline)
+                    }
                     ForEach(pipes) { pipe in
                         Button {
                             engine.editingPipeID = pipe.id

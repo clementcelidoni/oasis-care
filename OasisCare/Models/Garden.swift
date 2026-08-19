@@ -79,6 +79,13 @@ final class Garden: Syncable {
     @Relationship(deleteRule: .cascade, inverse: \IrrigationPipe.garden)
     var irrigationPipes: [IrrigationPipe] = []
 
+    /// Spec Phase 6K — the imported plan image the user traces over.
+    /// To-one like `boundary` above: at most one imported plan per
+    /// garden, and importing a new one replaces it (see
+    /// GardenMapEngine.importPlanImage).
+    @Relationship(deleteRule: .cascade, inverse: \GardenPlanImage.garden)
+    var planImage: GardenPlanImage?
+
     init(name: String, address: String? = nil, notes: String = "", dateCreated: Date = .now) {
         self.id = UUID()
         self.name = name

@@ -9,11 +9,41 @@ import SwiftUI
 /// is honest; inventing a spatial mapping between them wouldn't be.
 struct GardenLayersSheet: View {
     @ObservedObject var engine: GardenMapEngine
+    @Environment(\.modelContext) private var modelContext
     @Environment(\.dismiss) private var dismiss
+
+    @State private var isShowingPlanImageSheet = false
 
     var body: some View {
         NavigationStack {
             Form {
+                Section("Plan importé") {
+                    if let planImage = engine.garden.planImage {
+                        Toggle("Afficher le plan importé", isOn: Binding(
+                            get: { planImage.isVisible },
+                            set: { planImage.isVisible = $0 }
+                        ))
+                        if planImage.isCalibrated {
+                            HStack {
+                                Image(systemName: "circle.lefthalf.filled")
+                                    .foregroundStyle(.secondary)
+                                Slider(value: Binding(
+                                    get: { planImage.opacity },
+                                    set: { engine.setPlanImageOpacity($0) }
+                                ), in: 0.1...1)
+                            }
+                            Button("Réaligner") { engine.isAligningPlanImage = true; dismiss() }
+                        } else {
+                            Button("Terminer la calibration") { isShowingPlanImageSheet = true }
+                        }
+                        Button("Supprimer le plan importé", role: .destructive) {
+                            engine.removePlanImage(context: modelContext)
+                        }
+                    } else {
+                        Button("Importer un plan") { isShowingPlanImageSheet = true }
+                    }
+                }
+
                 Section("Profils") {
                     ForEach(GardenMapLayerProfile.allCases) { profile in
                         Button(profile.label) {
@@ -65,6 +95,9 @@ struct GardenLayersSheet: View {
                 ToolbarItem(placement: .cancellationAction) {
                     Button("Fermer") { dismiss() }
                 }
+            }
+            .sheet(isPresented: $isShowingPlanImageSheet) {
+                GardenPlanImageSheet(engine: engine)
             }
         }
     }

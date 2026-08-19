@@ -92,7 +92,7 @@ struct OasisPlanView: View {
                 .simultaneousGesture(addPointGesture(geometry: geometry))
 
                 objectsOverlay(geometry: geometry)
-                    .allowsHitTesting(!isEditingPolygon)
+                    .allowsHitTesting(!isEditingPolygon && !engine.isMeasuring)
 
                 if isEditingPolygon {
                     handlesOverlay(geometry: geometry)
@@ -105,6 +105,10 @@ struct OasisPlanView: View {
             .overlay(alignment: .top) {
                 if let placingType = engine.placingObjectType {
                     placingBanner(type: placingType)
+                } else if engine.isMeasuring {
+                    measurementBanner
+                } else if engine.isAligningPlanImage {
+                    planImageAlignmentBanner
                 }
             }
         }
@@ -199,6 +203,8 @@ struct OasisPlanView: View {
                 } else if let pipeID = engine.editingPipeID {
                     selectedHandleIndex = nil
                     engine.addPipePoint(point, pipeID: pipeID, context: modelContext)
+                } else if engine.isMeasuring {
+                    engine.addMeasurementPoint(point)
                 } else if let type = engine.placingObjectType {
                     let object = engine.addObject(type: type, at: point, context: modelContext)
                     engine.placingObjectType = nil
@@ -213,6 +219,7 @@ struct OasisPlanView: View {
     private func draw(in context: GraphicsContext, size: CGSize) {
         let camera = liveCamera
         drawGrid(in: context, size: size, camera: camera)
+        drawPlanImage(in: context, size: size, camera: camera)
         drawAreas(in: context, size: size, camera: camera)
         if engine.visibleLayers.contains(.soilMoisture) {
             drawSensorHeatmap(in: context, size: size, camera: camera, sensorType: .soilMoisture, layer: .soilMoisture)
@@ -230,8 +237,130 @@ struct OasisPlanView: View {
         if engine.visibleLayers.contains(.interventions) {
             drawTaskBadges(in: context, size: size, camera: camera)
         }
+        if engine.isMeasuring {
+            drawMeasurementPoints(in: context, size: size, camera: camera)
+        }
         drawOrigin(in: context, size: size, camera: camera)
         drawScaleBar(in: context, size: size, camera: camera)
+    }
+
+    /// Spec Phase 6K — the points the user has tapped while measuring,
+    /// joined by a dashed open path plus a lighter dashed closing
+    /// segment once there are enough points to read as a polygon (the
+    /// same threshold GardenMeasurementTool uses to also start showing
+    /// a perimeter/area, in measurementBanner below).
+    private func drawMeasurementPoints(in context: GraphicsContext, size: CGSize, camera: GardenMapCamera) {
+        let points = engine.measurementPoints
+        guard !points.isEmpty else { return }
+        let screenPoints = points.map { camera.screenPoint(for: $0, viewSize: size) }
+
+        var path = Path()
+        path.move(to: screenPoints[0])
+        for point in screenPoints.dropFirst() {
+            path.addLine(to: point)
+        }
+        context.stroke(path, with: .color(.yellow), style: StrokeStyle(lineWidth: 2, lineCap: .round, dash: [6, 3]))
+
+        if screenPoints.count >= 3, let first = screenPoints.first, let last = screenPoints.last {
+            var closingPath = Path()
+            closingPath.move(to: last)
+            closingPath.addLine(to: first)
+            context.stroke(closingPath, with: .color(.yellow.opacity(0.5)), style: StrokeStyle(lineWidth: 1.5, lineCap: .round, dash: [3, 3]))
+        }
+
+        for point in screenPoints {
+            let rect = CGRect(x: point.x - 4, y: point.y - 4, width: 8, height: 8)
+            context.fill(Circle().path(in: rect), with: .color(.yellow))
+            context.stroke(Circle().path(in: rect), with: .color(.black), lineWidth: 1)
+        }
+    }
+
+    private var measurementBanner: some View {
+        VStack(alignment: .leading, spacing: 4) {
+            HStack {
+                Image(systemName: "ruler")
+                Text(engine.measurementPoints.isEmpty ? "Touchez le plan pour commencer une mesure." : "Touchez pour ajouter un point.")
+                    .font(.subheadline.weight(.medium))
+                Spacer()
+            }
+            if engine.measurementPoints.count >= 2 {
+                Text("Distance : \(String(format: "%.2f m", GardenMeasurementTool.pathLengthMeters(engine.measurementPoints, closed: false)))")
+                    .font(.subheadline)
+                if engine.measurementPoints.count >= 3 {
+                    Text("Périmètre (fermé) : \(String(format: "%.2f m", GardenMeasurementTool.pathLengthMeters(engine.measurementPoints, closed: true)))")
+                        .font(.subheadline)
+                    Text("Surface : \(String(format: "%.2f m²", GardenMeasurementTool.areaSquareMeters(engine.measurementPoints)))")
+                        .font(.subheadline)
+                }
+            }
+        }
+        .padding(10)
+        .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 12, style: .continuous))
+        .padding(.horizontal, 12)
+        .padding(.top, 8)
+    }
+
+    /// Spec Phase 6K — "ALIGNEMENT: rotation / déplacement / opacité."
+    /// Nudge buttons instead of a drag gesture on the canvas — see
+    /// GardenMapEngine.movePlanImage's doc comment for why — with a
+    /// live view of the actual plan behind this banner the whole time,
+    /// which a covering sheet couldn't offer.
+    private var planImageAlignmentBanner: some View {
+        VStack(spacing: 10) {
+            Text("Alignez le plan importé sur le jardin réel.")
+                .font(.subheadline.weight(.medium))
+
+            HStack(spacing: 20) {
+                VStack(spacing: 4) {
+                    Button { engine.movePlanImage(by: GardenCoordinate(xMeters: 0, yMeters: 0.5)) } label: {
+                        Image(systemName: "arrow.up.circle.fill")
+                    }
+                    HStack(spacing: 24) {
+                        Button { engine.movePlanImage(by: GardenCoordinate(xMeters: -0.5, yMeters: 0)) } label: {
+                            Image(systemName: "arrow.left.circle.fill")
+                        }
+                        Button { engine.movePlanImage(by: GardenCoordinate(xMeters: 0.5, yMeters: 0)) } label: {
+                            Image(systemName: "arrow.right.circle.fill")
+                        }
+                    }
+                    Button { engine.movePlanImage(by: GardenCoordinate(xMeters: 0, yMeters: -0.5)) } label: {
+                        Image(systemName: "arrow.down.circle.fill")
+                    }
+                }
+                .font(.title2)
+
+                VStack(spacing: 8) {
+                    HStack(spacing: 20) {
+                        Button { engine.rotatePlanImage(by: -.pi / 36) } label: {
+                            Image(systemName: "rotate.left.circle.fill")
+                        }
+                        Button { engine.rotatePlanImage(by: .pi / 36) } label: {
+                            Image(systemName: "rotate.right.circle.fill")
+                        }
+                    }
+                    .font(.title2)
+
+                    HStack {
+                        Image(systemName: "circle.lefthalf.filled")
+                            .foregroundStyle(.secondary)
+                        Slider(value: Binding(
+                            get: { engine.garden.planImage?.opacity ?? 0.6 },
+                            set: { engine.setPlanImageOpacity($0) }
+                        ), in: 0.1...1)
+                        .frame(width: 120)
+                    }
+                }
+            }
+
+            Button("Terminer l'alignement") {
+                engine.isAligningPlanImage = false
+            }
+            .buttonStyle(.borderedProminent)
+        }
+        .padding(10)
+        .background(.regularMaterial, in: RoundedRectangle(cornerRadius: 12, style: .continuous))
+        .padding(.horizontal, 12)
+        .padding(.top, 8)
     }
 
     /// Spec Phase 6I — "à faire" layer: a plain count badge centered on
@@ -267,6 +396,35 @@ struct OasisPlanView: View {
     /// GardenCoordinate's math convention (0°=E counter-clockwise) here,
     /// the same conversion pattern used for every other angle in this
     /// file, before the direction is used.
+    /// Spec Phase 6K — the imported/calibrated/aligned background plan
+    /// the user traces over. Rotation combines the image's own
+    /// alignment rotation with the camera's current rotation so the
+    /// image stays world-locked (rotates with the garden, not with the
+    /// screen) — camera.screenPoint already applies camera rotation to
+    /// the image's *position*; this applies the same rotation to its
+    /// own orientation using the identical clockwise-positive
+    /// convention that function's own doc comment establishes.
+    private func drawPlanImage(in context: GraphicsContext, size: CGSize, camera: GardenMapCamera) {
+        guard let planImage = engine.garden.planImage, planImage.isVisible,
+              let metersPerPixel = planImage.metersPerPixel,
+              let uiImage = UIImage(data: planImage.imageData) else { return }
+
+        let widthMeters = uiImage.size.width * metersPerPixel
+        let heightMeters = uiImage.size.height * metersPerPixel
+        guard widthMeters > 0, heightMeters > 0 else { return }
+
+        let center = camera.screenPoint(for: planImage.position, viewSize: size)
+        let widthPoints = camera.points(forMeters: widthMeters)
+        let heightPoints = camera.points(forMeters: heightMeters)
+
+        var imageContext = context
+        imageContext.opacity = planImage.opacity
+        imageContext.translateBy(x: center.x, y: center.y)
+        imageContext.rotate(by: .radians(camera.rotationRadians + planImage.rotationRadians))
+        let rect = CGRect(x: -widthPoints / 2, y: -heightPoints / 2, width: widthPoints, height: heightPoints)
+        imageContext.draw(Image(uiImage: uiImage), in: rect)
+    }
+
     private func drawShadows(in context: GraphicsContext, size: CGSize, camera: GardenMapCamera) {
         guard engine.isShowingShadows, let latitude = engine.garden.latitude else { return }
         let sunPosition = SunExposureService.sunPosition(latitude: latitude, date: engine.sunSimulationDate, hour: engine.sunSimulationHour)
@@ -913,6 +1071,21 @@ struct OasisPlanView: View {
                 .accessibilityLabel("Terminer le tuyau")
 
                 snapUndoRedoControls
+            } else if engine.isMeasuring {
+                Button {
+                    engine.undoLastMeasurementPoint()
+                } label: {
+                    Image(systemName: "arrow.uturn.backward.circle.fill")
+                }
+                .accessibilityLabel("Annuler le dernier point")
+                .disabled(engine.measurementPoints.isEmpty)
+
+                Button {
+                    engine.clearMeasurement()
+                } label: {
+                    Image(systemName: "checkmark.circle.fill")
+                }
+                .accessibilityLabel("Terminer la mesure")
             } else {
                 Button {
                     withAnimation(.snappy) { engine.isEditingBoundary = true }
@@ -983,6 +1156,13 @@ struct OasisPlanView: View {
                     Image(systemName: "figure.walk.circle.fill")
                 }
                 .accessibilityLabel("Parcours d'inspection")
+
+                Button {
+                    engine.isMeasuring = true
+                } label: {
+                    Image(systemName: "ruler.fill")
+                }
+                .accessibilityLabel("Mesurer")
 
                 if GardenARService.isSupported {
                     Button {

@@ -74,6 +74,15 @@ final class GardenMapEngine: ObservableObject {
     /// the user has explicitly picked a zone to bulk-act on.
     @Published var bulkActionAreaID: UUID?
 
+    /// Spec Phase 6K — "GardenMeasurementTool... choisir deux points /
+    /// sélectionner un polygone." A dedicated, throwaway point list
+    /// rather than another PointsTarget case: boundary/area/pipe points
+    /// are real, persisted, snap-and-undo-aware shapes, while a
+    /// measurement is read once and discarded — reusing that heavier
+    /// machinery for numbers nobody keeps would be the wrong tool.
+    @Published var isMeasuring = false
+    @Published var measurementPoints: [GardenCoordinate] = []
+
     @Published var snappingEnabled = true
     /// Index of the boundary/area point currently under a drag, so the
     /// view can show a live distance label — nil the rest of the time.
@@ -674,5 +683,89 @@ final class GardenMapEngine: ObservableObject {
         garden.sensors
             .first { $0.type == .soilMoisture && $0.plant?.id == plant.id }?
             .readings.max(by: { $0.timestamp < $1.timestamp })?.value
+    }
+
+    // MARK: - Mesures (Phase 6K)
+
+    func addMeasurementPoint(_ point: GardenCoordinate) {
+        measurementPoints.append(point)
+        objectWillChange.send()
+    }
+
+    func undoLastMeasurementPoint() {
+        guard !measurementPoints.isEmpty else { return }
+        measurementPoints.removeLast()
+        objectWillChange.send()
+    }
+
+    func clearMeasurement() {
+        isMeasuring = false
+        measurementPoints = []
+        objectWillChange.send()
+    }
+
+    // MARK: - Plan importé (Phase 6K)
+
+    /// Spec Phase 6K — "Importer un plan." Mirrors ensureBoundary's own
+    /// to-one replacement pattern: this app keeps at most one imported
+    /// plan per garden, so importing a new image replaces whichever one
+    /// was there, uncalibrated and unaligned until the user redoes both
+    /// steps for the new image.
+    @Published var isAligningPlanImage = false
+
+    func importPlanImage(data: Data, context: ModelContext) {
+        if let existing = garden.planImage {
+            context.delete(existing)
+        }
+        let planImage = GardenPlanImage(garden: garden, imageData: data)
+        context.insert(planImage)
+        garden.planImage = planImage
+    }
+
+    func removePlanImage(context: ModelContext) {
+        guard let planImage = garden.planImage else { return }
+        context.delete(planImage)
+        garden.planImage = nil
+        isAligningPlanImage = false
+    }
+
+    /// "CALIBRATION... le moteur calcule l'échelle." Points are in the
+    /// source image's own pixel space (see GardenPlanImage's doc
+    /// comment); only their distance matters here.
+    func setPlanImageCalibration(pointA: CGPoint, pointB: CGPoint, realDistanceMeters: Double) {
+        guard let planImage = garden.planImage else { return }
+        planImage.calibrationPointAX = pointA.x
+        planImage.calibrationPointAY = pointA.y
+        planImage.calibrationPointBX = pointB.x
+        planImage.calibrationPointBY = pointB.y
+        planImage.calibrationRealDistanceMeters = max(realDistanceMeters, 0.01)
+        objectWillChange.send()
+    }
+
+    /// "ALIGNEMENT: déplacement." Nudge-based rather than a drag
+    /// gesture on the canvas: dragging there already pans the camera
+    /// (combinedGesture, always active so the user can reach a large
+    /// garden while editing anything else), and layering a second,
+    /// competing drag target on the same gesture would need suppressing
+    /// that pan — real added complexity for one alignment step. Fixed-
+    /// step nudges sidestep the conflict entirely and are precise by
+    /// construction.
+    func movePlanImage(by delta: GardenCoordinate) {
+        guard let planImage = garden.planImage else { return }
+        planImage.position = planImage.position + delta
+        objectWillChange.send()
+    }
+
+    /// "ALIGNEMENT: rotation."
+    func rotatePlanImage(by radians: Double) {
+        guard let planImage = garden.planImage else { return }
+        planImage.rotationRadians += radians
+        objectWillChange.send()
+    }
+
+    /// "ALIGNEMENT: opacité."
+    func setPlanImageOpacity(_ opacity: Double) {
+        garden.planImage?.opacity = min(max(opacity, 0.1), 1)
+        objectWillChange.send()
     }
 }

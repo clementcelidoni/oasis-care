@@ -21,12 +21,13 @@ struct GardenARSheet: View {
     @StateObject private var arService = GardenARService()
 
     private enum Mode: String, CaseIterable, Identifiable {
-        case inspect, planting
+        case inspect, planting, scan
         var id: String { rawValue }
         var label: String {
             switch self {
             case .inspect: return "Inspection"
             case .planting: return "Plantation"
+            case .scan: return "Scan"
             }
         }
     }
@@ -35,6 +36,7 @@ struct GardenARSheet: View {
     @State private var plantingCategory: ARPlantingCategory = .arbre
     @State private var showingAdultSize = false
     @State private var placementRequestID = 0
+    @State private var scanPoints: [GardenCoordinate] = []
 
     var body: some View {
         NavigationStack {
@@ -63,8 +65,15 @@ struct GardenARSheet: View {
 
     private var arContent: some View {
         ZStack(alignment: .top) {
-            ARViewContainer(category: plantingCategory, showingAdultSize: showingAdultSize, placementRequestID: placementRequestID)
-                .ignoresSafeArea()
+            ARViewContainer(
+                category: plantingCategory,
+                showingAdultSize: showingAdultSize,
+                placementRequestID: placementRequestID,
+                onScanTap: { point in
+                    if mode == .scan { scanPoints.append(point) }
+                }
+            )
+            .ignoresSafeArea()
 
             VStack(spacing: 12) {
                 Picker("Mode", selection: $mode) {
@@ -84,11 +93,66 @@ struct GardenARSheet: View {
 
                 if mode == .inspect {
                     inspectHUD
-                } else {
+                } else if mode == .planting {
                     plantingControls
+                } else {
+                    scanControls
                 }
             }
         }
+    }
+
+    /// Spec Phase 6K — "Scan assisté... utiliser les capacités AR/depth
+    /// disponibles seulement si l'appareil les supporte... aider à
+    /// dessiner." Taps raycast against ARKit's own estimated planes
+    /// (feature-point/IMU-based plane estimation, on every ARKit
+    /// device — not LiDAR-only mesh scanning) rather than anything
+    /// GPS-anchored: unlike Mode Inspection, these points only need to
+    /// be consistent with EACH OTHER inside one AR session, not
+    /// converted to a real geographic position, so none of Mode
+    /// Inspection's GPS/ARKit-axis-conversion risk applies here. Numbers
+    /// are read-only and advisory — spec's own "NE PAS présenter comme
+    /// mesure topographique certifiée" / "toujours permettre correction
+    /// manuelle" is satisfied by never auto-injecting these points
+    /// anywhere: recreating them with the plan's existing, fully
+    /// reliable manual tools is the only path to a real zone/boundary.
+    private var scanControls: some View {
+        VStack(spacing: 10) {
+            Text("Touchez une surface détectée pour placer un point (mur, bordure, obstacle).")
+                .font(.footnote)
+                .multilineTextAlignment(.center)
+
+            if scanPoints.count >= 2 {
+                Text("Distance : \(String(format: "%.2f m", GardenMeasurementTool.pathLengthMeters(scanPoints, closed: false)))")
+                    .font(.subheadline)
+                if scanPoints.count >= 3 {
+                    Text("Périmètre (fermé) : \(String(format: "%.2f m", GardenMeasurementTool.pathLengthMeters(scanPoints, closed: true))) · Surface : \(String(format: "%.2f m²", GardenMeasurementTool.areaSquareMeters(scanPoints)))")
+                        .font(.subheadline)
+                }
+            }
+
+            Text("Estimation expérimentale — pas une mesure topographique certifiée. Reproduisez ces valeurs manuellement sur le plan.")
+                .font(.caption2)
+                .foregroundStyle(.secondary)
+                .multilineTextAlignment(.center)
+
+            HStack {
+                Button("Annuler le dernier point") {
+                    if !scanPoints.isEmpty { scanPoints.removeLast() }
+                }
+                .disabled(scanPoints.isEmpty)
+
+                Spacer()
+
+                Button("Effacer") { scanPoints.removeAll() }
+                    .disabled(scanPoints.isEmpty)
+            }
+            .font(.subheadline)
+        }
+        .padding(12)
+        .background(.thinMaterial, in: RoundedRectangle(cornerRadius: 14))
+        .padding(.horizontal)
+        .padding(.bottom, 24)
     }
 
     @ViewBuilder
@@ -217,15 +281,22 @@ private struct ARViewContainer: UIViewRepresentable {
     var category: ARPlantingCategory
     var showingAdultSize: Bool
     var placementRequestID: Int
+    var onScanTap: (GardenCoordinate) -> Void
 
     func makeUIView(context: Context) -> ARView {
         let arView = ARView(frame: .zero)
         arView.session.run(ARWorldTrackingConfiguration())
         context.coordinator.arView = arView
+        context.coordinator.onScanTap = onScanTap
+
+        let tapRecognizer = UITapGestureRecognizer(target: context.coordinator, action: #selector(Coordinator.handleTap(_:)))
+        arView.addGestureRecognizer(tapRecognizer)
+
         return arView
     }
 
     func updateUIView(_ uiView: ARView, context: Context) {
+        context.coordinator.onScanTap = onScanTap
         guard context.coordinator.lastPlacedRequestID != placementRequestID else { return }
         context.coordinator.lastPlacedRequestID = placementRequestID
         context.coordinator.place(category: category, adultSize: showingAdultSize)
@@ -237,10 +308,31 @@ private struct ARViewContainer: UIViewRepresentable {
         uiView.session.pause()
     }
 
-    final class Coordinator {
+    /// NSObject-based (not a plain Swift class) specifically so
+    /// #selector(handleTap(_:)) below can target it — UIKit's
+    /// target/action gesture-recognizer mechanism is an Objective-C
+    /// runtime feature and requires an NSObject subclass.
+    final class Coordinator: NSObject {
         weak var arView: ARView?
         var lastPlacedRequestID = 0
+        var onScanTap: ((GardenCoordinate) -> Void)?
         private var currentAnchor: AnchorEntity?
+
+        /// Spec Phase 6K's "Scan assisté" tap handler: raycasts against
+        /// ARKit's continuously-estimated planes (not a LiDAR-only
+        /// mesh — works on any ARKit-capable device) and reports the
+        /// hit's ground-plane (x, z) position — dropping height, since
+        /// only horizontal distance matters for "walls/bordures/
+        /// surfaces." Silently does nothing if the tap didn't land on
+        /// any detected surface; the user just taps again.
+        @objc func handleTap(_ recognizer: UITapGestureRecognizer) {
+            guard let arView, let onScanTap else { return }
+            let screenPoint = recognizer.location(in: arView)
+            let results = arView.raycast(from: screenPoint, allowing: .estimatedPlane, alignment: .any)
+            guard let hit = results.first else { return }
+            let worldPosition = hit.worldTransform.columns.3
+            onScanTap(GardenCoordinate(xMeters: Double(worldPosition.x), yMeters: Double(worldPosition.z)))
+        }
 
         /// Places a simple procedural trunk+foliage stand-in
         /// `max(height * 1.3, 1.5)` meters directly in front of the
