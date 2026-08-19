@@ -21,6 +21,10 @@ struct GardenObjectInspectorSheet: View {
     @State private var heightMeters: Double
     @State private var canopyMeters: Double
     @State private var adultCanopyMeters: Double
+    @State private var sprinklerRadiusMeters: Double
+    @State private var sprinklerStartAngleDegrees: Double
+    @State private var sprinklerEndAngleDegrees: Double
+    @State private var sprinklerFlowRateText: String
     @State private var isConfirmingDelete = false
     @State private var linkedDetail: LinkedDetail?
 
@@ -51,6 +55,10 @@ struct GardenObjectInspectorSheet: View {
         _heightMeters = State(initialValue: object.heightMeters)
         _canopyMeters = State(initialValue: object.canopyDiameterMeters ?? object.widthMeters)
         _adultCanopyMeters = State(initialValue: object.estimatedAdultCanopyDiameterMeters ?? object.widthMeters)
+        _sprinklerRadiusMeters = State(initialValue: object.sprinklerRadiusMeters ?? 4)
+        _sprinklerStartAngleDegrees = State(initialValue: object.sprinklerStartAngleDegrees ?? 0)
+        _sprinklerEndAngleDegrees = State(initialValue: object.sprinklerEndAngleDegrees ?? 360)
+        _sprinklerFlowRateText = State(initialValue: object.sprinklerFlowRateLitersPerHour.map { String(format: "%.0f", $0) } ?? "")
     }
 
     private var linkedPlant: Plant? { engine.resolvedLinkedPlant(for: object) }
@@ -117,6 +125,41 @@ struct GardenObjectInspectorSheet: View {
                         Text("Arbre à l'échelle")
                     } footer: {
                         Text("Le plan affiche la taille actuelle. La taille adulte estimée servira au mode simulation (Phase 6G).")
+                    }
+                }
+
+                if object.objectType == .sprinkler {
+                    Section {
+                        Stepper(value: $sprinklerRadiusMeters, in: 0.5...25, step: 0.5) {
+                            HStack {
+                                Text("Rayon")
+                                Spacer()
+                                Text(String(format: "%.1f m", sprinklerRadiusMeters)).foregroundStyle(.secondary)
+                            }
+                        }
+                        HStack {
+                            Text("Angle de début")
+                            Slider(value: $sprinklerStartAngleDegrees, in: 0...360, step: 5)
+                            Text("\(Int(sprinklerStartAngleDegrees))°").monospacedDigit().foregroundStyle(.secondary).frame(width: 40, alignment: .trailing)
+                        }
+                        HStack {
+                            Text("Angle de fin")
+                            Slider(value: $sprinklerEndAngleDegrees, in: 0...360, step: 5)
+                            Text("\(Int(sprinklerEndAngleDegrees))°").monospacedDigit().foregroundStyle(.secondary).frame(width: 40, alignment: .trailing)
+                        }
+                        HStack {
+                            Text("Débit")
+                            Spacer()
+                            TextField("optionnel", text: $sprinklerFlowRateText)
+                                .keyboardType(.numberPad)
+                                .multilineTextAlignment(.trailing)
+                                .frame(width: 80)
+                            Text("L/h").foregroundStyle(.secondary)
+                        }
+                    } header: {
+                        Text("Secteur d'arrosage")
+                    } footer: {
+                        Text("Angle de fin = angle de début pour un cercle complet (360°). Saisie utilisateur — non mesurée par un capteur.")
                     }
                 }
 
@@ -207,6 +250,13 @@ struct GardenObjectInspectorSheet: View {
         engine.resizeObject(object, widthMeters: widthMeters, heightMeters: heightMeters, context: modelContext)
         if object.objectType.isVegetation {
             engine.setCanopy(object, currentMeters: canopyMeters, adultMeters: adultCanopyMeters, context: modelContext)
+        }
+        if object.objectType == .sprinkler {
+            engine.setSprinklerParameters(
+                object, radiusMeters: sprinklerRadiusMeters,
+                startAngleDegrees: sprinklerStartAngleDegrees, endAngleDegrees: sprinklerEndAngleDegrees,
+                flowRateLitersPerHour: Double(sprinklerFlowRateText), context: modelContext
+            )
         }
     }
 }

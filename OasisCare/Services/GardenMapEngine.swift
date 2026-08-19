@@ -40,6 +40,11 @@ final class GardenMapEngine: ObservableObject {
     /// Spec Phase 6C — non-nil while the user has picked a type from
     /// the object palette and is about to tap the plan to place it.
     @Published var placingObjectType: GardenObjectType?
+    /// Spec Phase 6D — id of the IrrigationPipe currently being drawn,
+    /// same mutual-exclusivity note as editingAreaID above.
+    @Published var editingPipeID: UUID?
+    /// Spec Phase 6D — "créer un mode : Afficher couverture."
+    @Published var isShowingIrrigationCoverage = false
 
     @Published var snappingEnabled = true
     /// Index of the boundary/area point currently under a drag, so the
@@ -94,6 +99,7 @@ final class GardenMapEngine: ObservableObject {
     private enum PointsTarget {
         case boundary
         case area(GardenArea)
+        case pipe(IrrigationPipe)
     }
 
     var boundaryPoints: [GardenCoordinate] {
@@ -154,6 +160,81 @@ final class GardenMapEngine: ObservableObject {
         deletePoint(at: index, in: area.points, target: .area(area), context: context)
     }
 
+    // MARK: - Irrigation pipes (Phase 6D)
+
+    func pipe(withID id: UUID) -> IrrigationPipe? {
+        garden.irrigationPipes.first { $0.id == id }
+    }
+
+    func points(forPipe pipeID: UUID) -> [GardenCoordinate] {
+        pipe(withID: pipeID)?.points ?? []
+    }
+
+    @discardableResult
+    func addPipe(lineType: PipeLineType, context: ModelContext) -> IrrigationPipe {
+        let diameter = lineType == .dripLine ? 16.0 : 25.0
+        let pipe = IrrigationPipe(garden: garden, lineType: lineType, diameterMM: diameter)
+        context.insert(pipe)
+        try? context.save()
+        objectWillChange.send()
+        return pipe
+    }
+
+    func removePipe(_ pipe: IrrigationPipe, context: ModelContext) {
+        if editingPipeID == pipe.id { editingPipeID = nil }
+        DeletionService.delete(pipe, in: context)
+        try? context.save()
+        objectWillChange.send()
+    }
+
+    /// No snapping-to-angle here (unlike boundary/area points): a pipe
+    /// route follows whatever path the user actually draws, not a
+    /// geometric shape that benefits from 45°/90° regularization. Point-
+    /// snap (closing onto an existing point, e.g. a node it connects to)
+    /// still applies.
+    func addPipePoint(_ raw: GardenCoordinate, pipeID: UUID, context: ModelContext) {
+        guard let pipe = pipe(withID: pipeID) else { return }
+        let point = GardenSnapping.snap(raw, previous: nil, existingPoints: pipe.points, enabled: snappingEnabled)
+        setPoints(pipe.points + [point], target: .pipe(pipe), actionName: "Ajouter un point", context: context)
+    }
+
+    func movePipePoint(at index: Int, pipeID: UUID, to raw: GardenCoordinate, context: ModelContext) {
+        guard let pipe = pipe(withID: pipeID) else { return }
+        movePoint(at: index, to: raw, in: pipe.points, target: .pipe(pipe), context: context)
+    }
+
+    func deletePipePoint(at index: Int, pipeID: UUID, context: ModelContext) {
+        guard let pipe = pipe(withID: pipeID) else { return }
+        deletePoint(at: index, in: pipe.points, target: .pipe(pipe), context: context)
+    }
+
+    func setPipeNodes(_ pipe: IrrigationPipe, startObjectId: UUID?, endObjectId: UUID?, context: ModelContext) {
+        pipe.startNodeObjectId = startObjectId
+        pipe.endNodeObjectId = endObjectId
+        pipe.updatedAt = .now
+        if pipe.syncStatus != .pendingCreate { pipe.syncStatus = .pendingUpdate }
+        try? context.save()
+        objectWillChange.send()
+    }
+
+    func setPipeProperties(_ pipe: IrrigationPipe, diameterMM: Double, material: PipeMaterial, context: ModelContext) {
+        pipe.diameterMM = diameterMM
+        pipe.material = material
+        pipe.updatedAt = .now
+        if pipe.syncStatus != .pendingCreate { pipe.syncStatus = .pendingUpdate }
+        try? context.save()
+        objectWillChange.send()
+    }
+
+    /// Spec Phase 6D — "toucher" a pipe's ends resolves to whichever
+    /// map object (valve, water source, sprinkler, pump...) it's
+    /// connected to, same dangling-reference-safe lookup as
+    /// resolvedLinkedPlant/resolvedLinkedSensor.
+    func resolvedPipeNode(_ objectId: UUID?) -> GardenMapObject? {
+        guard let objectId else { return nil }
+        return garden.mapObjects.first { $0.id == objectId }
+    }
+
     private func movePoint(at index: Int, to raw: GardenCoordinate, in points: [GardenCoordinate], target: PointsTarget, context: ModelContext) {
         var points = points
         guard points.indices.contains(index) else { return }
@@ -201,6 +282,7 @@ final class GardenMapEngine: ObservableObject {
         switch target {
         case .boundary: return garden.boundary?.points ?? []
         case .area(let area): return area.points
+        case .pipe(let pipe): return pipe.points
         }
     }
 
@@ -215,6 +297,10 @@ final class GardenMapEngine: ObservableObject {
             area.points = points
             area.updatedAt = .now
             if area.syncStatus != .pendingCreate { area.syncStatus = .pendingUpdate }
+        case .pipe(let pipe):
+            pipe.points = points
+            pipe.updatedAt = .now
+            if pipe.syncStatus != .pendingCreate { pipe.syncStatus = .pendingUpdate }
         }
         try? context.save()
         objectWillChange.send()
@@ -279,6 +365,19 @@ final class GardenMapEngine: ObservableObject {
     func setCanopy(_ object: GardenMapObject, currentMeters: Double?, adultMeters: Double?, context: ModelContext) {
         object.canopyDiameterMeters = currentMeters
         object.estimatedAdultCanopyDiameterMeters = adultMeters
+        markUpdated(object, context: context)
+    }
+
+    /// Spec Phase 6D — SprinklerMapObject's radiusMeters/startAngle/
+    /// endAngle/flowRate. Angles in degrees, startAngle can be greater
+    /// than endAngle (the sector still sweeps the shorter way in
+    /// drawSprinklerSector) so the inspector's sliders don't need to
+    /// special-case a wrap-around at 0/360.
+    func setSprinklerParameters(_ object: GardenMapObject, radiusMeters: Double, startAngleDegrees: Double, endAngleDegrees: Double, flowRateLitersPerHour: Double?, context: ModelContext) {
+        object.sprinklerRadiusMeters = radiusMeters
+        object.sprinklerStartAngleDegrees = startAngleDegrees
+        object.sprinklerEndAngleDegrees = endAngleDegrees
+        object.sprinklerFlowRateLitersPerHour = flowRateLitersPerHour
         markUpdated(object, context: context)
     }
 

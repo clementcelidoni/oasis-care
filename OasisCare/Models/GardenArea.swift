@@ -29,4 +29,10 @@ final class GardenArea: Syncable {
         self.updatedAt = .now
         self.syncStatus = .pendingCreate
     }
+
+    /// Calculée (shoelace formula) from the drawn points — never a
+    /// separate figure to keep in sync by hand.
+    var areaSquareMeters: Double {
+        GardenGeometry.areaSquareMeters(of: points)
+    }
 }

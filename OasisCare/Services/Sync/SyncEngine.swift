@@ -65,6 +65,7 @@ final class SyncEngine: ObservableObject {
             try await pushGardenBoundaries(workspaceID: workspaceID, context: context)
             try await pushGardenMapObjects(workspaceID: workspaceID, context: context)
             try await pushGardenAreas(workspaceID: workspaceID, context: context)
+            try await pushIrrigationPipes(workspaceID: workspaceID, context: context)
             try await pushPendingDeletions(context: context)
             try context.save()
             lastSyncError = nil
@@ -424,6 +425,10 @@ final class SyncEngine: ObservableObject {
             object.linkedEntityKind = row.linkedEntityKind
             object.canopyDiameterMeters = row.canopyDiameterMeters
             object.estimatedAdultCanopyDiameterMeters = row.estimatedAdultCanopyDiameterMeters
+            object.sprinklerRadiusMeters = row.sprinklerRadiusMeters
+            object.sprinklerStartAngleDegrees = row.sprinklerStartAngleDegrees
+            object.sprinklerEndAngleDegrees = row.sprinklerEndAngleDegrees
+            object.sprinklerFlowRateLitersPerHour = row.sprinklerFlowRateLitersPerHour
             object.syncStatus = .synced
             object.updatedAt = row.updatedAt
             context.insert(object)
@@ -437,6 +442,18 @@ final class SyncEngine: ObservableObject {
             area.syncStatus = .synced
             area.updatedAt = row.updatedAt
             context.insert(area)
+        }
+
+        let remotePipes: [IrrigationPipeRow] = try await AuthService.client.from("irrigation_pipes").select().execute().value
+        for row in remotePipes {
+            let garden = row.gardenId.flatMap { gardensByID[$0] }
+            let pipe = IrrigationPipe(garden: garden, lineType: row.lineType, diameterMM: row.diameterMM, material: row.material, points: row.points)
+            pipe.id = row.id
+            pipe.startNodeObjectId = row.startNodeObjectId
+            pipe.endNodeObjectId = row.endNodeObjectId
+            pipe.syncStatus = .synced
+            pipe.updatedAt = row.updatedAt
+            context.insert(pipe)
         }
 
         var scenesByID: [UUID: OasisScene] = [:]
@@ -1088,6 +1105,10 @@ final class SyncEngine: ObservableObject {
         var linkedEntityKind: GardenObjectLinkKind?
         var canopyDiameterMeters: Double?
         var estimatedAdultCanopyDiameterMeters: Double?
+        var sprinklerRadiusMeters: Double?
+        var sprinklerStartAngleDegrees: Double?
+        var sprinklerEndAngleDegrees: Double?
+        var sprinklerFlowRateLitersPerHour: Double?
         var updatedAt: Date?
 
         enum CodingKeys: String, CodingKey {
@@ -1105,6 +1126,10 @@ final class SyncEngine: ObservableObject {
             case linkedEntityKind = "linked_entity_kind"
             case canopyDiameterMeters = "canopy_diameter_meters"
             case estimatedAdultCanopyDiameterMeters = "estimated_adult_canopy_diameter_meters"
+            case sprinklerRadiusMeters = "sprinkler_radius_meters"
+            case sprinklerStartAngleDegrees = "sprinkler_start_angle_degrees"
+            case sprinklerEndAngleDegrees = "sprinkler_end_angle_degrees"
+            case sprinklerFlowRateLitersPerHour = "sprinkler_flow_rate_liters_per_hour"
             case updatedAt = "updated_at"
         }
     }
@@ -1123,6 +1148,30 @@ final class SyncEngine: ObservableObject {
             case areaType = "area_type"
             case name
             case points
+            case updatedAt = "updated_at"
+        }
+    }
+
+    private struct IrrigationPipeRow: Decodable {
+        var id: UUID
+        var gardenId: UUID?
+        var points: [GardenCoordinate]
+        var diameterMM: Double
+        var material: PipeMaterial
+        var lineType: PipeLineType
+        var startNodeObjectId: UUID?
+        var endNodeObjectId: UUID?
+        var updatedAt: Date?
+
+        enum CodingKeys: String, CodingKey {
+            case id
+            case gardenId = "garden_id"
+            case points
+            case diameterMM = "diameter_mm"
+            case material
+            case lineType = "line_type"
+            case startNodeObjectId = "start_node_object_id"
+            case endNodeObjectId = "end_node_object_id"
             case updatedAt = "updated_at"
         }
     }
@@ -2547,6 +2596,10 @@ final class SyncEngine: ObservableObject {
         var linkedEntityKind: GardenObjectLinkKind?
         var canopyDiameterMeters: Double?
         var estimatedAdultCanopyDiameterMeters: Double?
+        var sprinklerRadiusMeters: Double?
+        var sprinklerStartAngleDegrees: Double?
+        var sprinklerEndAngleDegrees: Double?
+        var sprinklerFlowRateLitersPerHour: Double?
         var updatedAt: Date
 
         enum CodingKeys: String, CodingKey {
@@ -2565,6 +2618,10 @@ final class SyncEngine: ObservableObject {
             case linkedEntityKind = "linked_entity_kind"
             case canopyDiameterMeters = "canopy_diameter_meters"
             case estimatedAdultCanopyDiameterMeters = "estimated_adult_canopy_diameter_meters"
+            case sprinklerRadiusMeters = "sprinkler_radius_meters"
+            case sprinklerStartAngleDegrees = "sprinkler_start_angle_degrees"
+            case sprinklerEndAngleDegrees = "sprinkler_end_angle_degrees"
+            case sprinklerFlowRateLitersPerHour = "sprinkler_flow_rate_liters_per_hour"
             case updatedAt = "updated_at"
         }
     }
@@ -2579,7 +2636,10 @@ final class SyncEngine: ObservableObject {
                 rotationRadians: object.rotationRadians, widthMeters: object.widthMeters, heightMeters: object.heightMeters,
                 zIndex: object.zIndex, label: object.label, linkedEntityId: object.linkedEntityId,
                 linkedEntityKind: object.linkedEntityKind, canopyDiameterMeters: object.canopyDiameterMeters,
-                estimatedAdultCanopyDiameterMeters: object.estimatedAdultCanopyDiameterMeters, updatedAt: object.updatedAt ?? .now
+                estimatedAdultCanopyDiameterMeters: object.estimatedAdultCanopyDiameterMeters,
+                sprinklerRadiusMeters: object.sprinklerRadiusMeters, sprinklerStartAngleDegrees: object.sprinklerStartAngleDegrees,
+                sprinklerEndAngleDegrees: object.sprinklerEndAngleDegrees, sprinklerFlowRateLitersPerHour: object.sprinklerFlowRateLitersPerHour,
+                updatedAt: object.updatedAt ?? .now
             )
         }
         try await AuthService.client.from("garden_map_objects").upsert(dtos).execute()
@@ -2617,6 +2677,46 @@ final class SyncEngine: ObservableObject {
         }
         try await AuthService.client.from("garden_areas").upsert(dtos).execute()
         for area in pending { area.syncStatus = .synced }
+    }
+
+    private struct IrrigationPipeDTO: Encodable {
+        var id: UUID
+        var workspaceId: UUID
+        var gardenId: UUID?
+        var points: [GardenCoordinate]
+        var diameterMM: Double
+        var material: PipeMaterial
+        var lineType: PipeLineType
+        var startNodeObjectId: UUID?
+        var endNodeObjectId: UUID?
+        var updatedAt: Date
+
+        enum CodingKeys: String, CodingKey {
+            case id
+            case workspaceId = "workspace_id"
+            case gardenId = "garden_id"
+            case points
+            case diameterMM = "diameter_mm"
+            case material
+            case lineType = "line_type"
+            case startNodeObjectId = "start_node_object_id"
+            case endNodeObjectId = "end_node_object_id"
+            case updatedAt = "updated_at"
+        }
+    }
+
+    private func pushIrrigationPipes(workspaceID: UUID, context: ModelContext) async throws {
+        let pending = try context.fetch(FetchDescriptor<IrrigationPipe>()).filter { $0.syncStatus != .synced }
+        guard !pending.isEmpty else { return }
+        let dtos = pending.map { pipe in
+            IrrigationPipeDTO(
+                id: pipe.id, workspaceId: workspaceID, gardenId: pipe.garden?.id, points: pipe.points,
+                diameterMM: pipe.diameterMM, material: pipe.material, lineType: pipe.lineType,
+                startNodeObjectId: pipe.startNodeObjectId, endNodeObjectId: pipe.endNodeObjectId, updatedAt: pipe.updatedAt ?? .now
+            )
+        }
+        try await AuthService.client.from("irrigation_pipes").upsert(dtos).execute()
+        for pipe in pending { pipe.syncStatus = .synced }
     }
 
     // MARK: - Scenes

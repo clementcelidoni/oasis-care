@@ -13,7 +13,7 @@ enum GardenObjectType: String, Codable, CaseIterable, Identifiable {
     case path, stairs
     case rock, decorativeObject
     case waterSource
-    case valve, pump, sensor
+    case valve, pump, sensor, filter
     case sprinkler, dripEmitter
     case light, electricalPoint
     case custom
@@ -41,6 +41,7 @@ enum GardenObjectType: String, Codable, CaseIterable, Identifiable {
         case .valve: return "Vanne"
         case .pump: return "Pompe"
         case .sensor: return "Capteur"
+        case .filter: return "Filtre"
         case .sprinkler: return "Asperseur"
         case .dripEmitter: return "Goutteur"
         case .light: return "Éclairage"
@@ -70,6 +71,7 @@ enum GardenObjectType: String, Codable, CaseIterable, Identifiable {
         case .valve: return "spigot.fill"
         case .pump: return "arrow.triangle.2.circlepath.circle.fill"
         case .sensor: return "antenna.radiowaves.left.and.right"
+        case .filter: return "line.3.horizontal.decrease.circle.fill"
         case .sprinkler: return "sprinkler.fill"
         case .dripEmitter: return "drop.circle.fill"
         case .light: return "lightbulb.fill"
@@ -103,7 +105,7 @@ enum GardenObjectType: String, Codable, CaseIterable, Identifiable {
         case .stairs: return 1.2
         case .rock: return 0.5
         case .decorativeObject: return 0.5
-        case .waterSource, .valve, .pump, .sensor: return 0.3
+        case .waterSource, .valve, .pump, .sensor, .filter: return 0.3
         case .sprinkler, .dripEmitter: return 0.2
         case .light, .electricalPoint: return 0.2
         case .custom: return 1

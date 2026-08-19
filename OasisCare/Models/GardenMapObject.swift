@@ -43,6 +43,16 @@ final class GardenMapObject: Syncable {
     var canopyDiameterMeters: Double?
     var estimatedAdultCanopyDiameterMeters: Double?
 
+    /// Spec Phase 6D — SprinklerMapObject's parameters, folded into the
+    /// same shared model rather than a second one (same reasoning as
+    /// canopy above): only meaningful when objectType == .sprinkler.
+    /// Angles are degrees, 0 = east, increasing counter-clockwise,
+    /// matching GardenCoordinate's own axis convention.
+    var sprinklerRadiusMeters: Double?
+    var sprinklerStartAngleDegrees: Double?
+    var sprinklerEndAngleDegrees: Double?
+    var sprinklerFlowRateLitersPerHour: Double?
+
     var createdAt: Date
     var updatedAt: Date?
     var syncStatus: SyncStatus?
@@ -56,6 +66,11 @@ final class GardenMapObject: Syncable {
         self.widthMeters = objectType.defaultWidthMeters
         self.heightMeters = objectType.defaultHeightMeters
         self.zIndex = 0
+        if objectType == .sprinkler {
+            self.sprinklerRadiusMeters = 4
+            self.sprinklerStartAngleDegrees = 0
+            self.sprinklerEndAngleDegrees = 360
+        }
         self.createdAt = .now
         self.updatedAt = .now
         self.syncStatus = .pendingCreate

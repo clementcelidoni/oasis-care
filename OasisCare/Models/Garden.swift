@@ -75,6 +75,10 @@ final class Garden: Syncable {
     @Relationship(deleteRule: .cascade, inverse: \GardenArea.garden)
     var areas: [GardenArea] = []
 
+    /// Spec Phase 6D — the drawn irrigation network's pipes.
+    @Relationship(deleteRule: .cascade, inverse: \IrrigationPipe.garden)
+    var irrigationPipes: [IrrigationPipe] = []
+
     init(name: String, address: String? = nil, notes: String = "", dateCreated: Date = .now) {
         self.id = UUID()
         self.name = name

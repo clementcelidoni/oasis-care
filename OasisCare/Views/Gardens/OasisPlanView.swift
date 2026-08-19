@@ -50,12 +50,14 @@ struct OasisPlanView: View {
         case objectPicker
         case areas
         case objectInspector(GardenMapObject)
+        case pipes
 
         var id: String {
             switch self {
             case .objectPicker: return "objectPicker"
             case .areas: return "areas"
             case .objectInspector(let object): return "inspector-\(object.id)"
+            case .pipes: return "pipes"
             }
         }
     }
@@ -63,7 +65,7 @@ struct OasisPlanView: View {
     private static let coordinateSpaceName = "oasisPlanCanvas"
 
     private var isEditingPolygon: Bool {
-        engine.isEditingBoundary || engine.editingAreaID != nil
+        engine.isEditingBoundary || engine.editingAreaID != nil || engine.editingPipeID != nil
     }
 
     var body: some View {
@@ -103,6 +105,8 @@ struct OasisPlanView: View {
                 GardenAreasSheet(engine: engine)
             case .objectInspector(let object):
                 GardenObjectInspectorSheet(engine: engine, object: object)
+            case .pipes:
+                IrrigationPipesSheet(engine: engine)
             }
         }
     }
@@ -168,6 +172,9 @@ struct OasisPlanView: View {
                 } else if let areaID = engine.editingAreaID {
                     selectedHandleIndex = nil
                     engine.addAreaPoint(point, areaID: areaID, context: modelContext)
+                } else if let pipeID = engine.editingPipeID {
+                    selectedHandleIndex = nil
+                    engine.addPipePoint(point, pipeID: pipeID, context: modelContext)
                 } else if let type = engine.placingObjectType {
                     let object = engine.addObject(type: type, at: point, context: modelContext)
                     engine.placingObjectType = nil
@@ -183,6 +190,9 @@ struct OasisPlanView: View {
         let camera = liveCamera
         drawGrid(in: context, size: size, camera: camera)
         drawAreas(in: context, size: size, camera: camera)
+        drawSprinklerSectors(in: context, size: size, camera: camera)
+        drawSprinklerCoverage(in: context, size: size, camera: camera)
+        drawPipes(in: context, size: size, camera: camera)
         drawBoundary(in: context, size: size, camera: camera)
         drawOrigin(in: context, size: size, camera: camera)
         drawScaleBar(in: context, size: size, camera: camera)
@@ -286,6 +296,169 @@ struct OasisPlanView: View {
         }
     }
 
+    /// Spec Phase 6D — pipes as a drawn polyline, differentiated by
+    /// line type (color + dash pattern, never color alone) with a
+    /// diameter label at the midpoint once zoomed in enough to read it.
+    private func drawPipes(in context: GraphicsContext, size: CGSize, camera: GardenMapCamera) {
+        for pipe in engine.garden.irrigationPipes {
+            let points = pipe.points
+            guard points.count >= 2 else { continue }
+
+            var path = Path()
+            path.move(to: camera.screenPoint(for: points[0], viewSize: size))
+            for point in points.dropFirst() {
+                path.addLine(to: camera.screenPoint(for: point, viewSize: size))
+            }
+
+            let isActive = engine.editingPipeID == pipe.id
+            context.stroke(
+                path,
+                with: .color(pipe.lineType.color.opacity(isActive ? 1 : 0.85)),
+                style: StrokeStyle(
+                    lineWidth: isActive ? pipe.lineType.lineWidth + 1.5 : pipe.lineType.lineWidth,
+                    lineCap: .round, lineJoin: .round, dash: pipe.lineType.dashPattern
+                )
+            )
+
+            guard camera.pointsPerMeter > 6 else { continue }
+            let midpoint = camera.screenPoint(for: points[points.count / 2], viewSize: size)
+            context.draw(
+                Text("Ø\(Int(pipe.diameterMM)) mm").font(.caption2.weight(.medium)).foregroundStyle(pipe.lineType.color),
+                at: CGPoint(x: midpoint.x, y: midpoint.y - 10)
+            )
+        }
+    }
+
+    /// Spec Phase 6D — "afficher graphiquement son secteur d'arrosage"
+    /// (always visible, distinct from the coverage heatmap toggle
+    /// below). Built by sampling points along the arc with
+    /// GardenCoordinate math and the same `screenPoint` conversion used
+    /// everywhere else in this file, rather than SwiftUI's own
+    /// Path.addArc — that API's angle sign/direction convention in
+    /// screen space (Y grows down) is easy to get backwards, and this
+    /// sidesteps the question entirely by reusing an already-correct
+    /// conversion instead of a second, separately-verified one.
+    private func drawSprinklerSectors(in context: GraphicsContext, size: CGSize, camera: GardenMapCamera) {
+        let sprinklers = engine.garden.mapObjects.filter { $0.objectType == .sprinkler && $0.sprinklerRadiusMeters != nil }
+        for sprinkler in sprinklers {
+            guard let radius = sprinkler.sprinklerRadiusMeters,
+                  let startAngle = sprinkler.sprinklerStartAngleDegrees,
+                  let endAngle = sprinkler.sprinklerEndAngleDegrees else { continue }
+
+            var sweepDegrees = endAngle - startAngle
+            if sweepDegrees <= 0 { sweepDegrees += 360 }
+            let stepCount = max(Int(sweepDegrees / 6), 1)
+
+            var path = Path()
+            let centerScreen = camera.screenPoint(for: sprinkler.position, viewSize: size)
+            path.move(to: centerScreen)
+            for step in 0...stepCount {
+                let angleDegrees = startAngle + sweepDegrees * Double(step) / Double(stepCount)
+                let angleRadians = angleDegrees * .pi / 180
+                let edgePoint = GardenCoordinate(
+                    xMeters: sprinkler.position.xMeters + radius * cos(angleRadians),
+                    yMeters: sprinkler.position.yMeters + radius * sin(angleRadians)
+                )
+                path.addLine(to: camera.screenPoint(for: edgePoint, viewSize: size))
+            }
+            path.closeSubpath()
+
+            context.fill(path, with: .color(.blue.opacity(0.08)))
+            context.stroke(path, with: .color(.blue.opacity(0.4)), style: StrokeStyle(lineWidth: 1, dash: sweepDegrees >= 359.9 ? [] : [3, 2]))
+        }
+    }
+
+    /// Spec Phase 6D — "afficher couverture" + "heatmap de couverture
+    /// (0/1/2/3+ passages), ne pas utiliser seulement des couleurs."
+    /// Rasterizes the visible area into ~1m cells and counts, per cell,
+    /// how many sprinkler sectors reach it — a coarse approximation
+    /// (not exact vector geometry) capped in cell count the same way
+    /// drawGrid caps its line count, so a large property zoomed way out
+    /// never tries to evaluate tens of thousands of cells in one frame.
+    /// Whether this stays smooth while panning on a real device is
+    /// unverified in this environment.
+    private func drawSprinklerCoverage(in context: GraphicsContext, size: CGSize, camera: GardenMapCamera) {
+        guard engine.isShowingIrrigationCoverage else { return }
+        let sprinklers = engine.garden.mapObjects.filter { $0.objectType == .sprinkler && $0.sprinklerRadiusMeters != nil }
+        guard !sprinklers.isEmpty else { return }
+
+        let cellMeters = 1.0
+        let topLeft = camera.localPoint(for: .zero, viewSize: size)
+        let bottomRight = camera.localPoint(for: CGPoint(x: size.width, y: size.height), viewSize: size)
+        let minX = min(topLeft.xMeters, bottomRight.xMeters)
+        let maxX = max(topLeft.xMeters, bottomRight.xMeters)
+        let minY = min(topLeft.yMeters, bottomRight.yMeters)
+        let maxY = max(topLeft.yMeters, bottomRight.yMeters)
+
+        let columnCount = Int((maxX - minX) / cellMeters)
+        let rowCount = Int((maxY - minY) / cellMeters)
+        guard columnCount > 0, rowCount > 0, columnCount * rowCount < 6000 else { return }
+
+        for column in 0..<columnCount {
+            for row in 0..<rowCount {
+                let cellMinX = minX + Double(column) * cellMeters
+                let cellMinY = minY + Double(row) * cellMeters
+                let cellCenter = GardenCoordinate(xMeters: cellMinX + cellMeters / 2, yMeters: cellMinY + cellMeters / 2)
+                let passCount = sprinklers.reduce(0) { count, sprinkler in
+                    count + (isCellCovered(cellCenter, by: sprinkler) ? 1 : 0)
+                }
+                guard passCount > 0 else { continue }
+
+                let corner1 = camera.screenPoint(for: GardenCoordinate(xMeters: cellMinX, yMeters: cellMinY), viewSize: size)
+                let corner2 = camera.screenPoint(for: GardenCoordinate(xMeters: cellMinX + cellMeters, yMeters: cellMinY + cellMeters), viewSize: size)
+                let rect = CGRect(
+                    x: min(corner1.x, corner2.x), y: min(corner1.y, corner2.y),
+                    width: abs(corner2.x - corner1.x), height: abs(corner2.y - corner1.y)
+                )
+
+                context.fill(Path(rect), with: .color(coverageColor(for: passCount)))
+                drawCoverageDots(in: context, rect: rect, count: min(passCount - 1, 3))
+            }
+        }
+    }
+
+    private func isCellCovered(_ point: GardenCoordinate, by sprinkler: GardenMapObject) -> Bool {
+        guard let radius = sprinkler.sprinklerRadiusMeters,
+              let startAngle = sprinkler.sprinklerStartAngleDegrees,
+              let endAngle = sprinkler.sprinklerEndAngleDegrees else { return false }
+        let delta = point - sprinkler.position
+        guard delta.length <= radius else { return false }
+        if startAngle <= 0, endAngle >= 360 { return true }
+
+        var angle = atan2(delta.yMeters, delta.xMeters) * 180 / .pi
+        if angle < 0 { angle += 360 }
+        let normalizedStart = startAngle.truncatingRemainder(dividingBy: 360)
+        let normalizedEnd = endAngle.truncatingRemainder(dividingBy: 360)
+        if normalizedStart <= normalizedEnd {
+            return angle >= normalizedStart && angle <= normalizedEnd
+        } else {
+            return angle >= normalizedStart || angle <= normalizedEnd
+        }
+    }
+
+    private func coverageColor(for passCount: Int) -> Color {
+        switch passCount {
+        case 1: return .blue.opacity(0.15)
+        case 2: return .blue.opacity(0.3)
+        default: return .blue.opacity(0.5)
+        }
+    }
+
+    /// The non-color half of the coverage signal: 0 dots at 1 pass, up
+    /// to 3 dots at 3+ passes, so the tier still reads in grayscale.
+    private func drawCoverageDots(in context: GraphicsContext, rect: CGRect, count: Int) {
+        guard count > 0 else { return }
+        let dotRadius: CGFloat = 1.2
+        let spacing: CGFloat = 4
+        let totalWidth = CGFloat(count - 1) * spacing
+        let startX = rect.midX - totalWidth / 2
+        for index in 0..<count {
+            let x = startX + CGFloat(index) * spacing
+            let dot = Path(ellipseIn: CGRect(x: x - dotRadius, y: rect.midY - dotRadius, width: dotRadius * 2, height: dotRadius * 2))
+            context.fill(dot, with: .color(.white.opacity(0.9)))
+        }
+    }
+
     private func drawOrigin(in context: GraphicsContext, size: CGSize, camera: GardenMapCamera) {
         let center = camera.screenPoint(for: .zero, viewSize: size)
         let radius: CGFloat = 4
@@ -380,6 +553,7 @@ struct OasisPlanView: View {
     private var activePoints: [GardenCoordinate] {
         if engine.isEditingBoundary { return engine.boundaryPoints }
         if let areaID = engine.editingAreaID { return engine.points(forArea: areaID) }
+        if let pipeID = engine.editingPipeID { return engine.points(forPipe: pipeID) }
         return []
     }
 
@@ -388,6 +562,8 @@ struct OasisPlanView: View {
             engine.moveBoundaryPoint(at: index, to: point, context: modelContext)
         } else if let areaID = engine.editingAreaID {
             engine.moveAreaPoint(at: index, areaID: areaID, to: point, context: modelContext)
+        } else if let pipeID = engine.editingPipeID {
+            engine.movePipePoint(at: index, pipeID: pipeID, to: point, context: modelContext)
         }
     }
 
@@ -396,6 +572,8 @@ struct OasisPlanView: View {
             engine.deleteBoundaryPoint(at: index, context: modelContext)
         } else if let areaID = engine.editingAreaID {
             engine.deleteAreaPoint(at: index, areaID: areaID, context: modelContext)
+        } else if let pipeID = engine.editingPipeID {
+            engine.deletePipePoint(at: index, pipeID: pipeID, context: modelContext)
         }
     }
 
@@ -518,6 +696,18 @@ struct OasisPlanView: View {
                 .accessibilityLabel("Terminer la zone")
 
                 snapUndoRedoControls
+            } else if engine.editingPipeID != nil {
+                Button {
+                    withAnimation(.snappy) {
+                        engine.editingPipeID = nil
+                        selectedHandleIndex = nil
+                    }
+                } label: {
+                    Image(systemName: "checkmark.circle.fill")
+                }
+                .accessibilityLabel("Terminer le tuyau")
+
+                snapUndoRedoControls
             } else {
                 Button {
                     withAnimation(.snappy) { engine.isEditingBoundary = true }
@@ -539,6 +729,20 @@ struct OasisPlanView: View {
                     Image(systemName: "square.on.square.fill")
                 }
                 .accessibilityLabel("Zones du jardin")
+
+                Button {
+                    activeSheet = .pipes
+                } label: {
+                    Image(systemName: "point.topleft.down.curvedto.point.bottomright.up")
+                }
+                .accessibilityLabel("Réseau d'irrigation")
+
+                Button {
+                    engine.isShowingIrrigationCoverage.toggle()
+                } label: {
+                    Image(systemName: engine.isShowingIrrigationCoverage ? "drop.circle.fill" : "drop.circle")
+                }
+                .accessibilityLabel("Afficher la couverture d'arrosage")
             }
 
             Button {

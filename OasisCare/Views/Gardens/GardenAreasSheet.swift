@@ -1,8 +1,9 @@
 import SwiftData
 import SwiftUI
 
-/// Spec Phase 6C — zones list: add, delete, or resume drawing an
-/// existing zone's points. Managed via a list rather than on-canvas
+/// Spec Phase 6C/6D — zones list: add, delete, resume drawing an
+/// existing zone's points, or (6D) launch the AI irrigation design
+/// assistant for one. Managed via a list rather than on-canvas
 /// tap-to-select, so picking a zone never competes with the boundary/
 /// object tap gestures already on the canvas (see OasisPlanView's tap
 /// dispatch for why that competition is worth avoiding).
@@ -11,7 +12,23 @@ struct GardenAreasSheet: View {
     @Environment(\.modelContext) private var modelContext
     @Environment(\.dismiss) private var dismiss
 
-    @State private var isPickingType = false
+    @State private var activeSheet: ActiveSheet?
+
+    /// One enum + one `.sheet(item:)` rather than two separate `.sheet`
+    /// modifiers chained on this view — the established fix for the
+    /// multi-sheet bug class this codebase already hit once (Phase 1),
+    /// same as OasisPlanView and GardenObjectInspectorSheet.
+    private enum ActiveSheet: Identifiable {
+        case typePicker
+        case design(GardenArea)
+
+        var id: String {
+            switch self {
+            case .typePicker: return "typePicker"
+            case .design(let area): return "design-\(area.id)"
+            }
+        }
+    }
 
     private var areas: [GardenArea] {
         engine.garden.areas.sorted { $0.createdAt < $1.createdAt }
@@ -39,7 +56,7 @@ struct GardenAreasSheet: View {
                                 VStack(alignment: .leading, spacing: 2) {
                                     Text(area.name.isEmpty ? area.areaType.label : area.name)
                                         .foregroundStyle(.primary)
-                                    Text("\(area.points.count) point\(area.points.count > 1 ? "s" : "")")
+                                    Text("\(area.points.count) point\(area.points.count > 1 ? "s" : "") · \(String(format: "%.1f m²", area.areaSquareMeters))")
                                         .font(.caption)
                                         .foregroundStyle(.secondary)
                                 }
@@ -50,6 +67,15 @@ struct GardenAreasSheet: View {
                                         .accessibilityLabel("Zone interdite")
                                 }
                             }
+                        }
+                        .swipeActions(edge: .leading) {
+                            Button {
+                                activeSheet = .design(area)
+                            } label: {
+                                Label("Arrosage", systemImage: "sparkles")
+                            }
+                            .tint(.blue)
+                            .disabled(area.points.count < 3)
                         }
                     }
                     .onDelete { offsets in
@@ -67,18 +93,23 @@ struct GardenAreasSheet: View {
                 }
                 ToolbarItem(placement: .primaryAction) {
                     Button {
-                        isPickingType = true
+                        activeSheet = .typePicker
                     } label: {
                         Label("Ajouter", systemImage: "plus")
                     }
                 }
             }
-            .sheet(isPresented: $isPickingType) {
-                GardenAreaTypePickerSheet { type in
-                    let area = engine.addArea(type: type, context: modelContext)
-                    engine.editingAreaID = area.id
-                    isPickingType = false
-                    dismiss()
+            .sheet(item: $activeSheet) { sheet in
+                switch sheet {
+                case .typePicker:
+                    GardenAreaTypePickerSheet { type in
+                        let area = engine.addArea(type: type, context: modelContext)
+                        engine.editingAreaID = area.id
+                        activeSheet = nil
+                        dismiss()
+                    }
+                case .design(let area):
+                    IrrigationDesignSheet(zone: area, engine: engine)
                 }
             }
         }
