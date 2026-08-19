@@ -84,6 +84,14 @@ struct GardenDetailView: View {
     @State private var zonePendingDeletion: ZoneDeletionTarget?
     @State private var activatingSceneID: UUID?
     @State private var viewMode: ViewMode = .list
+    @State private var mapMode: GardenMapMode
+    @StateObject private var mapEngine: GardenMapEngine
+
+    init(garden: Garden) {
+        self.garden = garden
+        _mapMode = State(initialValue: garden.preferredMapMode)
+        _mapEngine = StateObject(wrappedValue: GardenMapEngine(garden: garden))
+    }
 
     private var plantsDueForWatering: [Plant] {
         garden.plants.filter { $0.schedule(for: .watering)?.isDue ?? false }
@@ -99,7 +107,7 @@ struct GardenDetailView: View {
             case .list:
                 listContent
             case .map:
-                GardenMapView(garden: garden)
+                mapContent
             }
         }
         .navigationTitle(garden.name)
@@ -113,6 +121,21 @@ struct GardenDetailView: View {
                 }
                 .pickerStyle(.segmented)
                 .frame(width: 160)
+            }
+            if viewMode == .map {
+                ToolbarItem(placement: .topBarTrailing) {
+                    Menu {
+                        ForEach(GardenMapMode.allCases) { mode in
+                            Button {
+                                setMapMode(mode)
+                            } label: {
+                                Label(mode.label, systemImage: mode.icon)
+                            }
+                        }
+                    } label: {
+                        Image(systemName: mapMode.icon)
+                    }
+                }
             }
             ToolbarItem(placement: .topBarTrailing) {
                 Button("Modifier") { activeSheet = .edit }
@@ -175,6 +198,27 @@ struct GardenDetailView: View {
         } message: { target in
             Text(target.message)
         }
+    }
+
+    /// Spec Phase 6A — the four map modes share one entry point;
+    /// .oasisPlan is the new vector engine, the other three stay on the
+    /// existing MapKit-backed GardenMapView with a different style.
+    @ViewBuilder
+    private var mapContent: some View {
+        switch mapMode {
+        case .oasisPlan:
+            OasisPlanView(engine: mapEngine)
+        case .standard, .satellite, .hybrid:
+            GardenMapView(garden: garden, mode: mapMode)
+        }
+    }
+
+    private func setMapMode(_ mode: GardenMapMode) {
+        mapMode = mode
+        guard garden.preferredMapMode != mode else { return }
+        garden.preferredMapMode = mode
+        garden.markDirty()
+        try? modelContext.save()
     }
 
     private var listContent: some View {

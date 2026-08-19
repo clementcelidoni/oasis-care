@@ -168,6 +168,7 @@ final class SyncEngine: ObservableObject {
             garden.longitude = row.longitude
             garden.locationName = row.locationName
             garden.weatherEnabled = row.weatherEnabled
+            garden.preferredMapMode = row.preferredMapMode ?? .oasisPlan
             garden.syncStatus = .synced
             garden.updatedAt = row.updatedAt
             context.insert(garden)
@@ -626,6 +627,7 @@ final class SyncEngine: ObservableObject {
         var longitude: Double?
         var locationName: String?
         var weatherEnabled: Bool
+        var preferredMapMode: GardenMapMode?
         var updatedAt: Date?
 
         enum CodingKeys: String, CodingKey {
@@ -634,6 +636,7 @@ final class SyncEngine: ObservableObject {
             case latitude, longitude
             case locationName = "location_name"
             case weatherEnabled = "weather_enabled"
+            case preferredMapMode = "preferred_map_mode"
             case updatedAt = "updated_at"
         }
     }
@@ -1307,6 +1310,7 @@ final class SyncEngine: ObservableObject {
         var longitude: Double?
         var locationName: String?
         var weatherEnabled: Bool
+        var preferredMapMode: GardenMapMode
         var updatedAt: Date
 
         enum CodingKeys: String, CodingKey {
@@ -1317,6 +1321,7 @@ final class SyncEngine: ObservableObject {
             case latitude, longitude
             case locationName = "location_name"
             case weatherEnabled = "weather_enabled"
+            case preferredMapMode = "preferred_map_mode"
             case updatedAt = "updated_at"
         }
     }
@@ -1328,7 +1333,8 @@ final class SyncEngine: ObservableObject {
             GardenDTO(
                 id: $0.id, workspaceId: workspaceID, name: $0.name, address: $0.address,
                 notes: $0.notes, dateCreated: $0.dateCreated, latitude: $0.latitude, longitude: $0.longitude,
-                locationName: $0.locationName, weatherEnabled: $0.weatherEnabled, updatedAt: $0.updatedAt ?? .now
+                locationName: $0.locationName, weatherEnabled: $0.weatherEnabled,
+                preferredMapMode: $0.preferredMapMode, updatedAt: $0.updatedAt ?? .now
             )
         }
         try await AuthService.client.from("gardens").upsert(dtos).execute()

@@ -7,14 +7,19 @@ import MapKit
 /// palmier, plante, massif (flowerBed), pelouse (lawn).
 struct GardenMapView: View {
     var garden: Garden
+    /// Phase 6A — GardenMapMode.standard/.satellite/.hybrid all render
+    /// through this same MapKit-backed view, just with a different
+    /// style; .oasisPlan never reaches here (that's OasisPlanView).
+    var mode: GardenMapMode = .standard
 
     @State private var cameraPosition: MapCameraPosition
     @State private var showHealthOverlay = false
     @State private var selectedPlant: Plant?
     @State private var selectedClusterPlants: IdentifiablePlantGroup?
 
-    init(garden: Garden) {
+    init(garden: Garden, mode: GardenMapMode = .standard) {
         self.garden = garden
+        self.mode = mode
         let coordinates = garden.plants.compactMap { plant -> CLLocationCoordinate2D? in
             guard let lat = plant.latitude, let lng = plant.longitude else { return nil }
             return CLLocationCoordinate2D(latitude: lat, longitude: lng)
@@ -24,6 +29,14 @@ struct GardenMapView: View {
             _cameraPosition = State(initialValue: .region(region))
         } else {
             _cameraPosition = State(initialValue: .automatic)
+        }
+    }
+
+    private var mapKitStyle: MapStyle {
+        switch mode {
+        case .satellite: return .imagery
+        case .hybrid: return .hybrid
+        case .standard, .oasisPlan: return .standard
         }
     }
 
@@ -69,7 +82,7 @@ struct GardenMapView: View {
                         }
                     }
                 }
-                .mapStyle(.standard)
+                .mapStyle(mapKitStyle)
             }
         }
         .toolbar {

@@ -23,6 +23,9 @@ final class Garden: Syncable {
     // an init-only default is invisible to migration inference and left
     // existing installs unable to open their store (Phase 4B regression).
     var weatherEnabled: Bool = false
+    /// Spec Phase 6A — "le mode préféré est mémorisé par jardin." Inline
+    /// default, same migration-safety reasoning as weatherEnabled above.
+    var preferredMapMode: GardenMapMode = .oasisPlan
 
     @Relationship(deleteRule: .cascade, inverse: \GardenZone.garden)
     var zones: [GardenZone] = []
