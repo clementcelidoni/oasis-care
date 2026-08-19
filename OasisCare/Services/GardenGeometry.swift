@@ -45,4 +45,27 @@ enum GardenGeometry {
         let yValues = polygon.map(\.yMeters)
         return ((xValues.max() ?? 0) - (xValues.min() ?? 0), (yValues.max() ?? 0) - (yValues.min() ?? 0))
     }
+
+    static func centroid(of polygon: [GardenCoordinate]) -> GardenCoordinate {
+        guard !polygon.isEmpty else { return .zero }
+        let sumX = polygon.reduce(0) { $0 + $1.xMeters }
+        let sumY = polygon.reduce(0) { $0 + $1.yMeters }
+        return GardenCoordinate(xMeters: sumX / Double(polygon.count), yMeters: sumY / Double(polygon.count))
+    }
+
+    /// Standard point-to-segment distance: project `point` onto the
+    /// infinite line through start/end via the dot-product formula,
+    /// then clamp the projection parameter to [0, 1] so the result is
+    /// distance to the segment, not the infinite line. Used by
+    /// SunExposureService to test whether a point falls inside a
+    /// shadow, which is itself drawn as a line segment.
+    static func distanceFromPoint(_ point: GardenCoordinate, toSegmentFrom start: GardenCoordinate, to end: GardenCoordinate) -> Double {
+        let segment = end - start
+        let segmentLengthSquared = segment.xMeters * segment.xMeters + segment.yMeters * segment.yMeters
+        guard segmentLengthSquared > 0.0001 else { return point.distance(to: start) }
+        let toPoint = point - start
+        let t = max(0, min(1, (toPoint.xMeters * segment.xMeters + toPoint.yMeters * segment.yMeters) / segmentLengthSquared))
+        let projection = GardenCoordinate(xMeters: start.xMeters + t * segment.xMeters, yMeters: start.yMeters + t * segment.yMeters)
+        return point.distance(to: projection)
+    }
 }

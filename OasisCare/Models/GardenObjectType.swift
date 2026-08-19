@@ -118,4 +118,26 @@ enum GardenObjectType: String, Codable, CaseIterable, Identifiable {
         default: return defaultWidthMeters
         }
     }
+
+    /// Spec Phase 6F — "dans une première version : utiliser les objets
+    /// possédant une hauteur : maison, mur, serre, arbre." Palm added to
+    /// tree for the same reason canopy/two-size apply to both — both are
+    /// real vertical vegetation, not just tree specifically.
+    var castsShadow: Bool {
+        switch self {
+        case .house, .wall, .greenhouse, .tree, .palm: return true
+        default: return false
+        }
+    }
+
+    var defaultStructureHeightMeters: Double? {
+        switch self {
+        case .house: return 6
+        case .wall: return 1.8
+        case .greenhouse: return 2.5
+        case .tree: return 5
+        case .palm: return 6
+        default: return nil
+        }
+    }
 }

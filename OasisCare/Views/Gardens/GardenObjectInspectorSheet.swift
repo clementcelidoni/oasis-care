@@ -25,6 +25,7 @@ struct GardenObjectInspectorSheet: View {
     @State private var sprinklerStartAngleDegrees: Double
     @State private var sprinklerEndAngleDegrees: Double
     @State private var sprinklerFlowRateText: String
+    @State private var structureHeightMeters: Double
     @State private var isConfirmingDelete = false
     @State private var linkedDetail: LinkedDetail?
 
@@ -59,6 +60,7 @@ struct GardenObjectInspectorSheet: View {
         _sprinklerStartAngleDegrees = State(initialValue: object.sprinklerStartAngleDegrees ?? 0)
         _sprinklerEndAngleDegrees = State(initialValue: object.sprinklerEndAngleDegrees ?? 360)
         _sprinklerFlowRateText = State(initialValue: object.sprinklerFlowRateLitersPerHour.map { String(format: "%.0f", $0) } ?? "")
+        _structureHeightMeters = State(initialValue: object.structureHeightMeters ?? object.objectType.defaultStructureHeightMeters ?? 2)
     }
 
     private var linkedPlant: Plant? { engine.resolvedLinkedPlant(for: object) }
@@ -163,6 +165,22 @@ struct GardenObjectInspectorSheet: View {
                     }
                 }
 
+                if object.objectType.castsShadow {
+                    Section {
+                        Stepper(value: $structureHeightMeters, in: 0.2...30, step: 0.1) {
+                            HStack {
+                                Text("Hauteur")
+                                Spacer()
+                                Text(String(format: "%.1f m", structureHeightMeters)).foregroundStyle(.secondary)
+                            }
+                        }
+                    } header: {
+                        Text("Hauteur (pour l'ombre)")
+                    } footer: {
+                        Text("Saisie utilisateur — sert à estimer la longueur de l'ombre projetée (Phase 6F).")
+                    }
+                }
+
                 Section("Entité liée") {
                     if let linkedPlant {
                         Button {
@@ -257,6 +275,9 @@ struct GardenObjectInspectorSheet: View {
                 startAngleDegrees: sprinklerStartAngleDegrees, endAngleDegrees: sprinklerEndAngleDegrees,
                 flowRateLitersPerHour: Double(sprinklerFlowRateText), context: modelContext
             )
+        }
+        if object.objectType.castsShadow {
+            engine.setStructureHeight(object, meters: structureHeightMeters, context: modelContext)
         }
     }
 }

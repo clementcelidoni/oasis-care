@@ -52,6 +52,14 @@ final class GardenMapEngine: ObservableObject {
     @Published var visibleLayers: Set<GardenMapLayer> = Set(GardenMapLayer.allCases)
     @Published var layerOpacities: [GardenMapLayer: Double] = [:]
 
+    /// Spec Phase 6F — sun/shadow simulation state. Hour and date
+    /// default to "now" so opening the simulation shows today's actual
+    /// sun position first, matching the spec's own "le plan se met à
+    /// jour" framing (start from reality, then let the user explore).
+    @Published var isShowingShadows = false
+    @Published var sunSimulationHour: Double = Double(Calendar.current.component(.hour, from: .now))
+    @Published var sunSimulationDate: Date = .now
+
     @Published var snappingEnabled = true
     /// Index of the boundary/area point currently under a drag, so the
     /// view can show a live distance label — nil the rest of the time.
@@ -196,6 +204,21 @@ final class GardenMapEngine: ObservableObject {
     func deleteAreaPoint(at index: Int, areaID: UUID, context: ModelContext) {
         guard let area = area(withID: areaID) else { return }
         deletePoint(at: index, in: area.points, target: .area(area), context: context)
+    }
+
+    /// Spec Phase 6F — GardenMicroclimate's descriptive fields.
+    func setMicroclimate(
+        _ area: GardenArea, sunLevel: MicroclimateSunLevel?, windLevel: MicroclimateWindLevel?,
+        soilLevel: MicroclimateSoilLevel?, notes: String?, context: ModelContext
+    ) {
+        area.microclimateSunLevel = sunLevel
+        area.microclimateWindLevel = windLevel
+        area.microclimateSoilLevel = soilLevel
+        area.microclimateNotes = (notes?.isEmpty ?? true) ? nil : notes
+        area.updatedAt = .now
+        if area.syncStatus != .pendingCreate { area.syncStatus = .pendingUpdate }
+        try? context.save()
+        objectWillChange.send()
     }
 
     // MARK: - Irrigation pipes (Phase 6D)
@@ -416,6 +439,13 @@ final class GardenMapEngine: ObservableObject {
         object.sprinklerStartAngleDegrees = startAngleDegrees
         object.sprinklerEndAngleDegrees = endAngleDegrees
         object.sprinklerFlowRateLitersPerHour = flowRateLitersPerHour
+        markUpdated(object, context: context)
+    }
+
+    /// Spec Phase 6F — shadow-casting height, Saisie utilisateur (this
+    /// app has no way to measure a structure's real height itself).
+    func setStructureHeight(_ object: GardenMapObject, meters: Double?, context: ModelContext) {
+        object.structureHeightMeters = meters
         markUpdated(object, context: context)
     }
 

@@ -52,6 +52,7 @@ struct OasisPlanView: View {
         case objectInspector(GardenMapObject)
         case pipes
         case layers
+        case sunSimulation
 
         var id: String {
             switch self {
@@ -60,6 +61,7 @@ struct OasisPlanView: View {
             case .objectInspector(let object): return "inspector-\(object.id)"
             case .pipes: return "pipes"
             case .layers: return "layers"
+            case .sunSimulation: return "sunSimulation"
             }
         }
     }
@@ -111,6 +113,8 @@ struct OasisPlanView: View {
                 IrrigationPipesSheet(engine: engine)
             case .layers:
                 GardenLayersSheet(engine: engine)
+            case .sunSimulation:
+                SunSimulationSheet(engine: engine)
             }
         }
     }
@@ -205,9 +209,49 @@ struct OasisPlanView: View {
             drawSprinklerCoverage(in: context, size: size, camera: camera)
             drawPipes(in: context, size: size, camera: camera)
         }
+        drawShadows(in: context, size: size, camera: camera)
         drawBoundary(in: context, size: size, camera: camera)
         drawOrigin(in: context, size: size, camera: camera)
         drawScaleBar(in: context, size: size, camera: camera)
+    }
+
+    /// Spec Phase 6F — "dans une première version : utiliser les objets
+    /// possédant une hauteur... calculer une approximation. Indiquer
+    /// clairement : Simulation estimée." Each shadow is a single thick
+    /// line pointing away from the sun, length = height / tan(elevation)
+    /// (capped so a low sun near sunrise/sunset can't produce an
+    /// absurdly long line) — a deliberately simple approximation, not a
+    /// precise silhouette polygon, matching the spec's own framing.
+    /// Azimuth (compass, 0°=N clockwise) is converted to
+    /// GardenCoordinate's math convention (0°=E counter-clockwise) here,
+    /// the same conversion pattern used for every other angle in this
+    /// file, before the direction is used.
+    private func drawShadows(in context: GraphicsContext, size: CGSize, camera: GardenMapCamera) {
+        guard engine.isShowingShadows, let latitude = engine.garden.latitude else { return }
+        let sunPosition = SunExposureService.sunPosition(latitude: latitude, date: engine.sunSimulationDate, hour: engine.sunSimulationHour)
+        guard sunPosition.isAboveHorizon else { return }
+
+        let shadowCasters = engine.garden.mapObjects.filter { $0.objectType.castsShadow && $0.structureHeightMeters != nil }
+        guard !shadowCasters.isEmpty else { return }
+
+        let mathAngleDegrees = 90 - sunPosition.azimuthDegrees
+        let shadowDirectionRadians = (mathAngleDegrees + 180) * .pi / 180
+        let elevationRadians = max(sunPosition.elevationDegrees, 1) * .pi / 180
+
+        for object in shadowCasters {
+            guard let heightMeters = object.structureHeightMeters else { continue }
+            let shadowLengthMeters = min(heightMeters / tan(elevationRadians), 60)
+            let shadowEnd = GardenCoordinate(
+                xMeters: object.position.xMeters + shadowLengthMeters * cos(shadowDirectionRadians),
+                yMeters: object.position.yMeters + shadowLengthMeters * sin(shadowDirectionRadians)
+            )
+
+            var path = Path()
+            path.move(to: camera.screenPoint(for: object.position, viewSize: size))
+            path.addLine(to: camera.screenPoint(for: shadowEnd, viewSize: size))
+            let lineWidth = max(camera.points(forMeters: object.widthMeters), 4)
+            context.stroke(path, with: .color(.black.opacity(0.28)), style: StrokeStyle(lineWidth: lineWidth, lineCap: .round))
+        }
     }
 
     /// One line per meter, every 5th line stronger — a drawing/
@@ -862,6 +906,13 @@ struct OasisPlanView: View {
                     Image(systemName: "square.3.layers.3d")
                 }
                 .accessibilityLabel("Calques")
+
+                Button {
+                    activeSheet = .sunSimulation
+                } label: {
+                    Image(systemName: "sun.max.fill")
+                }
+                .accessibilityLabel("Soleil et ombres")
             }
 
             Button {

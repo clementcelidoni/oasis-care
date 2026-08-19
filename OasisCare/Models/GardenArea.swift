@@ -15,6 +15,19 @@ final class GardenArea: Syncable {
     var areaType: GardenAreaType
     var name: String
     var points: [GardenCoordinate]
+
+    /// Spec Phase 6F — GardenMicroclimate's descriptive fields (see
+    /// MicroclimateDescriptors.swift's own doc comment for why these
+    /// live here rather than a separate model). All Saisie utilisateur
+    /// — the temperature delta itself isn't stored here at all, since
+    /// it's Calculée fresh from current sensor readings when available
+    /// rather than a figure that could go stale (see
+    /// GardenAreasSheet.microclimateTemperatureDelta).
+    var microclimateSunLevel: MicroclimateSunLevel?
+    var microclimateWindLevel: MicroclimateWindLevel?
+    var microclimateSoilLevel: MicroclimateSoilLevel?
+    var microclimateNotes: String?
+
     var createdAt: Date
     var updatedAt: Date?
     var syncStatus: SyncStatus?

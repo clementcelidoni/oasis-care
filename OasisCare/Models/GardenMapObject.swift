@@ -53,6 +53,12 @@ final class GardenMapObject: Syncable {
     var sprinklerEndAngleDegrees: Double?
     var sprinklerFlowRateLitersPerHour: Double?
 
+    /// Spec Phase 6F — vertical height for shadow-casting, distinct
+    /// from widthMeters/heightMeters above (which are the ground
+    /// footprint, not elevation). Only meaningful for
+    /// objectType.castsShadow; nil elsewhere.
+    var structureHeightMeters: Double?
+
     var createdAt: Date
     var updatedAt: Date?
     var syncStatus: SyncStatus?
@@ -71,6 +77,7 @@ final class GardenMapObject: Syncable {
             self.sprinklerStartAngleDegrees = 0
             self.sprinklerEndAngleDegrees = 360
         }
+        self.structureHeightMeters = objectType.defaultStructureHeightMeters
         self.createdAt = .now
         self.updatedAt = .now
         self.syncStatus = .pendingCreate

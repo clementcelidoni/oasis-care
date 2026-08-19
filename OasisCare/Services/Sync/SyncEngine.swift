@@ -429,6 +429,7 @@ final class SyncEngine: ObservableObject {
             object.sprinklerStartAngleDegrees = row.sprinklerStartAngleDegrees
             object.sprinklerEndAngleDegrees = row.sprinklerEndAngleDegrees
             object.sprinklerFlowRateLitersPerHour = row.sprinklerFlowRateLitersPerHour
+            object.structureHeightMeters = row.structureHeightMeters
             object.syncStatus = .synced
             object.updatedAt = row.updatedAt
             context.insert(object)
@@ -439,6 +440,10 @@ final class SyncEngine: ObservableObject {
             let garden = row.gardenId.flatMap { gardensByID[$0] }
             let area = GardenArea(garden: garden, areaType: row.areaType, name: row.name, points: row.points)
             area.id = row.id
+            area.microclimateSunLevel = row.microclimateSunLevel
+            area.microclimateWindLevel = row.microclimateWindLevel
+            area.microclimateSoilLevel = row.microclimateSoilLevel
+            area.microclimateNotes = row.microclimateNotes
             area.syncStatus = .synced
             area.updatedAt = row.updatedAt
             context.insert(area)
@@ -1109,6 +1114,7 @@ final class SyncEngine: ObservableObject {
         var sprinklerStartAngleDegrees: Double?
         var sprinklerEndAngleDegrees: Double?
         var sprinklerFlowRateLitersPerHour: Double?
+        var structureHeightMeters: Double?
         var updatedAt: Date?
 
         enum CodingKeys: String, CodingKey {
@@ -1130,6 +1136,7 @@ final class SyncEngine: ObservableObject {
             case sprinklerStartAngleDegrees = "sprinkler_start_angle_degrees"
             case sprinklerEndAngleDegrees = "sprinkler_end_angle_degrees"
             case sprinklerFlowRateLitersPerHour = "sprinkler_flow_rate_liters_per_hour"
+            case structureHeightMeters = "structure_height_meters"
             case updatedAt = "updated_at"
         }
     }
@@ -1140,6 +1147,10 @@ final class SyncEngine: ObservableObject {
         var areaType: GardenAreaType
         var name: String
         var points: [GardenCoordinate]
+        var microclimateSunLevel: MicroclimateSunLevel?
+        var microclimateWindLevel: MicroclimateWindLevel?
+        var microclimateSoilLevel: MicroclimateSoilLevel?
+        var microclimateNotes: String?
         var updatedAt: Date?
 
         enum CodingKeys: String, CodingKey {
@@ -1148,6 +1159,10 @@ final class SyncEngine: ObservableObject {
             case areaType = "area_type"
             case name
             case points
+            case microclimateSunLevel = "microclimate_sun_level"
+            case microclimateWindLevel = "microclimate_wind_level"
+            case microclimateSoilLevel = "microclimate_soil_level"
+            case microclimateNotes = "microclimate_notes"
             case updatedAt = "updated_at"
         }
     }
@@ -2600,6 +2615,7 @@ final class SyncEngine: ObservableObject {
         var sprinklerStartAngleDegrees: Double?
         var sprinklerEndAngleDegrees: Double?
         var sprinklerFlowRateLitersPerHour: Double?
+        var structureHeightMeters: Double?
         var updatedAt: Date
 
         enum CodingKeys: String, CodingKey {
@@ -2622,6 +2638,7 @@ final class SyncEngine: ObservableObject {
             case sprinklerStartAngleDegrees = "sprinkler_start_angle_degrees"
             case sprinklerEndAngleDegrees = "sprinkler_end_angle_degrees"
             case sprinklerFlowRateLitersPerHour = "sprinkler_flow_rate_liters_per_hour"
+            case structureHeightMeters = "structure_height_meters"
             case updatedAt = "updated_at"
         }
     }
@@ -2639,7 +2656,7 @@ final class SyncEngine: ObservableObject {
                 estimatedAdultCanopyDiameterMeters: object.estimatedAdultCanopyDiameterMeters,
                 sprinklerRadiusMeters: object.sprinklerRadiusMeters, sprinklerStartAngleDegrees: object.sprinklerStartAngleDegrees,
                 sprinklerEndAngleDegrees: object.sprinklerEndAngleDegrees, sprinklerFlowRateLitersPerHour: object.sprinklerFlowRateLitersPerHour,
-                updatedAt: object.updatedAt ?? .now
+                structureHeightMeters: object.structureHeightMeters, updatedAt: object.updatedAt ?? .now
             )
         }
         try await AuthService.client.from("garden_map_objects").upsert(dtos).execute()
@@ -2653,6 +2670,10 @@ final class SyncEngine: ObservableObject {
         var areaType: GardenAreaType
         var name: String
         var points: [GardenCoordinate]
+        var microclimateSunLevel: MicroclimateSunLevel?
+        var microclimateWindLevel: MicroclimateWindLevel?
+        var microclimateSoilLevel: MicroclimateSoilLevel?
+        var microclimateNotes: String?
         var updatedAt: Date
 
         enum CodingKeys: String, CodingKey {
@@ -2662,6 +2683,10 @@ final class SyncEngine: ObservableObject {
             case areaType = "area_type"
             case name
             case points
+            case microclimateSunLevel = "microclimate_sun_level"
+            case microclimateWindLevel = "microclimate_wind_level"
+            case microclimateSoilLevel = "microclimate_soil_level"
+            case microclimateNotes = "microclimate_notes"
             case updatedAt = "updated_at"
         }
     }
@@ -2672,7 +2697,9 @@ final class SyncEngine: ObservableObject {
         let dtos = pending.map { area in
             GardenAreaDTO(
                 id: area.id, workspaceId: workspaceID, gardenId: area.garden?.id, areaType: area.areaType,
-                name: area.name, points: area.points, updatedAt: area.updatedAt ?? .now
+                name: area.name, points: area.points, microclimateSunLevel: area.microclimateSunLevel,
+                microclimateWindLevel: area.microclimateWindLevel, microclimateSoilLevel: area.microclimateSoilLevel,
+                microclimateNotes: area.microclimateNotes, updatedAt: area.updatedAt ?? .now
             )
         }
         try await AuthService.client.from("garden_areas").upsert(dtos).execute()
