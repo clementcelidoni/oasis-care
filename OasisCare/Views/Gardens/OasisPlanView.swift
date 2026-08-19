@@ -55,6 +55,7 @@ struct OasisPlanView: View {
         case sunSimulation
         case timeline
         case whereToPlant
+        case route
 
         var id: String {
             switch self {
@@ -66,6 +67,7 @@ struct OasisPlanView: View {
             case .sunSimulation: return "sunSimulation"
             case .timeline: return "timeline"
             case .whereToPlant: return "whereToPlant"
+            case .route: return "route"
             }
         }
     }
@@ -123,6 +125,8 @@ struct OasisPlanView: View {
                 GardenTimelineSheet(engine: engine)
             case .whereToPlant:
                 WhereToPlantSheet(engine: engine)
+            case .route:
+                GardenRouteSheet(engine: engine)
             }
         }
     }
@@ -219,8 +223,33 @@ struct OasisPlanView: View {
         }
         drawShadows(in: context, size: size, camera: camera)
         drawBoundary(in: context, size: size, camera: camera)
+        if engine.visibleLayers.contains(.interventions) {
+            drawTaskBadges(in: context, size: size, camera: camera)
+        }
         drawOrigin(in: context, size: size, camera: camera)
         drawScaleBar(in: context, size: size, camera: camera)
+    }
+
+    /// Spec Phase 6I — "à faire" layer: a plain count badge centered on
+    /// each zone, matching the spec's own worked example (12, 5, 3)
+    /// rather than a heatmap or icon list — the count itself is already
+    /// the information.
+    private func drawTaskBadges(in context: GraphicsContext, size: CGSize, camera: GardenMapCamera) {
+        for area in engine.garden.areas {
+            guard area.points.count >= 3 else { continue }
+            let count = engine.pendingTaskCount(inArea: area)
+            guard count > 0 else { continue }
+
+            let center = camera.screenPoint(for: GardenGeometry.centroid(of: area.points), viewSize: size)
+            let radius: CGFloat = 12
+            let badgeRect = CGRect(x: center.x - radius, y: center.y - radius, width: radius * 2, height: radius * 2)
+            context.fill(Circle().path(in: badgeRect), with: .color(.red))
+            context.stroke(Circle().path(in: badgeRect), with: .color(.white), lineWidth: 1.5)
+            context.draw(
+                Text("\(count)").font(.caption2.weight(.bold)).foregroundStyle(.white),
+                at: center
+            )
+        }
     }
 
     /// Spec Phase 6F — "dans une première version : utiliser les objets
@@ -943,6 +972,13 @@ struct OasisPlanView: View {
                     Image(systemName: "mappin.and.ellipse")
                 }
                 .accessibilityLabel("Où planter ?")
+
+                Button {
+                    activeSheet = .route
+                } label: {
+                    Image(systemName: "figure.walk.circle.fill")
+                }
+                .accessibilityLabel("Parcours d'inspection")
             }
 
             Button {

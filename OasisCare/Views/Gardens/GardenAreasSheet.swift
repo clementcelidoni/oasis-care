@@ -22,12 +22,14 @@ struct GardenAreasSheet: View {
         case typePicker
         case design(GardenArea)
         case microclimate(GardenArea)
+        case zoneActions(GardenArea)
 
         var id: String {
             switch self {
             case .typePicker: return "typePicker"
             case .design(let area): return "design-\(area.id)"
             case .microclimate(let area): return "microclimate-\(area.id)"
+            case .zoneActions(let area): return "zoneActions-\(area.id)"
             }
         }
     }
@@ -110,6 +112,13 @@ struct GardenAreasSheet: View {
                                 Label("Microclimat", systemImage: "thermometer.sun")
                             }
                             .tint(.orange)
+
+                            Button {
+                                activeSheet = .zoneActions(area)
+                            } label: {
+                                Label("Actions groupées", systemImage: "checklist")
+                            }
+                            .tint(.green)
                         }
                     }
                     .onDelete { offsets in
@@ -146,6 +155,8 @@ struct GardenAreasSheet: View {
                     IrrigationDesignSheet(zone: area, engine: engine)
                 case .microclimate(let area):
                     MicroclimateEditSheet(engine: engine, area: area)
+                case .zoneActions(let area):
+                    GardenZoneActionsSheet(area: area, engine: engine)
                 }
             }
         }

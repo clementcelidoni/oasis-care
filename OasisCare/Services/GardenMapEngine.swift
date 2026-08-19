@@ -65,6 +65,14 @@ final class GardenMapEngine: ObservableObject {
     /// negative = mode passé, positive = mode futur.
     @Published var timelineYearOffset: Double = 0
 
+    /// Spec Phase 6I — "GardenRoutePlanner." nil when no inspection
+    /// round is active.
+    @Published var activeRoute: [GardenRoutePlanner.Stop]?
+    @Published var activeRouteStepIndex: Int = 0
+    /// Selected for the "action groupée géographique" flow — nil unless
+    /// the user has explicitly picked a zone to bulk-act on.
+    @Published var bulkActionAreaID: UUID?
+
     @Published var snappingEnabled = true
     /// Index of the boundary/area point currently under a drag, so the
     /// view can show a live distance label — nil the rest of the time.
@@ -557,5 +565,63 @@ final class GardenMapEngine: ObservableObject {
             .filter { $0.objectType == .house || $0.objectType == .wall || $0.objectType == .greenhouse }
             .map { (id: $0.id, position: $0.position, widthMeters: $0.widthMeters) }
         return GrowthSimulationService.detectStructureProximity(vegetation: vegetation, structures: structures)
+    }
+
+    // MARK: - Route planner (Phase 6I)
+
+    /// Spec Phase 6I — "commencer le check-up... générer un parcours
+    /// raisonnable." Stops are every "checkable" thing placed on the
+    /// plan: vegetation, greenhouses, ponds — matching the spec's own
+    /// worked example (Phoenix, Olivier, massif tropical, citronnier,
+    /// serre, bassin). `from` is the user's last known position when
+    /// available (Saisie via a one-shot LocationService check in the
+    /// route sheet), the garden origin otherwise.
+    func startRoute(from start: GardenCoordinate) {
+        let stops: [GardenRoutePlanner.Stop] = garden.mapObjects
+            .filter { $0.objectType.isVegetation || $0.objectType == .greenhouse || $0.objectType == .pond }
+            .map { object in
+                let label = resolvedLinkedPlant(for: object)?.customName ?? object.label ?? object.objectType.label
+                return GardenRoutePlanner.Stop(objectId: object.id, position: object.position, label: label)
+            }
+        activeRoute = GardenRoutePlanner.planRoute(from: start, stops: stops)
+        activeRouteStepIndex = 0
+        objectWillChange.send()
+    }
+
+    func confirmCurrentRouteStep() {
+        guard let activeRoute, activeRouteStepIndex < activeRoute.count else { return }
+        activeRouteStepIndex += 1
+        objectWillChange.send()
+    }
+
+    func endRoute() {
+        activeRoute = nil
+        activeRouteStepIndex = 0
+        objectWillChange.send()
+    }
+
+    // MARK: - Bulk zone actions (Phase 6I)
+
+    /// Spec Phase 6I — "action groupée géographique... sélectionner
+    /// cette zone." Plants whose GardenMapObject sits inside the zone's
+    /// polygon — the same point-in-polygon test used throughout Phase
+    /// 6D/6F/6H, applied here to gather real Plant records for bulk
+    /// actions (arrosage groupé reuses the app's existing bulk-water
+    /// flow via these plants).
+    func plants(inArea area: GardenArea) -> [Plant] {
+        garden.mapObjects
+            .filter { $0.objectType.isVegetation && GardenGeometry.contains($0.position, polygon: area.points) }
+            .compactMap { resolvedLinkedPlant(for: $0) }
+    }
+
+    /// Spec Phase 6I — "calque à faire... directement sur les zones,"
+    /// with the spec's own example rendered as plain counts (12, 5, 3).
+    /// Reuses CareSchedule.isDue — the same due/overdue signal already
+    /// driving the dashboard and Planning tab — rather than a second,
+    /// separately-defined notion of "needs attention."
+    func pendingTaskCount(inArea area: GardenArea) -> Int {
+        plants(inArea: area).reduce(0) { total, plant in
+            total + plant.careSchedules.filter(\.isDue).count
+        }
     }
 }
