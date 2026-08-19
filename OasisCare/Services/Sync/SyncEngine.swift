@@ -63,6 +63,8 @@ final class SyncEngine: ObservableObject {
             try await pushDashboardPreferences(workspaceID: workspaceID, context: context)
             try await pushSmartModeSettings(workspaceID: workspaceID, context: context)
             try await pushGardenBoundaries(workspaceID: workspaceID, context: context)
+            try await pushGardenMapObjects(workspaceID: workspaceID, context: context)
+            try await pushGardenAreas(workspaceID: workspaceID, context: context)
             try await pushPendingDeletions(context: context)
             try context.save()
             lastSyncError = nil
@@ -403,6 +405,38 @@ final class SyncEngine: ObservableObject {
             boundary.updatedAt = row.updatedAt
             context.insert(boundary)
             garden?.boundary = boundary
+        }
+
+        let remoteMapObjects: [GardenMapObjectRow] = try await AuthService.client.from("garden_map_objects").select().execute().value
+        for row in remoteMapObjects {
+            let garden = row.gardenId.flatMap { gardensByID[$0] }
+            let object = GardenMapObject(
+                garden: garden, objectType: row.objectType,
+                position: GardenCoordinate(xMeters: row.positionXMeters, yMeters: row.positionYMeters)
+            )
+            object.id = row.id
+            object.rotationRadians = row.rotationRadians
+            object.widthMeters = row.widthMeters
+            object.heightMeters = row.heightMeters
+            object.zIndex = row.zIndex
+            object.label = row.label
+            object.linkedEntityId = row.linkedEntityId
+            object.linkedEntityKind = row.linkedEntityKind
+            object.canopyDiameterMeters = row.canopyDiameterMeters
+            object.estimatedAdultCanopyDiameterMeters = row.estimatedAdultCanopyDiameterMeters
+            object.syncStatus = .synced
+            object.updatedAt = row.updatedAt
+            context.insert(object)
+        }
+
+        let remoteAreas: [GardenAreaRow] = try await AuthService.client.from("garden_areas").select().execute().value
+        for row in remoteAreas {
+            let garden = row.gardenId.flatMap { gardensByID[$0] }
+            let area = GardenArea(garden: garden, areaType: row.areaType, name: row.name, points: row.points)
+            area.id = row.id
+            area.syncStatus = .synced
+            area.updatedAt = row.updatedAt
+            context.insert(area)
         }
 
         var scenesByID: [UUID: OasisScene] = [:]
@@ -1034,6 +1068,60 @@ final class SyncEngine: ObservableObject {
         enum CodingKeys: String, CodingKey {
             case id
             case gardenId = "garden_id"
+            case points
+            case updatedAt = "updated_at"
+        }
+    }
+
+    private struct GardenMapObjectRow: Decodable {
+        var id: UUID
+        var gardenId: UUID?
+        var objectType: GardenObjectType
+        var positionXMeters: Double
+        var positionYMeters: Double
+        var rotationRadians: Double
+        var widthMeters: Double
+        var heightMeters: Double
+        var zIndex: Int
+        var label: String?
+        var linkedEntityId: UUID?
+        var linkedEntityKind: GardenObjectLinkKind?
+        var canopyDiameterMeters: Double?
+        var estimatedAdultCanopyDiameterMeters: Double?
+        var updatedAt: Date?
+
+        enum CodingKeys: String, CodingKey {
+            case id
+            case gardenId = "garden_id"
+            case objectType = "object_type"
+            case positionXMeters = "position_x_meters"
+            case positionYMeters = "position_y_meters"
+            case rotationRadians = "rotation_radians"
+            case widthMeters = "width_meters"
+            case heightMeters = "height_meters"
+            case zIndex = "z_index"
+            case label
+            case linkedEntityId = "linked_entity_id"
+            case linkedEntityKind = "linked_entity_kind"
+            case canopyDiameterMeters = "canopy_diameter_meters"
+            case estimatedAdultCanopyDiameterMeters = "estimated_adult_canopy_diameter_meters"
+            case updatedAt = "updated_at"
+        }
+    }
+
+    private struct GardenAreaRow: Decodable {
+        var id: UUID
+        var gardenId: UUID?
+        var areaType: GardenAreaType
+        var name: String
+        var points: [GardenCoordinate]
+        var updatedAt: Date?
+
+        enum CodingKeys: String, CodingKey {
+            case id
+            case gardenId = "garden_id"
+            case areaType = "area_type"
+            case name
             case points
             case updatedAt = "updated_at"
         }
@@ -2439,6 +2527,96 @@ final class SyncEngine: ObservableObject {
         }
         try await AuthService.client.from("garden_boundaries").upsert(dtos).execute()
         for boundary in pending { boundary.syncStatus = .synced }
+    }
+
+    // MARK: - Garden objects and areas (Phase 6C)
+
+    private struct GardenMapObjectDTO: Encodable {
+        var id: UUID
+        var workspaceId: UUID
+        var gardenId: UUID?
+        var objectType: GardenObjectType
+        var positionXMeters: Double
+        var positionYMeters: Double
+        var rotationRadians: Double
+        var widthMeters: Double
+        var heightMeters: Double
+        var zIndex: Int
+        var label: String?
+        var linkedEntityId: UUID?
+        var linkedEntityKind: GardenObjectLinkKind?
+        var canopyDiameterMeters: Double?
+        var estimatedAdultCanopyDiameterMeters: Double?
+        var updatedAt: Date
+
+        enum CodingKeys: String, CodingKey {
+            case id
+            case workspaceId = "workspace_id"
+            case gardenId = "garden_id"
+            case objectType = "object_type"
+            case positionXMeters = "position_x_meters"
+            case positionYMeters = "position_y_meters"
+            case rotationRadians = "rotation_radians"
+            case widthMeters = "width_meters"
+            case heightMeters = "height_meters"
+            case zIndex = "z_index"
+            case label
+            case linkedEntityId = "linked_entity_id"
+            case linkedEntityKind = "linked_entity_kind"
+            case canopyDiameterMeters = "canopy_diameter_meters"
+            case estimatedAdultCanopyDiameterMeters = "estimated_adult_canopy_diameter_meters"
+            case updatedAt = "updated_at"
+        }
+    }
+
+    private func pushGardenMapObjects(workspaceID: UUID, context: ModelContext) async throws {
+        let pending = try context.fetch(FetchDescriptor<GardenMapObject>()).filter { $0.syncStatus != .synced }
+        guard !pending.isEmpty else { return }
+        let dtos = pending.map { object in
+            GardenMapObjectDTO(
+                id: object.id, workspaceId: workspaceID, gardenId: object.garden?.id, objectType: object.objectType,
+                positionXMeters: object.position.xMeters, positionYMeters: object.position.yMeters,
+                rotationRadians: object.rotationRadians, widthMeters: object.widthMeters, heightMeters: object.heightMeters,
+                zIndex: object.zIndex, label: object.label, linkedEntityId: object.linkedEntityId,
+                linkedEntityKind: object.linkedEntityKind, canopyDiameterMeters: object.canopyDiameterMeters,
+                estimatedAdultCanopyDiameterMeters: object.estimatedAdultCanopyDiameterMeters, updatedAt: object.updatedAt ?? .now
+            )
+        }
+        try await AuthService.client.from("garden_map_objects").upsert(dtos).execute()
+        for object in pending { object.syncStatus = .synced }
+    }
+
+    private struct GardenAreaDTO: Encodable {
+        var id: UUID
+        var workspaceId: UUID
+        var gardenId: UUID?
+        var areaType: GardenAreaType
+        var name: String
+        var points: [GardenCoordinate]
+        var updatedAt: Date
+
+        enum CodingKeys: String, CodingKey {
+            case id
+            case workspaceId = "workspace_id"
+            case gardenId = "garden_id"
+            case areaType = "area_type"
+            case name
+            case points
+            case updatedAt = "updated_at"
+        }
+    }
+
+    private func pushGardenAreas(workspaceID: UUID, context: ModelContext) async throws {
+        let pending = try context.fetch(FetchDescriptor<GardenArea>()).filter { $0.syncStatus != .synced }
+        guard !pending.isEmpty else { return }
+        let dtos = pending.map { area in
+            GardenAreaDTO(
+                id: area.id, workspaceId: workspaceID, gardenId: area.garden?.id, areaType: area.areaType,
+                name: area.name, points: area.points, updatedAt: area.updatedAt ?? .now
+            )
+        }
+        try await AuthService.client.from("garden_areas").upsert(dtos).execute()
+        for area in pending { area.syncStatus = .synced }
     }
 
     // MARK: - Scenes

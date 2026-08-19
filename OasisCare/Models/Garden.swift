@@ -68,6 +68,13 @@ final class Garden: Syncable {
     @Relationship(deleteRule: .cascade, inverse: \GardenBoundary.garden)
     var boundary: GardenBoundary?
 
+    /// Spec Phase 6C — placed items and drawn zones on OasisPlan.
+    @Relationship(deleteRule: .cascade, inverse: \GardenMapObject.garden)
+    var mapObjects: [GardenMapObject] = []
+
+    @Relationship(deleteRule: .cascade, inverse: \GardenArea.garden)
+    var areas: [GardenArea] = []
+
     init(name: String, address: String? = nil, notes: String = "", dateCreated: Date = .now) {
         self.id = UUID()
         self.name = name
