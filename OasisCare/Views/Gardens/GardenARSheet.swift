@@ -270,15 +270,24 @@ private struct ARViewContainer: UIViewRepresentable {
             currentAnchor = anchor
         }
 
+        /// Both parts are generateSphere — confirmed to compile at this
+        /// project's iOS 17 deployment target by an earlier CI run (the
+        /// cylinder-based trunk this replaced needed iOS 18 and failed
+        /// the build). The trunk is a sphere stretched tall and thin via
+        /// a non-uniform scale rather than a true cylinder mesh — still
+        /// a clearly-approximate stand-in, and it sidesteps the
+        /// generateCylinder availability question entirely instead of
+        /// guessing at a second unverified API.
         private static func makePlantParts(heightMeters: Double, tint: UIColor) -> [ModelEntity] {
             let trunkHeight = Float(heightMeters) * 0.6
             let trunkRadius = max(Float(heightMeters) * 0.03, 0.02)
             let foliageRadius = max(Float(heightMeters) * 0.35, 0.05)
 
             let trunk = ModelEntity(
-                mesh: MeshResource.generateCylinder(height: trunkHeight, radius: trunkRadius),
+                mesh: MeshResource.generateSphere(radius: trunkRadius),
                 materials: [SimpleMaterial(color: .brown, isMetallic: false)]
             )
+            trunk.scale = SIMD3<Float>(1, trunkHeight / max(trunkRadius, 0.001), 1)
             trunk.position.y = trunkHeight / 2
 
             let foliage = ModelEntity(
