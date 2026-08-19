@@ -25,7 +25,12 @@ final class Garden: Syncable {
     var weatherEnabled: Bool = false
     /// Spec Phase 6A — "le mode préféré est mémorisé par jardin." Inline
     /// default, same migration-safety reasoning as weatherEnabled above.
-    var preferredMapMode: GardenMapMode = .oasisPlan
+    /// The @Model macro needs the fully-qualified name here — plain
+    /// `.oasisPlan` shorthand fails to compile with "A default value
+    /// requires a fully qualified domain named value" (its macro
+    /// expansion can't resolve implicit-member syntax the way normal
+    /// type-inferred contexts can).
+    var preferredMapMode: GardenMapMode = GardenMapMode.oasisPlan
 
     @Relationship(deleteRule: .cascade, inverse: \GardenZone.garden)
     var zones: [GardenZone] = []
