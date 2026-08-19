@@ -57,6 +57,7 @@ struct OasisPlanView: View {
         case whereToPlant
         case route
         case augmentedReality
+        case mapAI
 
         var id: String {
             switch self {
@@ -70,6 +71,7 @@ struct OasisPlanView: View {
             case .whereToPlant: return "whereToPlant"
             case .route: return "route"
             case .augmentedReality: return "augmentedReality"
+            case .mapAI: return "mapAI"
             }
         }
     }
@@ -135,6 +137,8 @@ struct OasisPlanView: View {
                 GardenRouteSheet(engine: engine)
             case .augmentedReality:
                 GardenARSheet(engine: engine)
+            case .mapAI:
+                GardenMapAIQuerySheet(engine: engine)
             }
         }
     }
@@ -240,8 +244,36 @@ struct OasisPlanView: View {
         if engine.isMeasuring {
             drawMeasurementPoints(in: context, size: size, camera: camera)
         }
+        drawAIHighlights(in: context, size: size, camera: camera)
         drawOrigin(in: context, size: size, camera: camera)
         drawScaleBar(in: context, size: size, camera: camera)
+    }
+
+    /// Spec Phase 6L — "mettre en évidence une ou plusieurs zones" plus
+    /// the design-mode placement preview, both purely additive overlays
+    /// on top of the normal drawAreas fill/stroke.
+    private func drawAIHighlights(in context: GraphicsContext, size: CGSize, camera: GardenMapCamera) {
+        if !engine.aiHighlightedZoneIDs.isEmpty {
+            for area in engine.garden.areas where engine.aiHighlightedZoneIDs.contains(area.id) && area.points.count >= 3 {
+                var path = Path()
+                let screenPoints = area.points.map { camera.screenPoint(for: $0, viewSize: size) }
+                path.move(to: screenPoints[0])
+                for point in screenPoints.dropFirst() { path.addLine(to: point) }
+                path.closeSubpath()
+                context.stroke(path, with: .color(.purple), style: StrokeStyle(lineWidth: 4, lineCap: .round, lineJoin: .round, dash: [10, 6]))
+            }
+        }
+
+        for placement in engine.aiProposedPlacements {
+            let center = camera.screenPoint(for: placement.position, viewSize: size)
+            let radius: CGFloat = 10
+            let rect = CGRect(x: center.x - radius, y: center.y - radius, width: radius * 2, height: radius * 2)
+            context.stroke(Circle().path(in: rect), with: .color(.purple), style: StrokeStyle(lineWidth: 2, dash: [4, 3]))
+            context.draw(
+                Text(placement.label).font(.caption2.weight(.semibold)).foregroundStyle(.purple),
+                at: CGPoint(x: center.x, y: center.y - radius - 10)
+            )
+        }
     }
 
     /// Spec Phase 6K — the points the user has tapped while measuring,
@@ -1172,6 +1204,13 @@ struct OasisPlanView: View {
                     }
                     .accessibilityLabel("Voir en réalité augmentée")
                 }
+
+                Button {
+                    activeSheet = .mapAI
+                } label: {
+                    Image(systemName: "sparkles")
+                }
+                .accessibilityLabel("Oasis AI")
             }
 
             Button {

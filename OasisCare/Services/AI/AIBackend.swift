@@ -29,11 +29,13 @@ enum AIBackend {
 enum AIServiceError: LocalizedError {
     case server(String)
     case noUsablePhoto
+    case invalidResponse
 
     var errorDescription: String? {
         switch self {
         case .server(let message): return message
         case .noUsablePhoto: return "Aucune photo valide à analyser."
+        case .invalidResponse: return "Réponse de l'assistant incomplète. Réessayez."
         }
     }
 }

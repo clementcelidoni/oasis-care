@@ -8,6 +8,8 @@ import SwiftUI
 enum GardenMapLayer: String, CaseIterable, Identifiable, Codable {
     case vegetation, canopies, irrigation, sensorsLayer, devices, constructions, amenities
     case health, soilMoisture, temperature, waterConsumption, alerts, interventions, qrNfc
+    /// Spec Phase 6L — "Ajouter facultativement un calque : Biodiversité."
+    case biodiversity
 
     var id: String { rawValue }
 
@@ -27,6 +29,7 @@ enum GardenMapLayer: String, CaseIterable, Identifiable, Codable {
         case .alerts: return "Alertes"
         case .interventions: return "Interventions"
         case .qrNfc: return "QR/NFC"
+        case .biodiversity: return "Biodiversité"
         }
     }
 
@@ -46,6 +49,7 @@ enum GardenMapLayer: String, CaseIterable, Identifiable, Codable {
         case .alerts: return "exclamationmark.triangle.fill"
         case .interventions: return "checklist"
         case .qrNfc: return "qrcode"
+        case .biodiversity: return "ladybug.fill"
         }
     }
 
@@ -71,6 +75,7 @@ enum GardenMapLayer: String, CaseIterable, Identifiable, Codable {
         case .devices: return [.light, .electricalPoint]
         case .constructions: return [.house, .wall, .fence, .stairs]
         case .amenities: return [.terrace, .pool, .pond, .greenhouse, .path, .rock, .decorativeObject, .custom]
+        case .biodiversity: return [.birdhouse, .insectHotel, .wildlifeWaterPoint, .pollinatorZone, .wildlifeRefuge]
         default: return []
         }
     }

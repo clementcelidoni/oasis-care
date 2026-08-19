@@ -16,6 +16,16 @@ enum GardenObjectType: String, Codable, CaseIterable, Identifiable {
     case valve, pump, sensor, filter
     case sprinkler, dripEmitter
     case light, electricalPoint
+    /// Spec Phase 6L — "Biodiversité... nichoir, hôtel à insectes, point
+    /// d'eau, zone mellifère, refuge." Plain object-catalogue additions,
+    /// not a new system: spec's own "ne pas complexifier le cœur de
+    /// Phase 6" is best honored by reusing GardenMapObject/the existing
+    /// palette rather than inventing a parallel one. `wildlifeWaterPoint`
+    /// is named apart from the existing `.waterSource` (an irrigation
+    /// spigot, grouped with valve/pump/filter below) — a birdbath and an
+    /// irrigation tap are not the same fact about the garden, even
+    /// though spec's own wording for both happens to be "point d'eau."
+    case birdhouse, insectHotel, wildlifeWaterPoint, pollinatorZone, wildlifeRefuge
     case custom
 
     var id: String { rawValue }
@@ -46,6 +56,11 @@ enum GardenObjectType: String, Codable, CaseIterable, Identifiable {
         case .dripEmitter: return "Goutteur"
         case .light: return "Éclairage"
         case .electricalPoint: return "Point électrique"
+        case .birdhouse: return "Nichoir"
+        case .insectHotel: return "Hôtel à insectes"
+        case .wildlifeWaterPoint: return "Point d'eau (biodiversité)"
+        case .pollinatorZone: return "Zone mellifère"
+        case .wildlifeRefuge: return "Refuge"
         case .custom: return "Personnalisé"
         }
     }
@@ -76,6 +91,11 @@ enum GardenObjectType: String, Codable, CaseIterable, Identifiable {
         case .dripEmitter: return "drop.circle.fill"
         case .light: return "lightbulb.fill"
         case .electricalPoint: return "bolt.fill"
+        case .birdhouse: return "bird.fill"
+        case .insectHotel: return "ladybug.fill"
+        case .wildlifeWaterPoint: return "drop.circle.fill"
+        case .pollinatorZone: return "camera.macro"
+        case .wildlifeRefuge: return "leaf.circle.fill"
         case .custom: return "square.dashed"
         }
     }
@@ -108,6 +128,8 @@ enum GardenObjectType: String, Codable, CaseIterable, Identifiable {
         case .waterSource, .valve, .pump, .sensor, .filter: return 0.3
         case .sprinkler, .dripEmitter: return 0.2
         case .light, .electricalPoint: return 0.2
+        case .birdhouse, .insectHotel, .wildlifeWaterPoint, .wildlifeRefuge: return 0.3
+        case .pollinatorZone: return 1.5
         case .custom: return 1
         }
     }

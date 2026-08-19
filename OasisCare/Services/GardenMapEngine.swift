@@ -768,4 +768,90 @@ final class GardenMapEngine: ObservableObject {
         garden.planImage?.opacity = min(max(opacity, 0.1), 1)
         objectWillChange.send()
     }
+
+    // MARK: - Oasis AI Digital Twin (Phase 6L)
+
+    /// Spec Phase 6L — "RÉPONSE VISUELLE... mettre en évidence une ou
+    /// plusieurs zones sur la carte." Set of real GardenArea ids to
+    /// outline; empty means nothing highlighted. Never populated with
+    /// anything but ids the AI echoed back from the context it was
+    /// given (see GardenMapAIService), so a highlighted zone is always
+    /// one the user actually drew.
+    @Published var aiHighlightedZoneIDs: Set<UUID> = []
+
+    /// Spec Phase 6L — "PREVIEW: afficher les positions avant
+    /// validation." Purely client-computed (GardenMapEngine.
+    /// proposedPositions) — never AI-derived coordinates — and never
+    /// persisted until the user explicitly confirms.
+    struct AIProposedPlacement: Identifiable {
+        var id = UUID()
+        var label: String
+        var position: GardenCoordinate
+    }
+    @Published var aiProposedPlacements: [AIProposedPlacement] = []
+
+    func setAIHighlightedZones(_ ids: Set<UUID>) {
+        aiHighlightedZoneIDs = ids
+        objectWillChange.send()
+    }
+
+    func setAIProposedPlacements(_ placements: [AIProposedPlacement]) {
+        aiProposedPlacements = placements
+        objectWillChange.send()
+    }
+
+    func clearAIPreview() {
+        aiHighlightedZoneIDs = []
+        aiProposedPlacements = []
+        objectWillChange.send()
+    }
+
+    /// "L'IA propose. L'utilisateur confirme." Turns the current
+    /// preview into real, persisted GardenMapObjects — the only place
+    /// an AI-originated planting suggestion becomes actual garden data,
+    /// and only because the user tapped a real confirm button to get
+    /// here.
+    func confirmAIProposedPlacements(context: ModelContext) {
+        for placement in aiProposedPlacements {
+            let object = addObject(type: .plant, at: placement.position, context: context)
+            object.label = placement.label
+        }
+        clearAIPreview()
+    }
+
+    /// Spec Phase 6L — "Imaginer un aménagement... PREVIEW: afficher les
+    /// positions avant validation" and "NE PAS LAISSER L'IA MODIFIER
+    /// DIRECTEMENT LE PLAN." A deterministic local grid-sample, not
+    /// anything AI-derived: the model proposes species names only (see
+    /// GardenMapAIService.DesignProposal), and this is the one and only
+    /// thing that ever turns a count into real coordinates, always
+    /// inside the real, already-drawn zone polygon — never a
+    /// model-invented position.
+    func proposedPositions(count: Int, inArea area: GardenArea) -> [GardenCoordinate] {
+        guard count > 0, area.points.count >= 3 else { return [] }
+        let (widthMeters, heightMeters) = GardenGeometry.boundingSize(of: area.points)
+        guard widthMeters > 0, heightMeters > 0 else { return [] }
+        let centroid = GardenGeometry.centroid(of: area.points)
+        let minX = centroid.xMeters - widthMeters / 2
+        let minY = centroid.yMeters - heightMeters / 2
+
+        let gridSize = max(Int(Double(count).squareRoot().rounded(.up)) * 2, 4)
+        var candidates: [GardenCoordinate] = []
+        for row in 0..<gridSize {
+            for col in 0..<gridSize {
+                let point = GardenCoordinate(
+                    xMeters: minX + (Double(col) + 0.5) * widthMeters / Double(gridSize),
+                    yMeters: minY + (Double(row) + 0.5) * heightMeters / Double(gridSize)
+                )
+                if GardenGeometry.contains(point, polygon: area.points) {
+                    candidates.append(point)
+                }
+            }
+        }
+        guard !candidates.isEmpty else { return Array(repeating: centroid, count: count) }
+        guard candidates.count > count else { return candidates }
+
+        let step = Double(candidates.count) / Double(count)
+        return (0..<count).map { candidates[Int(Double($0) * step)] }
+    }
 }
