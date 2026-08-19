@@ -51,6 +51,7 @@ struct OasisPlanView: View {
         case areas
         case objectInspector(GardenMapObject)
         case pipes
+        case layers
 
         var id: String {
             switch self {
@@ -58,6 +59,7 @@ struct OasisPlanView: View {
             case .areas: return "areas"
             case .objectInspector(let object): return "inspector-\(object.id)"
             case .pipes: return "pipes"
+            case .layers: return "layers"
             }
         }
     }
@@ -107,6 +109,8 @@ struct OasisPlanView: View {
                 GardenObjectInspectorSheet(engine: engine, object: object)
             case .pipes:
                 IrrigationPipesSheet(engine: engine)
+            case .layers:
+                GardenLayersSheet(engine: engine)
             }
         }
     }
@@ -190,9 +194,17 @@ struct OasisPlanView: View {
         let camera = liveCamera
         drawGrid(in: context, size: size, camera: camera)
         drawAreas(in: context, size: size, camera: camera)
-        drawSprinklerSectors(in: context, size: size, camera: camera)
-        drawSprinklerCoverage(in: context, size: size, camera: camera)
-        drawPipes(in: context, size: size, camera: camera)
+        if engine.visibleLayers.contains(.soilMoisture) {
+            drawSensorHeatmap(in: context, size: size, camera: camera, sensorType: .soilMoisture, layer: .soilMoisture)
+        }
+        if engine.visibleLayers.contains(.temperature) {
+            drawSensorHeatmap(in: context, size: size, camera: camera, sensorType: .airTemperature, layer: .temperature)
+        }
+        if engine.visibleLayers.contains(.irrigation) {
+            drawSprinklerSectors(in: context, size: size, camera: camera)
+            drawSprinklerCoverage(in: context, size: size, camera: camera)
+            drawPipes(in: context, size: size, camera: camera)
+        }
         drawBoundary(in: context, size: size, camera: camera)
         drawOrigin(in: context, size: size, camera: camera)
         drawScaleBar(in: context, size: size, camera: camera)
@@ -368,6 +380,100 @@ struct OasisPlanView: View {
         }
     }
 
+    // MARK: - Heatmaps (Phase 6E)
+
+    private struct HeatGrid {
+        var minX: Double
+        var minY: Double
+        var columnCount: Int
+        var rowCount: Int
+        var cellMeters: Double
+    }
+
+    private func heatGrid(size: CGSize, camera: GardenMapCamera, cellMeters: Double, cap: Int) -> HeatGrid? {
+        let topLeft = camera.localPoint(for: .zero, viewSize: size)
+        let bottomRight = camera.localPoint(for: CGPoint(x: size.width, y: size.height), viewSize: size)
+        let minX = min(topLeft.xMeters, bottomRight.xMeters)
+        let maxX = max(topLeft.xMeters, bottomRight.xMeters)
+        let minY = min(topLeft.yMeters, bottomRight.yMeters)
+        let maxY = max(topLeft.yMeters, bottomRight.yMeters)
+        let columnCount = Int((maxX - minX) / cellMeters)
+        let rowCount = Int((maxY - minY) / cellMeters)
+        guard columnCount > 0, rowCount > 0, columnCount * rowCount < cap else { return nil }
+        return HeatGrid(minX: minX, minY: minY, columnCount: columnCount, rowCount: rowCount, cellMeters: cellMeters)
+    }
+
+    private func screenRect(forCellAt column: Int, row: Int, grid: HeatGrid, camera: GardenMapCamera, size: CGSize) -> CGRect {
+        let cellMinX = grid.minX + Double(column) * grid.cellMeters
+        let cellMinY = grid.minY + Double(row) * grid.cellMeters
+        let corner1 = camera.screenPoint(for: GardenCoordinate(xMeters: cellMinX, yMeters: cellMinY), viewSize: size)
+        let corner2 = camera.screenPoint(
+            for: GardenCoordinate(xMeters: cellMinX + grid.cellMeters, yMeters: cellMinY + grid.cellMeters), viewSize: size
+        )
+        return CGRect(
+            x: min(corner1.x, corner2.x), y: min(corner1.y, corner2.y),
+            width: abs(corner2.x - corner1.x), height: abs(corner2.y - corner1.y)
+        )
+    }
+
+    /// Spec Phase 6E — soil moisture / temperature heatmaps: "utiliser
+    /// les capteurs de la Phase 5. Interpolation seulement si
+    /// suffisamment de données. Ne pas donner une fausse précision.
+    /// Afficher Mesuré/Estimé distinctement." Only Sensors actually
+    /// placed on the plan (linked to a GardenMapObject) can contribute
+    /// — a sensor with no known position genuinely can't feed a spatial
+    /// heatmap, so it's correctly excluded rather than guessed at.
+    /// Measured cells get a solid fill; estimated cells get a lighter
+    /// fill plus a dashed border, so the distinction survives even if
+    /// the color itself is hard to judge (screen glare, colorblindness).
+    private func drawSensorHeatmap(in context: GraphicsContext, size: CGSize, camera: GardenMapCamera, sensorType: SensorType, layer: GardenMapLayer) {
+        let samples: [GardenHeatmapEngine.Sample] = engine.garden.mapObjects.compactMap { object in
+            guard object.objectType == .sensor,
+                  let sensor = engine.resolvedLinkedSensor(for: object),
+                  sensor.type == sensorType,
+                  let value = sensor.latestReading?.value else { return nil }
+            return GardenHeatmapEngine.Sample(position: object.position, value: value)
+        }
+        guard !samples.isEmpty, let grid = heatGrid(size: size, camera: camera, cellMeters: 1.0, cap: 6000) else { return }
+
+        let opacityScale = engine.opacity(for: layer)
+        for column in 0..<grid.columnCount {
+            for row in 0..<grid.rowCount {
+                let cellCenter = GardenCoordinate(
+                    xMeters: grid.minX + (Double(column) + 0.5) * grid.cellMeters,
+                    yMeters: grid.minY + (Double(row) + 0.5) * grid.cellMeters
+                )
+                guard let result = GardenHeatmapEngine.estimate(at: cellCenter, samples: samples) else { continue }
+                let rect = screenRect(forCellAt: column, row: row, grid: grid, camera: camera, size: size)
+                let color = heatmapColor(for: sensorType, value: result.value)
+                if result.isMeasured {
+                    context.fill(Path(rect), with: .color(color.opacity(0.55 * opacityScale)))
+                } else {
+                    context.fill(Path(rect), with: .color(color.opacity(0.22 * opacityScale)))
+                    context.stroke(Path(rect), with: .color(color.opacity(0.4 * opacityScale)), style: StrokeStyle(lineWidth: 0.5, dash: [2, 2]))
+                }
+            }
+        }
+    }
+
+    /// Fixed, sensible ranges (0-100% for soil moisture, 0-40°C for air
+    /// temperature) rather than ranges computed from the samples
+    /// themselves — a dynamic range would make the same color mean
+    /// different things garden to garden, which is more confusing than
+    /// clarifying.
+    private func heatmapColor(for sensorType: SensorType, value: Double) -> Color {
+        switch sensorType {
+        case .soilMoisture:
+            let normalized = min(max(value / 100, 0), 1)
+            return Color(hue: 0.08 + normalized * 0.5, saturation: 0.7, brightness: 0.85)
+        case .airTemperature:
+            let normalized = min(max(value / 40, 0), 1)
+            return Color(hue: 0.6 - normalized * 0.6, saturation: 0.7, brightness: 0.85)
+        default:
+            return .gray
+        }
+    }
+
     /// Spec Phase 6D — "afficher couverture" + "heatmap de couverture
     /// (0/1/2/3+ passages), ne pas utiliser seulement des couleurs."
     /// Rasterizes the visible area into ~1m cells and counts, per cell,
@@ -499,7 +605,10 @@ struct OasisPlanView: View {
 
     private func objectsOverlay(geometry: GeometryProxy) -> some View {
         let camera = liveCamera
-        let objects = engine.garden.mapObjects.sorted { $0.zIndex < $1.zIndex }
+        let objects = engine.garden.mapObjects.filter { engine.isObjectVisible($0) }.sorted { $0.zIndex < $1.zIndex }
+        let showCanopies = engine.visibleLayers.contains(.canopies)
+        let healthColorProvider: (GardenMapObject) -> Color? = { engine.resolvedLinkedPlant(for: $0)?.healthStatus.color }
+        let healthColor = engine.visibleLayers.contains(.health) ? healthColorProvider : nil
         return ForEach(objects) { object in
             let base = camera.screenPoint(for: object.position, viewSize: geometry.size)
             let isDragging = objectDrag?.id == object.id
@@ -507,7 +616,10 @@ struct OasisPlanView: View {
                 ? CGPoint(x: base.x + (objectDrag?.translation.width ?? 0), y: base.y + (objectDrag?.translation.height ?? 0))
                 : base
 
-            GardenObjectMarkerView(object: object, camera: camera, isSelected: engine.selectedObjectIDs.contains(object.id))
+            GardenObjectMarkerView(
+                object: object, camera: camera, isSelected: engine.selectedObjectIDs.contains(object.id),
+                showCanopy: showCanopies, healthTint: healthColor?(object)
+            )
                 .position(display)
                 .simultaneousGesture(
                     TapGesture().onEnded {
@@ -743,6 +855,13 @@ struct OasisPlanView: View {
                     Image(systemName: engine.isShowingIrrigationCoverage ? "drop.circle.fill" : "drop.circle")
                 }
                 .accessibilityLabel("Afficher la couverture d'arrosage")
+
+                Button {
+                    activeSheet = .layers
+                } label: {
+                    Image(systemName: "square.3.layers.3d")
+                }
+                .accessibilityLabel("Calques")
             }
 
             Button {
@@ -790,14 +909,22 @@ struct OasisPlanView: View {
 /// Spec Phase 6C — "représenter tronc + houppier" for vegetation, sized
 /// from canopyDiameterMeters when known; every other object type is a
 /// simple icon badge. A thicker accent ring marks the selected object.
+/// Spec Phase 6E — the Houppiers layer toggles the canopy circle off
+/// (falling back to a plain marker) independently of whether the
+/// vegetation object shows at all; the Santé layer, when on and this
+/// object is linked to a Plant, tints the marker by healthStatus
+/// instead of the default color — spec's own "jamais la couleur seule"
+/// rule still holds since the icon/shape itself doesn't change.
 private struct GardenObjectMarkerView: View {
     var object: GardenMapObject
     var camera: GardenMapCamera
     var isSelected: Bool
+    var showCanopy: Bool = true
+    var healthTint: Color?
 
     var body: some View {
         Group {
-            if object.objectType.isVegetation {
+            if object.objectType.isVegetation && showCanopy {
                 vegetationView
             } else {
                 iconView
@@ -816,7 +943,7 @@ private struct GardenObjectMarkerView: View {
         let diameterPoints = max(camera.points(forMeters: diameterMeters), 14)
         return ZStack {
             Circle()
-                .fill(Color.green.opacity(0.35))
+                .fill((healthTint ?? Color.green).opacity(0.35))
                 .frame(width: diameterPoints, height: diameterPoints)
             Circle()
                 .fill(Color.brown)
@@ -830,6 +957,6 @@ private struct GardenObjectMarkerView: View {
             .font(.system(size: min(sizePoints * 0.5, 22)))
             .foregroundStyle(.white)
             .frame(width: sizePoints, height: sizePoints)
-            .background(Color.accentColor.gradient, in: Circle())
+            .background((healthTint ?? Color.accentColor).gradient, in: Circle())
     }
 }

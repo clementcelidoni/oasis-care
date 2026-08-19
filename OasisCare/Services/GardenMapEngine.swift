@@ -46,6 +46,12 @@ final class GardenMapEngine: ObservableObject {
     /// Spec Phase 6D — "créer un mode : Afficher couverture."
     @Published var isShowingIrrigationCoverage = false
 
+    /// Spec Phase 6E — GardenMapLayer visibility. Every layer starts
+    /// visible so a freshly opened plan looks the same as before layers
+    /// existed; toggling is purely additive UI state, not garden data.
+    @Published var visibleLayers: Set<GardenMapLayer> = Set(GardenMapLayer.allCases)
+    @Published var layerOpacities: [GardenMapLayer: Double] = [:]
+
     @Published var snappingEnabled = true
     /// Index of the boundary/area point currently under a drag, so the
     /// view can show a live distance label — nil the rest of the time.
@@ -88,6 +94,38 @@ final class GardenMapEngine: ObservableObject {
 
     func clearSelection() {
         selectedObjectIDs.removeAll()
+    }
+
+    // MARK: - Layers (Phase 6E)
+
+    func opacity(for layer: GardenMapLayer) -> Double {
+        layerOpacities[layer] ?? 1.0
+    }
+
+    func setOpacity(_ value: Double, for layer: GardenMapLayer) {
+        layerOpacities[layer] = value
+    }
+
+    func toggleLayer(_ layer: GardenMapLayer) {
+        if visibleLayers.contains(layer) {
+            visibleLayers.remove(layer)
+        } else {
+            visibleLayers.insert(layer)
+        }
+    }
+
+    func applyLayerProfile(_ profile: GardenMapLayerProfile) {
+        visibleLayers = profile.layers
+    }
+
+    /// An object type not covered by any layer (there isn't one today,
+    /// but a future GardenObjectType addition shouldn't silently vanish
+    /// from the plan just because nothing gates it yet) stays visible.
+    func isObjectVisible(_ object: GardenMapObject) -> Bool {
+        for layer in GardenMapLayer.allCases where layer.gatedObjectTypes.contains(object.objectType) {
+            return visibleLayers.contains(layer)
+        }
+        return true
     }
 
     // MARK: - Point-polygon editing (Phase 6B boundary, Phase 6C areas)

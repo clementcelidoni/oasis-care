@@ -1,0 +1,85 @@
+import SwiftUI
+
+/// Spec Phase 6E — "bouton Calques" + layer toggles/opacity + preset
+/// profiles. Consommation d'eau is deliberately a data summary here
+/// rather than a spatial heatmap: it would need GardenArea (6C's drawn
+/// zones) linked to IrrigationZone (Phase 4D's water-tracking zones) to
+/// place volumes on the plan, and nothing ties those two, separate
+/// zone concepts together today — showing the real numbers in a list
+/// is honest; inventing a spatial mapping between them wouldn't be.
+struct GardenLayersSheet: View {
+    @ObservedObject var engine: GardenMapEngine
+    @Environment(\.dismiss) private var dismiss
+
+    var body: some View {
+        NavigationStack {
+            Form {
+                Section("Profils") {
+                    ForEach(GardenMapLayerProfile.allCases) { profile in
+                        Button(profile.label) {
+                            engine.applyLayerProfile(profile)
+                        }
+                    }
+                }
+
+                Section("Calques") {
+                    ForEach(GardenMapLayer.allCases) { layer in
+                        VStack(alignment: .leading, spacing: 6) {
+                            Toggle(isOn: Binding(
+                                get: { engine.visibleLayers.contains(layer) },
+                                set: { _ in engine.toggleLayer(layer) }
+                            )) {
+                                Label(layer.label, systemImage: layer.icon)
+                            }
+                            if layer.supportsOpacity, engine.visibleLayers.contains(layer) {
+                                HStack {
+                                    Image(systemName: "circle.lefthalf.filled")
+                                        .foregroundStyle(.secondary)
+                                    Slider(value: Binding(
+                                        get: { engine.opacity(for: layer) },
+                                        set: { engine.setOpacity($0, for: layer) }
+                                    ), in: 0.2...1)
+                                }
+                            }
+                        }
+                    }
+                }
+
+                if !waterConsumptionRows.isEmpty {
+                    Section("Consommation d'eau par zone") {
+                        ForEach(waterConsumptionRows) { row in
+                            HStack {
+                                Text(row.name)
+                                Spacer()
+                                Text("\(Int(row.todayLiters)) L aujourd'hui · \(Int(row.weekLiters)) L / 7 j")
+                                    .font(.caption)
+                                    .foregroundStyle(.secondary)
+                            }
+                        }
+                    }
+                }
+            }
+            .navigationTitle("Calques")
+            .navigationBarTitleDisplayMode(.inline)
+            .toolbar {
+                ToolbarItem(placement: .cancellationAction) {
+                    Button("Fermer") { dismiss() }
+                }
+            }
+        }
+    }
+
+    private struct ZoneConsumptionRow: Identifiable {
+        var id: UUID
+        var name: String
+        var todayLiters: Double
+        var weekLiters: Double
+    }
+
+    private var waterConsumptionRows: [ZoneConsumptionRow] {
+        engine.garden.irrigationZones.map { zone in
+            let stats = IrrigationStatsService.stats(events: zone.events)
+            return ZoneConsumptionRow(id: zone.id, name: zone.name, todayLiters: stats.todayLiters, weekLiters: stats.weekLiters)
+        }
+    }
+}
