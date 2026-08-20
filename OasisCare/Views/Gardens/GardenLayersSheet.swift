@@ -71,6 +71,9 @@ struct GardenLayersSheet: View {
                                     ), in: 0.2...1)
                                 }
                             }
+                            if layer == .satelliteBackground, engine.visibleLayers.contains(layer) {
+                                satelliteBackgroundStatusRow
+                            }
                         }
                     }
                 }
@@ -99,6 +102,29 @@ struct GardenLayersSheet: View {
             .sheet(isPresented: $isShowingPlanImageSheet) {
                 GardenPlanImageSheet(engine: engine)
             }
+        }
+    }
+
+    @ViewBuilder
+    private var satelliteBackgroundStatusRow: some View {
+        if engine.isLoadingSatelliteBackground {
+            HStack(spacing: 6) {
+                ProgressView().controlSize(.small)
+                Text("Chargement de l'image satellite…")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+        } else if let error = engine.satelliteBackgroundError {
+            VStack(alignment: .leading, spacing: 4) {
+                Text(error)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                Button("Réessayer") { engine.loadSatelliteBackgroundIfNeeded(force: true) }
+                    .font(.caption)
+            }
+        } else if engine.satelliteBackground != nil {
+            Button("Actualiser l'image satellite") { engine.loadSatelliteBackgroundIfNeeded(force: true) }
+                .font(.caption)
         }
     }
 

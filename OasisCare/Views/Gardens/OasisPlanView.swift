@@ -141,6 +141,16 @@ struct OasisPlanView: View {
                 GardenMapAIQuerySheet(engine: engine)
             }
         }
+        .onAppear {
+            if engine.visibleLayers.contains(.satelliteBackground) {
+                engine.loadSatelliteBackgroundIfNeeded()
+            }
+        }
+        .onChange(of: engine.visibleLayers) { _, layers in
+            if layers.contains(.satelliteBackground) {
+                engine.loadSatelliteBackgroundIfNeeded()
+            }
+        }
     }
 
     private var liveCamera: GardenMapCamera {
@@ -222,6 +232,9 @@ struct OasisPlanView: View {
 
     private func draw(in context: GraphicsContext, size: CGSize) {
         let camera = liveCamera
+        if engine.visibleLayers.contains(.satelliteBackground) {
+            drawSatelliteBackground(in: context, size: size, camera: camera)
+        }
         drawGrid(in: context, size: size, camera: camera)
         drawPlanImage(in: context, size: size, camera: camera)
         drawAreas(in: context, size: size, camera: camera)
@@ -455,6 +468,30 @@ struct OasisPlanView: View {
         imageContext.rotate(by: .radians(camera.rotationRadians + planImage.rotationRadians))
         let rect = CGRect(x: -widthPoints / 2, y: -heightPoints / 2, width: widthPoints, height: heightPoints)
         imageContext.draw(Image(uiImage: uiImage), in: rect)
+    }
+
+    /// Spec Phase 6A — "GeographicMap: fond géographique" behind the
+    /// vector plan. Unlike drawPlanImage (a user-imported image with
+    /// its own independent rotation), this rectangle is already
+    /// axis-aligned to local X/Y by construction (see
+    /// GardenMapEngine.satelliteRegionAndLocalBounds), so only the
+    /// camera's own rotation applies here.
+    private func drawSatelliteBackground(in context: GraphicsContext, size: CGSize, camera: GardenMapCamera) {
+        guard let background = engine.satelliteBackground else { return }
+        let centerLocal = GardenCoordinate(
+            xMeters: background.localOrigin.xMeters + background.widthMeters / 2,
+            yMeters: background.localOrigin.yMeters + background.heightMeters / 2
+        )
+        let center = camera.screenPoint(for: centerLocal, viewSize: size)
+        let widthPoints = camera.points(forMeters: background.widthMeters)
+        let heightPoints = camera.points(forMeters: background.heightMeters)
+
+        var imageContext = context
+        imageContext.opacity = engine.opacity(for: .satelliteBackground)
+        imageContext.translateBy(x: center.x, y: center.y)
+        imageContext.rotate(by: .radians(camera.rotationRadians))
+        let rect = CGRect(x: -widthPoints / 2, y: -heightPoints / 2, width: widthPoints, height: heightPoints)
+        imageContext.draw(Image(uiImage: background.image), in: rect)
     }
 
     private func drawShadows(in context: GraphicsContext, size: CGSize, camera: GardenMapCamera) {

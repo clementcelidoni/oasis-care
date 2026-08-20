@@ -10,6 +10,11 @@ enum GardenMapLayer: String, CaseIterable, Identifiable, Codable {
     case health, soilMoisture, temperature, waterConsumption, alerts, interventions, qrNfc
     /// Spec Phase 6L — "Ajouter facultativement un calque : Biodiversité."
     case biodiversity
+    /// Spec Phase 6A — "GeographicMap: fond géographique" behind the
+    /// vector plan, not just a separate alternative mode. A real
+    /// MapKit satellite/hybrid snapshot drawn as OasisPlanView's
+    /// bottom-most layer.
+    case satelliteBackground
 
     var id: String { rawValue }
 
@@ -30,6 +35,7 @@ enum GardenMapLayer: String, CaseIterable, Identifiable, Codable {
         case .interventions: return "Interventions"
         case .qrNfc: return "QR/NFC"
         case .biodiversity: return "Biodiversité"
+        case .satelliteBackground: return "Fond satellite"
         }
     }
 
@@ -50,6 +56,7 @@ enum GardenMapLayer: String, CaseIterable, Identifiable, Codable {
         case .interventions: return "checklist"
         case .qrNfc: return "qrcode"
         case .biodiversity: return "ladybug.fill"
+        case .satelliteBackground: return "globe.americas.fill"
         }
     }
 
@@ -58,7 +65,7 @@ enum GardenMapLayer: String, CaseIterable, Identifiable, Codable {
     /// ones opacity actually does something useful for.
     var supportsOpacity: Bool {
         switch self {
-        case .soilMoisture, .temperature, .health: return true
+        case .soilMoisture, .temperature, .health, .satelliteBackground: return true
         default: return false
         }
     }

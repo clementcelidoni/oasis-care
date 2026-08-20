@@ -1,5 +1,6 @@
 import CoreLocation
 import Foundation
+import MapKit
 import SwiftData
 import SwiftUI
 
@@ -767,6 +768,98 @@ final class GardenMapEngine: ObservableObject {
     func setPlanImageOpacity(_ opacity: Double) {
         garden.planImage?.opacity = min(max(opacity, 0.1), 1)
         objectWillChange.send()
+    }
+
+    // MARK: - Fond satellite (Phase 6A gap closed post-launch)
+
+    /// A captured MapKit satellite/hybrid snapshot, already positioned:
+    /// `localOrigin` is its bottom-left corner in the garden's own
+    /// local coordinates, so OasisPlanView only ever needs to draw a
+    /// plain axis-aligned rect of this size at that position (rotated
+    /// by the camera like everything else) — no further geometry.
+    struct SatelliteBackground {
+        var image: UIImage
+        var localOrigin: GardenCoordinate
+        var widthMeters: Double
+        var heightMeters: Double
+    }
+
+    @Published var satelliteBackground: SatelliteBackground?
+    @Published var isLoadingSatelliteBackground = false
+    @Published var satelliteBackgroundError: String?
+
+    /// Real-world extent to request from MapKit: the drawn boundary's
+    /// bounding box with a margin when one exists, otherwise a
+    /// reasonable default square around the garden's own position —
+    /// so the layer still works before any boundary has been drawn.
+    private func satelliteRegionAndLocalBounds(marginMeters: Double = 6) -> (region: MKCoordinateRegion, origin: GardenCoordinate, widthMeters: Double, heightMeters: Double)? {
+        guard let coordinateSystem else { return nil }
+
+        let minX: Double
+        let maxX: Double
+        let minY: Double
+        let maxY: Double
+        if let boundaryPoints = garden.boundary?.points, boundaryPoints.count >= 3 {
+            minX = boundaryPoints.map(\.xMeters).min()! - marginMeters
+            maxX = boundaryPoints.map(\.xMeters).max()! + marginMeters
+            minY = boundaryPoints.map(\.yMeters).min()! - marginMeters
+            maxY = boundaryPoints.map(\.yMeters).max()! + marginMeters
+        } else {
+            let half = 40.0
+            minX = -half; maxX = half; minY = -half; maxY = half
+        }
+
+        let corners = [
+            GardenCoordinate(xMeters: minX, yMeters: minY),
+            GardenCoordinate(xMeters: maxX, yMeters: minY),
+            GardenCoordinate(xMeters: minX, yMeters: maxY),
+            GardenCoordinate(xMeters: maxX, yMeters: maxY),
+        ].map { coordinateSystem.geographic(from: $0) }
+
+        let lats = corners.map(\.latitude)
+        let lons = corners.map(\.longitude)
+        guard let minLat = lats.min(), let maxLat = lats.max(), let minLon = lons.min(), let maxLon = lons.max() else { return nil }
+
+        let center = CLLocationCoordinate2D(latitude: (minLat + maxLat) / 2, longitude: (minLon + maxLon) / 2)
+        let span = MKCoordinateSpan(latitudeDelta: max(maxLat - minLat, 0.0004), longitudeDelta: max(maxLon - minLon, 0.0004))
+        let region = MKCoordinateRegion(center: center, span: span)
+        return (region, GardenCoordinate(xMeters: minX, yMeters: minY), maxX - minX, maxY - minY)
+    }
+
+    /// Loads from the on-disk cache first (near-instant, no network);
+    /// only hits the network when nothing is cached yet or `force` is
+    /// set (an explicit "actualiser" tap). A failed fetch — most likely
+    /// offline — leaves the plan on its plain grid rather than blocking
+    /// anything, with a short message the sheet can show instead of
+    /// pretending the layer is unavailable for no reason.
+    func loadSatelliteBackgroundIfNeeded(force: Bool = false) {
+        guard force || satelliteBackground == nil else { return }
+        guard let (region, origin, widthMeters, heightMeters) = satelliteRegionAndLocalBounds() else {
+            satelliteBackgroundError = "Renseignez la position du jardin (Modifier le jardin) pour activer le fond satellite."
+            return
+        }
+
+        if !force, let cached = GardenSatelliteImageService.loadCached(for: garden.id) {
+            satelliteBackground = SatelliteBackground(image: cached, localOrigin: origin, widthMeters: widthMeters, heightMeters: heightMeters)
+            return
+        }
+
+        isLoadingSatelliteBackground = true
+        satelliteBackgroundError = nil
+        let gardenID = garden.id
+        let aspectRatio = max(widthMeters / heightMeters, 0.2)
+        let requestedSize = CGSize(width: 1024, height: (1024 / aspectRatio).rounded())
+
+        Task { @MainActor in
+            defer { isLoadingSatelliteBackground = false }
+            do {
+                let image = try await GardenSatelliteImageService.fetchSnapshot(region: region, size: requestedSize, mapType: .hybrid)
+                GardenSatelliteImageService.cache(image, for: gardenID)
+                satelliteBackground = SatelliteBackground(image: image, localOrigin: origin, widthMeters: widthMeters, heightMeters: heightMeters)
+            } catch {
+                satelliteBackgroundError = "Image satellite indisponible (vérifiez la connexion) — le quadrillage reste affiché."
+            }
+        }
     }
 
     // MARK: - Oasis AI Digital Twin (Phase 6L)
