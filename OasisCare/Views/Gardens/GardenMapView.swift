@@ -40,8 +40,38 @@ struct GardenMapView: View {
         }
     }
 
-    private var positionedPlants: [Plant] {
-        garden.plants.filter { $0.hasMapPosition && !$0.isArchived }
+    /// Same origin/rotation GardenMapEngine itself uses (see
+    /// GardenCoordinateSystem's own doc comment) — reconstructed here
+    /// rather than requiring a full engine instance, since this view
+    /// only ever needs the one conversion, not live editing state.
+    private var coordinateSystem: GardenCoordinateSystem? {
+        guard let latitude = garden.latitude, let longitude = garden.longitude else { return nil }
+        return GardenCoordinateSystem(originLatitude: latitude, originLongitude: longitude)
+    }
+
+    /// Real position for every plant shown on this MapKit-backed view.
+    /// Prefers a plant's Oasis Plan placement (any GardenMapObject
+    /// linked to it, spec Phase 6C's linkedEntityId/linkedEntityKind)
+    /// converted to real GPS via the garden's own coordinate system —
+    /// that is the actively-maintained position now, the same one
+    /// drawn on the Oasis Plan canvas, not a second field the user
+    /// would have to fill in twice. Falls back to the older per-plant
+    /// `latitude`/`longitude` ("Position dans le jardin") for anything
+    /// not placed on the plan.
+    private var positionedPlants: [(plant: Plant, coordinate: CLLocationCoordinate2D)] {
+        var byPlantID: [UUID: (plant: Plant, coordinate: CLLocationCoordinate2D)] = [:]
+        if let coordinateSystem {
+            for object in garden.mapObjects where object.linkedEntityKind == .plant {
+                guard let linkedID = object.linkedEntityId,
+                      let plant = garden.plants.first(where: { $0.id == linkedID }), !plant.isArchived else { continue }
+                byPlantID[plant.id] = (plant, coordinateSystem.geographic(from: object.position))
+            }
+        }
+        for plant in garden.plants where !plant.isArchived && byPlantID[plant.id] == nil {
+            guard let lat = plant.latitude, let lng = plant.longitude else { continue }
+            byPlantID[plant.id] = (plant, CLLocationCoordinate2D(latitude: lat, longitude: lng))
+        }
+        return Array(byPlantID.values)
     }
 
     /// Groups plants within a small coordinate delta into one annotation
@@ -52,14 +82,15 @@ struct GardenMapView: View {
     private var clusters: [MapCluster] {
         let thresholdDegrees = 0.0003 // roughly 30m
         var result: [MapCluster] = []
-        for plant in positionedPlants {
-            guard let lat = plant.latitude, let lng = plant.longitude else { continue }
+        for entry in positionedPlants {
+            let lat = entry.coordinate.latitude
+            let lng = entry.coordinate.longitude
             if let index = result.firstIndex(where: {
                 abs($0.coordinate.latitude - lat) < thresholdDegrees && abs($0.coordinate.longitude - lng) < thresholdDegrees
             }) {
-                result[index].plants.append(plant)
+                result[index].plants.append(entry.plant)
             } else {
-                result.append(MapCluster(coordinate: CLLocationCoordinate2D(latitude: lat, longitude: lng), plants: [plant]))
+                result.append(MapCluster(coordinate: entry.coordinate, plants: [entry.plant]))
             }
         }
         return result
@@ -71,7 +102,9 @@ struct GardenMapView: View {
                 EmptyStateView(
                     icon: "map",
                     title: "Aucun végétal positionné",
-                    message: "Ouvrez la fiche d'un végétal puis « Position dans le jardin » pour le placer sur la carte."
+                    message: garden.latitude == nil
+                        ? "Renseignez la position du jardin (Modifier le jardin) pour que les objets placés sur le Plan Oasis apparaissent ici, ou ouvrez la fiche d'un végétal puis « Position dans le jardin »."
+                        : "Placez un végétal sur le Plan Oasis, ou ouvrez sa fiche puis « Position dans le jardin »."
                 )
             } else {
                 Map(position: $cameraPosition) {
