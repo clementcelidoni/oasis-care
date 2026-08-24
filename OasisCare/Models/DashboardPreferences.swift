@@ -27,6 +27,8 @@ final class DashboardPreferences: Syncable {
     // migration inference; see Garden.weatherEnabled's history).
     var showConnectedHome: Bool = true
     var showDeviceHealth: Bool = true
+    /// Phase 7A — same inline-default rule as the two properties above.
+    var showBioLab: Bool = true
     var syncStatus: SyncStatus?
     var updatedAt: Date?
 
@@ -43,6 +45,7 @@ final class DashboardPreferences: Syncable {
         self.showEvolution = true
         self.showConnectedHome = true
         self.showDeviceHealth = true
+        self.showBioLab = true
         self.syncStatus = .pendingCreate
         self.updatedAt = .now
     }

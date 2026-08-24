@@ -155,6 +155,15 @@ struct HomeView: View {
 
                             SmartModesBanner(settings: smartModeSettings)
 
+                            if preferences.showBioLab {
+                                NavigationLink {
+                                    BioLabDashboardView()
+                                } label: {
+                                    BioLabEntryCard(summary: BioLabDashboardService.summary())
+                                }
+                                .buttonStyle(.plain)
+                            }
+
                             if preferences.showHealth {
                                 GlobalSummaryCard(plants: plants)
                                 HealthScoreCard(score: DashboardService.healthScore(plants: plants))
