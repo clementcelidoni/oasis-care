@@ -5,6 +5,7 @@ import SwiftUI
 struct CultureBatchDetailView: View {
     var batch: CultureBatch
     @Environment(\.modelContext) private var modelContext
+    @Query private var allExperiments: [BioLabExperiment]
 
     @State private var isShowingSplit = false
     @State private var isShowingDiscardConfirm = false
@@ -40,6 +41,17 @@ struct CultureBatchDetailView: View {
                 LabeledContent("Statut", value: batch.status.label)
                 LabeledContent("Explants", value: "\(batch.currentCount) (initial \(batch.initialExplantCount))")
                 LabeledContent("Débuté le", value: DateFormatting.shortDate(batch.startedAt))
+                Picker("Groupe d'expérimentation", selection: Binding(
+                    get: { batch.experimentGroup },
+                    set: { batch.experimentGroup = $0; batch.markDirty() }
+                )) {
+                    Text("Aucun").tag(ExperimentGroup?.none)
+                    ForEach(allExperiments) { experiment in
+                        ForEach(experiment.groups) { group in
+                            Text("\(experiment.code) — \(group.name)").tag(Optional(group))
+                        }
+                    }
+                }
             }
 
             Section("Généalogie") {

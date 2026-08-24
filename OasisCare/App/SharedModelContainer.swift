@@ -59,7 +59,9 @@ enum SharedModelContainer {
             BioLabAlert.self,
             BioreactorDeviceBinding.self,
             BioreactorInspection.self,
-            BioLabInspectionPhoto.self
+            BioLabInspectionPhoto.self,
+            BioLabExperiment.self,
+            ExperimentGroup.self
         ])
         let configuration = ModelConfiguration(schema: schema)
 

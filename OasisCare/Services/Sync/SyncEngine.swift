@@ -62,13 +62,19 @@ final class SyncEngine: ObservableObject {
             // by the time a batch referencing it is upserted.
             try await pushMediumRecipes(workspaceID: workspaceID, context: context)
             try await pushMediumRecipeVersions(workspaceID: workspaceID, context: context)
-            try await pushCultureBatches(workspaceID: workspaceID, context: context)
-            try await pushMediumBatches(workspaceID: workspaceID, context: context)
-            // Programs/versions before bioreactors: activeProgramVersionId
-            // is a real foreign key, same reasoning as recipes/versions
-            // before culture batches above.
+            // Programs/versions moved up here (Phase 7K) so
+            // ExperimentGroup, which needs a program version to already
+            // exist remotely, can in turn push before CultureBatches —
+            // CultureBatch.experimentGroupId is a real foreign key.
+            // Bioreactors themselves still push after CultureBatches
+            // (currentBatchId), so only Programs/Versions move, not
+            // Bioreactors.
             try await pushBioreactorPrograms(workspaceID: workspaceID, context: context)
             try await pushBioreactorProgramVersions(workspaceID: workspaceID, context: context)
+            try await pushBioLabExperiments(workspaceID: workspaceID, context: context)
+            try await pushExperimentGroups(workspaceID: workspaceID, context: context)
+            try await pushCultureBatches(workspaceID: workspaceID, context: context)
+            try await pushMediumBatches(workspaceID: workspaceID, context: context)
             try await pushBioreactors(workspaceID: workspaceID, context: context)
             try await pushBioreactorDeviceBindings(workspaceID: workspaceID, context: context)
             try await pushBioreactorInspections(workspaceID: workspaceID, context: context)
@@ -156,6 +162,8 @@ final class SyncEngine: ObservableObject {
         let deviceBindings = (try? context.fetch(FetchDescriptor<BioreactorDeviceBinding>()))?.filter { $0.syncStatus != .synced }.count ?? 0
         let bioreactorInspections = (try? context.fetch(FetchDescriptor<BioreactorInspection>()))?.filter { $0.syncStatus != .synced }.count ?? 0
         let inspectionPhotos = (try? context.fetch(FetchDescriptor<BioLabInspectionPhoto>()))?.filter { $0.syncStatus != .synced }.count ?? 0
+        let bioLabExperiments = (try? context.fetch(FetchDescriptor<BioLabExperiment>()))?.filter { $0.syncStatus != .synced }.count ?? 0
+        let experimentGroups = (try? context.fetch(FetchDescriptor<ExperimentGroup>()))?.filter { $0.syncStatus != .synced }.count ?? 0
         return gardens + zones + plants + schedules + events + photos + analyses + preferences + irrigationZones
             + irrigationEvents + smartTags + connectedDevices + sensors + sensorReadings + commandLogs
             + automationRules + automationExecutions + greenhouses + ponds + measurements + inspections + checkups
@@ -163,7 +171,7 @@ final class SyncEngine: ObservableObject {
             + boundaries + mapObjects + areas + pipes + cultureBatches
             + mediumRecipes + mediumVersions + mediumBatches + bioreactors + maintenanceEvents
             + bioreactorPrograms + bioreactorProgramVersions + cycleExecutions + biolabAlerts + deviceBindings
-            + bioreactorInspections + inspectionPhotos
+            + bioreactorInspections + inspectionPhotos + bioLabExperiments + experimentGroups
     }
 
     private static let photoBucket = "plant-photos"
@@ -516,6 +524,46 @@ final class SyncEngine: ObservableObject {
         for row in remoteBioreactors {
             guard let versionId = row.activeProgramVersionId else { continue }
             bioreactorsByID[row.id]?.activeProgramVersion = programVersionsByID[versionId]
+        }
+
+        // Phase 7K — ExperimentGroup needs programVersionsByID above, so
+        // this has to sit here rather than nearer CultureBatch's own
+        // restore. CultureBatch.experimentGroup is deferred a second
+        // time for the same reason as its mediumRecipeVersion above.
+        let remoteBioLabExperiments: [BioLabExperimentRow] = try await AuthService.client.from("bio_lab_experiments").select().execute().value
+        var bioLabExperimentsByID: [UUID: BioLabExperiment] = [:]
+        for row in remoteBioLabExperiments {
+            let experiment = BioLabExperiment(
+                code: row.code, question: row.question, independentVariables: row.independentVariables,
+                controlledVariables: row.controlledVariables, outcomes: row.outcomes, notes: row.notes, startedAt: row.startedAt
+            )
+            experiment.id = row.id
+            experiment.createdAt = row.createdAt
+            experiment.syncStatus = .synced
+            experiment.updatedAt = row.updatedAt
+            context.insert(experiment)
+            bioLabExperimentsByID[row.id] = experiment
+        }
+
+        let remoteExperimentGroups: [ExperimentGroupRow] = try await AuthService.client.from("experiment_groups").select().execute().value
+        var experimentGroupsByID: [UUID: ExperimentGroup] = [:]
+        for row in remoteExperimentGroups {
+            guard let experiment = bioLabExperimentsByID[row.experimentId] else { continue }
+            let group = ExperimentGroup(
+                experiment: experiment, name: row.name, programVersion: row.programVersionId.flatMap { programVersionsByID[$0] }
+            )
+            group.id = row.id
+            group.createdAt = row.createdAt
+            group.syncStatus = .synced
+            group.updatedAt = row.updatedAt
+            context.insert(group)
+            experiment.groups.append(group)
+            experimentGroupsByID[row.id] = group
+        }
+
+        for row in remoteBatches {
+            guard let groupId = row.experimentGroupId else { continue }
+            batchesByID[row.id]?.experimentGroup = experimentGroupsByID[groupId]
         }
 
         let remoteCycleExecutions: [BioreactorCycleExecutionRow] = try await AuthService.client.from("bioreactor_cycle_executions").select().execute().value
@@ -1393,6 +1441,7 @@ final class SyncEngine: ObservableObject {
         var motherPlantId: UUID?
         var parentBatchId: UUID?
         var mediumRecipeVersionId: UUID?
+        var experimentGroupId: UUID?
         var updatedAt: Date?
 
         enum CodingKeys: String, CodingKey {
@@ -1410,6 +1459,48 @@ final class SyncEngine: ObservableObject {
             case motherPlantId = "mother_plant_id"
             case parentBatchId = "parent_batch_id"
             case mediumRecipeVersionId = "medium_recipe_version_id"
+            case experimentGroupId = "experiment_group_id"
+            case updatedAt = "updated_at"
+        }
+    }
+
+    private struct BioLabExperimentRow: Decodable {
+        var id: UUID
+        var code: String
+        var question: String
+        var independentVariables: String
+        var controlledVariables: String
+        var outcomes: String
+        var notes: String
+        var startedAt: Date
+        var createdAt: Date
+        var updatedAt: Date?
+
+        enum CodingKeys: String, CodingKey {
+            case id, code, question
+            case independentVariables = "independent_variables"
+            case controlledVariables = "controlled_variables"
+            case outcomes, notes
+            case startedAt = "started_at"
+            case createdAt = "created_at"
+            case updatedAt = "updated_at"
+        }
+    }
+
+    private struct ExperimentGroupRow: Decodable {
+        var id: UUID
+        var experimentId: UUID
+        var name: String
+        var programVersionId: UUID?
+        var createdAt: Date
+        var updatedAt: Date?
+
+        enum CodingKeys: String, CodingKey {
+            case id
+            case experimentId = "experiment_id"
+            case name
+            case programVersionId = "program_version_id"
+            case createdAt = "created_at"
             case updatedAt = "updated_at"
         }
     }
@@ -3223,6 +3314,7 @@ final class SyncEngine: ObservableObject {
         var motherPlantId: UUID?
         var parentBatchId: UUID?
         var mediumRecipeVersionId: UUID?
+        var experimentGroupId: UUID?
         var updatedAt: Date
 
         enum CodingKeys: String, CodingKey {
@@ -3241,6 +3333,7 @@ final class SyncEngine: ObservableObject {
             case motherPlantId = "mother_plant_id"
             case parentBatchId = "parent_batch_id"
             case mediumRecipeVersionId = "medium_recipe_version_id"
+            case experimentGroupId = "experiment_group_id"
             case updatedAt = "updated_at"
         }
     }
@@ -3255,11 +3348,92 @@ final class SyncEngine: ObservableObject {
                 expectedEndAt: batch.expectedEndAt, initialExplantCount: batch.initialExplantCount,
                 currentCount: batch.currentCount, notes: batch.notes, createdAt: batch.createdAt,
                 motherPlantId: batch.motherPlant?.id, parentBatchId: batch.parentBatch?.id,
-                mediumRecipeVersionId: batch.mediumRecipeVersion?.id, updatedAt: batch.updatedAt ?? .now
+                mediumRecipeVersionId: batch.mediumRecipeVersion?.id, experimentGroupId: batch.experimentGroup?.id,
+                updatedAt: batch.updatedAt ?? .now
             )
         }
         try await AuthService.client.from("culture_batches").upsert(dtos).execute()
         for batch in pending { batch.syncStatus = .synced }
+    }
+
+    private struct BioLabExperimentDTO: Encodable {
+        var id: UUID
+        var workspaceId: UUID
+        var code: String
+        var question: String
+        var independentVariables: String
+        var controlledVariables: String
+        var outcomes: String
+        var notes: String
+        var startedAt: Date
+        var createdAt: Date
+        var updatedAt: Date
+
+        enum CodingKeys: String, CodingKey {
+            case id
+            case workspaceId = "workspace_id"
+            case code, question
+            case independentVariables = "independent_variables"
+            case controlledVariables = "controlled_variables"
+            case outcomes, notes
+            case startedAt = "started_at"
+            case createdAt = "created_at"
+            case updatedAt = "updated_at"
+        }
+    }
+
+    /// Pushed before ExperimentGroup and before CultureBatches — see the
+    /// top-level push-order comment for why the Programs/Versions chain
+    /// moved up here too.
+    private func pushBioLabExperiments(workspaceID: UUID, context: ModelContext) async throws {
+        let pending = try context.fetch(FetchDescriptor<BioLabExperiment>()).filter { $0.syncStatus != .synced }
+        guard !pending.isEmpty else { return }
+        let dtos = pending.map { experiment in
+            BioLabExperimentDTO(
+                id: experiment.id, workspaceId: workspaceID, code: experiment.code, question: experiment.question,
+                independentVariables: experiment.independentVariables, controlledVariables: experiment.controlledVariables,
+                outcomes: experiment.outcomes, notes: experiment.notes, startedAt: experiment.startedAt,
+                createdAt: experiment.createdAt, updatedAt: experiment.updatedAt ?? .now
+            )
+        }
+        try await AuthService.client.from("bio_lab_experiments").upsert(dtos).execute()
+        for experiment in pending { experiment.syncStatus = .synced }
+    }
+
+    private struct ExperimentGroupDTO: Encodable {
+        var id: UUID
+        var workspaceId: UUID
+        var experimentId: UUID
+        var name: String
+        var programVersionId: UUID?
+        var createdAt: Date
+        var updatedAt: Date
+
+        enum CodingKeys: String, CodingKey {
+            case id
+            case workspaceId = "workspace_id"
+            case experimentId = "experiment_id"
+            case name
+            case programVersionId = "program_version_id"
+            case createdAt = "created_at"
+            case updatedAt = "updated_at"
+        }
+    }
+
+    /// Pushed after BioLabExperiment and after BioreactorProgramVersion
+    /// (programVersionId), and before CultureBatches (experimentGroupId).
+    private func pushExperimentGroups(workspaceID: UUID, context: ModelContext) async throws {
+        let pending = try context.fetch(FetchDescriptor<ExperimentGroup>()).filter { $0.syncStatus != .synced }
+        guard !pending.isEmpty else { return }
+        let dtos = pending.compactMap { group -> ExperimentGroupDTO? in
+            guard let experimentId = group.experiment?.id else { return nil }
+            return ExperimentGroupDTO(
+                id: group.id, workspaceId: workspaceID, experimentId: experimentId, name: group.name,
+                programVersionId: group.programVersion?.id, createdAt: group.createdAt, updatedAt: group.updatedAt ?? .now
+            )
+        }
+        try await AuthService.client.from("experiment_groups").upsert(dtos).execute()
+        for group in pending { group.syncStatus = .synced }
     }
 
     private struct MediumRecipeDTO: Encodable {

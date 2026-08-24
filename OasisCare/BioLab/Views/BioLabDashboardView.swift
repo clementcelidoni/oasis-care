@@ -112,6 +112,9 @@ struct BioLabDashboardView: View {
             BioLabQuickLinkRow(title: "Statistiques", icon: "chart.bar.fill") {
                 BioLabAnalyticsView()
             }
+            BioLabQuickLinkRow(title: "Expérimentations", icon: "flask") {
+                BioLabExperimentListView()
+            }
             if bioreactors.count >= 2 {
                 BioLabQuickLinkRow(title: "Comparer deux bioréacteurs", icon: "arrow.left.arrow.right") {
                     BioLabComparisonView()

@@ -49,6 +49,10 @@ final class CultureBatch: Syncable {
     /// is the correct, natural value for every batch that predates this
     /// field.
     var mediumRecipeVersion: MediumRecipeVersion?
+    /// Spec Phase 7K — which experimentGroup (if any) this batch is
+    /// running under. Plain optional relationship added to an
+    /// already-shipped model — safe without a migration default.
+    var experimentGroup: ExperimentGroup?
 
     @Relationship(deleteRule: .nullify, inverse: \CultureBatch.parentBatch)
     var childBatches: [CultureBatch] = []
