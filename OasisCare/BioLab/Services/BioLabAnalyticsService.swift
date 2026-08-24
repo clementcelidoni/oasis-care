@@ -17,8 +17,9 @@ enum BioLabAnalyticsService {
         var contaminationRate: Double?
         var hyperhydricityRate: Double?
         var rootingRate: Double?
-        /// Always nil until Phase 7L's AcclimatizationBatch exists —
-        /// there is no acclimatization survival data anywhere yet.
+        /// Average `survivalRate` across every AcclimatizationBatch
+        /// whose source CultureBatch matches this species — nil when
+        /// none exist yet for it, never a fabricated 0%.
         var acclimatizationSurvivalRate: Double?
     }
 
@@ -48,7 +49,7 @@ enum BioLabAnalyticsService {
         var completedBatchCount: Int
     }
 
-    static func speciesStats(batches: [CultureBatch]) -> [SpeciesStats] {
+    static func speciesStats(batches: [CultureBatch], acclimatizationBatches: [AcclimatizationBatch] = []) -> [SpeciesStats] {
         let grouped = Dictionary(grouping: batches, by: \.speciesName)
         return grouped.map { speciesName, speciesBatches in
             let nonDiscarded = speciesBatches.filter { $0.status != .discarded }
@@ -73,13 +74,19 @@ enum BioLabAnalyticsService {
             let rootedOrLater: Set<CultureStage> = [.rooting, .preAcclimatization, .acclimatization, .completed]
             let rootedCount = nonDiscarded.filter { rootedOrLater.contains($0.cultureStage) }.count
 
+            let speciesBatchIDs = Set(speciesBatches.map(\.id))
+            let survivalRates = acclimatizationBatches
+                .filter { batch in batch.cultureBatch.map { speciesBatchIDs.contains($0.id) } ?? false }
+                .compactMap(\.survivalRate)
+            let acclimatizationSurvivalRate = survivalRates.isEmpty ? nil : survivalRates.reduce(0, +) / Double(survivalRates.count)
+
             return SpeciesStats(
                 speciesName: speciesName, batchCount: speciesBatches.count,
                 averageMultiplicationRate: averageMultiplicationRate,
                 contaminationRate: Double(contaminatedCount) / Double(speciesBatches.count),
                 hyperhydricityRate: Double(hyperhydricCount) / Double(speciesBatches.count),
                 rootingRate: nonDiscarded.isEmpty ? nil : Double(rootedCount) / Double(nonDiscarded.count),
-                acclimatizationSurvivalRate: nil
+                acclimatizationSurvivalRate: acclimatizationSurvivalRate
             )
         }
         .sorted { $0.batchCount > $1.batchCount }

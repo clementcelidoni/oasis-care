@@ -17,9 +17,10 @@ struct BioLabAnalyticsView: View {
     @Query private var bioreactors: [Bioreactor]
     @Query private var executions: [BioreactorCycleExecution]
     @Query private var inspections: [BioreactorInspection]
+    @Query private var acclimatizationBatches: [AcclimatizationBatch]
 
     private var speciesStats: [BioLabAnalyticsService.SpeciesStats] {
-        BioLabAnalyticsService.speciesStats(batches: batches)
+        BioLabAnalyticsService.speciesStats(batches: batches, acclimatizationBatches: acclimatizationBatches)
     }
     private var labWideStats: BioLabAnalyticsService.LabWideStats {
         BioLabAnalyticsService.labWideStats(batches: batches, executions: executions)
@@ -63,8 +64,6 @@ struct BioLabAnalyticsView: View {
                 LabeledContent("Durée moyenne de cycle", value: formattedDuration(labWideStats.averageCycleDurationSeconds))
             } header: {
                 Text("Ensemble du laboratoire")
-            } footer: {
-                Text("La survie en acclimatation n'est pas encore disponible — ce suivi arrive avec le module Acclimatation.")
             }
         }
         .navigationTitle("Statistiques")

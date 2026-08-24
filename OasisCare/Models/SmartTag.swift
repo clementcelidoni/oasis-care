@@ -64,9 +64,18 @@ final class SmartTag: Syncable {
     /// Whichever real entity this tag currently points to, purely for
     /// "is this the same target" comparisons during reassignment — never
     /// used to fetch the whole entity, since the caller already knows
-    /// which one it's dealing with.
+    /// which one it's dealing with. Written as separate `if let`
+    /// statements rather than one chained `??` expression — the chain
+    /// of five optional-chained `??`s made the type-checker time out at
+    /// build time ("unable to type-check this expression in reasonable
+    /// time"), a known Swift compiler limitation with long ?? chains.
     var linkedEntityID: UUID? {
-        plant?.id ?? bioreactor?.id ?? cultureBatch?.id ?? mediumRecipeVersion?.id ?? acclimatizationBatch?.id
+        if let plant { return plant.id }
+        if let bioreactor { return bioreactor.id }
+        if let cultureBatch { return cultureBatch.id }
+        if let mediumRecipeVersion { return mediumRecipeVersion.id }
+        if let acclimatizationBatch { return acclimatizationBatch.id }
+        return nil
     }
 
     /// A short human-readable name for whatever this tag points to —
