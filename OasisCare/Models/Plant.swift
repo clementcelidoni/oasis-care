@@ -24,6 +24,14 @@ final class Plant: Syncable {
     var garden: Garden?
     var zone: GardenZone?
     var speciesProfile: SpeciesProfile?
+    /// Spec Phase 7L "LIEN — chaque Plant final garde originBatchId et
+    /// sa généalogie." Set only for a Plant created in bulk at the end
+    /// of an AcclimatizationBatch — CultureLineageService can then walk
+    /// backward from here through the same CultureBatch tree it already
+    /// builds for BioLab's own screens. Plain optional relationship
+    /// added to an already-shipped model — nil is correct for every
+    /// plant that predates BioLab entirely.
+    var originBatch: CultureBatch?
 
     /// Spec §24 — all optional, "les coordonnées restent facultatives."
     /// latitude/longitude place the plant on the real MapKit map.
@@ -82,7 +90,8 @@ final class Plant: Syncable {
         zone: GardenZone? = nil,
         speciesProfile: SpeciesProfile? = nil,
         photoData: Data? = nil,
-        thumbnailData: Data? = nil
+        thumbnailData: Data? = nil,
+        originBatch: CultureBatch? = nil
     ) {
         self.id = UUID()
         self.customName = customName
@@ -99,6 +108,7 @@ final class Plant: Syncable {
         self.speciesProfile = speciesProfile
         self.photoData = photoData
         self.thumbnailData = thumbnailData
+        self.originBatch = originBatch
         self.syncStatus = .pendingCreate
         self.updatedAt = .now
     }

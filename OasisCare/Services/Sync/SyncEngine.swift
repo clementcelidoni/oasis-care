@@ -75,6 +75,8 @@ final class SyncEngine: ObservableObject {
             try await pushExperimentGroups(workspaceID: workspaceID, context: context)
             try await pushCultureBatches(workspaceID: workspaceID, context: context)
             try await pushMediumBatches(workspaceID: workspaceID, context: context)
+            try await pushAcclimatizationBatches(workspaceID: workspaceID, context: context)
+            try await pushLabInventoryItems(workspaceID: workspaceID, context: context)
             try await pushBioreactors(workspaceID: workspaceID, context: context)
             try await pushBioreactorDeviceBindings(workspaceID: workspaceID, context: context)
             try await pushBioreactorInspections(workspaceID: workspaceID, context: context)
@@ -164,6 +166,8 @@ final class SyncEngine: ObservableObject {
         let inspectionPhotos = (try? context.fetch(FetchDescriptor<BioLabInspectionPhoto>()))?.filter { $0.syncStatus != .synced }.count ?? 0
         let bioLabExperiments = (try? context.fetch(FetchDescriptor<BioLabExperiment>()))?.filter { $0.syncStatus != .synced }.count ?? 0
         let experimentGroups = (try? context.fetch(FetchDescriptor<ExperimentGroup>()))?.filter { $0.syncStatus != .synced }.count ?? 0
+        let acclimatizationBatches = (try? context.fetch(FetchDescriptor<AcclimatizationBatch>()))?.filter { $0.syncStatus != .synced }.count ?? 0
+        let labInventoryItems = (try? context.fetch(FetchDescriptor<LabInventoryItem>()))?.filter { $0.syncStatus != .synced }.count ?? 0
         return gardens + zones + plants + schedules + events + photos + analyses + preferences + irrigationZones
             + irrigationEvents + smartTags + connectedDevices + sensors + sensorReadings + commandLogs
             + automationRules + automationExecutions + greenhouses + ponds + measurements + inspections + checkups
@@ -172,6 +176,7 @@ final class SyncEngine: ObservableObject {
             + mediumRecipes + mediumVersions + mediumBatches + bioreactors + maintenanceEvents
             + bioreactorPrograms + bioreactorProgramVersions + cycleExecutions + biolabAlerts + deviceBindings
             + bioreactorInspections + inspectionPhotos + bioLabExperiments + experimentGroups
+            + acclimatizationBatches + labInventoryItems
     }
 
     private static let photoBucket = "plant-photos"
@@ -347,6 +352,46 @@ final class SyncEngine: ObservableObject {
         for row in remoteBatches {
             guard let parentId = row.parentBatchId else { continue }
             batchesByID[row.id]?.parentBatch = batchesByID[parentId]
+        }
+        // Phase 7L — Plant was restored before CultureBatch existed to
+        // link back to.
+        for row in remotePlants {
+            guard let originBatchId = row.originBatchId else { continue }
+            plantsByID[row.id]?.originBatch = batchesByID[originBatchId]
+        }
+
+        let remoteAcclimatizationBatches: [AcclimatizationBatchRow] = try await AuthService.client.from("acclimatization_batches").select().execute().value
+        for row in remoteAcclimatizationBatches {
+            let batch = AcclimatizationBatch(
+                cultureBatch: row.cultureBatchId.flatMap { batchesByID[$0] }, initialPlantletCount: row.initialPlantletCount,
+                substrate: row.substrate, humidityProgram: row.humidityProgram, temperature: row.temperature,
+                location: row.location, notes: row.notes
+            )
+            batch.id = row.id
+            batch.startedAt = row.startedAt
+            batch.currentSurvivorCount = row.currentSurvivorCount
+            batch.status = row.status
+            batch.steps = row.steps
+            batch.plantsCreated = row.plantsCreated
+            batch.createdAt = row.createdAt
+            batch.syncStatus = .synced
+            batch.updatedAt = row.updatedAt
+            context.insert(batch)
+            batch.cultureBatch?.acclimatizationBatches.append(batch)
+        }
+
+        let remoteLabInventoryItems: [LabInventoryItemRow] = try await AuthService.client.from("lab_inventory_items").select().execute().value
+        for row in remoteLabInventoryItems {
+            let item = LabInventoryItem(
+                name: row.name, category: row.category, currentQuantity: row.currentQuantity,
+                minimumThreshold: row.minimumThreshold, unit: row.unit, supplier: row.supplier,
+                lotNumber: row.lotNumber, expiryDate: row.expiryDate, notes: row.notes
+            )
+            item.id = row.id
+            item.createdAt = row.createdAt
+            item.syncStatus = .synced
+            item.updatedAt = row.updatedAt
+            context.insert(item)
         }
 
         // Phase 7C.
@@ -1124,6 +1169,7 @@ final class SyncEngine: ObservableObject {
         var irrigationZoneId: UUID?
         var emitterCount: Int?
         var emitterFlowRate: Double?
+        var originBatchId: UUID?
         var updatedAt: Date?
 
         enum CodingKeys: String, CodingKey {
@@ -1146,6 +1192,7 @@ final class SyncEngine: ObservableObject {
             case mapPositionY = "map_position_y"
             case irrigationZoneId = "irrigation_zone_id"
             case emitterCount = "emitter_count"
+            case originBatchId = "origin_batch_id"
             case emitterFlowRate = "emitter_flow_rate"
             case positionSource = "position_source"
             case updatedAt = "updated_at"
@@ -1563,6 +1610,65 @@ final class SyncEngine: ObservableObject {
             case recipeVersionId = "recipe_version_id"
             case volumeLiters = "volume_liters"
             case preparedAt = "prepared_at"
+            case notes
+            case createdAt = "created_at"
+            case updatedAt = "updated_at"
+        }
+    }
+
+    private struct AcclimatizationBatchRow: Decodable {
+        var id: UUID
+        var cultureBatchId: UUID?
+        var startedAt: Date
+        var initialPlantletCount: Int
+        var currentSurvivorCount: Int
+        var substrate: String
+        var humidityProgram: String
+        var temperature: Double?
+        var location: String
+        var status: AcclimatizationStatus
+        var steps: [AcclimatizationStep]
+        var notes: String
+        var plantsCreated: Bool
+        var createdAt: Date
+        var updatedAt: Date?
+
+        enum CodingKeys: String, CodingKey {
+            case id
+            case cultureBatchId = "culture_batch_id"
+            case startedAt = "started_at"
+            case initialPlantletCount = "initial_plantlet_count"
+            case currentSurvivorCount = "current_survivor_count"
+            case substrate
+            case humidityProgram = "humidity_program"
+            case temperature, location, status, steps, notes
+            case plantsCreated = "plants_created"
+            case createdAt = "created_at"
+            case updatedAt = "updated_at"
+        }
+    }
+
+    private struct LabInventoryItemRow: Decodable {
+        var id: UUID
+        var name: String
+        var category: LabInventoryCategory
+        var currentQuantity: Int
+        var minimumThreshold: Int?
+        var unit: String
+        var supplier: String?
+        var lotNumber: String?
+        var expiryDate: Date?
+        var notes: String
+        var createdAt: Date
+        var updatedAt: Date?
+
+        enum CodingKeys: String, CodingKey {
+            case id, name, category
+            case currentQuantity = "current_quantity"
+            case minimumThreshold = "minimum_threshold"
+            case unit, supplier
+            case lotNumber = "lot_number"
+            case expiryDate = "expiry_date"
             case notes
             case createdAt = "created_at"
             case updatedAt = "updated_at"
@@ -2359,6 +2465,7 @@ final class SyncEngine: ObservableObject {
         var irrigationZoneId: UUID?
         var emitterCount: Int?
         var emitterFlowRate: Double?
+        var originBatchId: UUID?
         var updatedAt: Date
 
         enum CodingKeys: String, CodingKey {
@@ -2384,10 +2491,25 @@ final class SyncEngine: ObservableObject {
             case irrigationZoneId = "irrigation_zone_id"
             case emitterCount = "emitter_count"
             case emitterFlowRate = "emitter_flow_rate"
+            case originBatchId = "origin_batch_id"
             case updatedAt = "updated_at"
         }
     }
 
+    /// Plant pushes very early (many other types depend on it existing
+    /// remotely first) — well before pushCultureBatches. Plant.originBatch
+    /// (Phase 7L) is the one exception where Plant depends on something
+    /// that pushes later, an intentional cross-table cycle with
+    /// CultureBatch.motherPlant. Rather than reordering Plant's push
+    /// (which would risk every one of its many existing dependents),
+    /// originBatchId is only sent once that specific batch is confirmed
+    /// `.synced`; until then the plant itself is left `.pendingUpdate`
+    /// (not `.synced`) so a later sync call retries it once the batch
+    /// has caught up — self-healing across sync calls, never a
+    /// permanently dropped link. In realistic use this never triggers:
+    /// an origin batch is always old enough (created, multiplied, rooted,
+    /// acclimatized) to have already synced by the time it produces
+    /// Plant records.
     private func pushPlants(workspaceID: UUID, context: ModelContext) async throws {
         let pending = try context.fetch(FetchDescriptor<Plant>()).filter { $0.syncStatus != .synced }
         guard !pending.isEmpty else { return }
@@ -2405,6 +2527,7 @@ final class SyncEngine: ObservableObject {
                 try await uploadPhoto(thumbnailData, path: path)
                 thumbnailPath = path
             }
+            let originBatchResolved = plant.originBatch == nil || plant.originBatch?.syncStatus == .synced
             dtos.append(PlantDTO(
                 id: plant.id, workspaceId: workspaceID, gardenId: plant.garden?.id, zoneId: plant.zone?.id,
                 customName: plant.customName, commonName: plant.commonName, scientificName: plant.scientificName,
@@ -2416,11 +2539,15 @@ final class SyncEngine: ObservableObject {
                 positionSource: plant.positionSource,
                 irrigationZoneId: plant.irrigationZone?.id, emitterCount: plant.emitterCount,
                 emitterFlowRate: plant.emitterFlowRate,
+                originBatchId: originBatchResolved ? plant.originBatch?.id : nil,
                 updatedAt: plant.updatedAt ?? .now
             ))
         }
         try await AuthService.client.from("plants").upsert(dtos).execute()
-        for plant in pending { plant.syncStatus = .synced }
+        for plant in pending {
+            let originBatchResolved = plant.originBatch == nil || plant.originBatch?.syncStatus == .synced
+            plant.syncStatus = originBatchResolved ? .synced : .pendingUpdate
+        }
     }
 
     // MARK: - Care schedules
@@ -3549,6 +3676,104 @@ final class SyncEngine: ObservableObject {
         }
         try await AuthService.client.from("medium_batches").upsert(dtos).execute()
         for batch in pending { batch.syncStatus = .synced }
+    }
+
+    private struct AcclimatizationBatchDTO: Encodable {
+        var id: UUID
+        var workspaceId: UUID
+        var cultureBatchId: UUID?
+        var startedAt: Date
+        var initialPlantletCount: Int
+        var currentSurvivorCount: Int
+        var substrate: String
+        var humidityProgram: String
+        var temperature: Double?
+        var location: String
+        var status: AcclimatizationStatus
+        var steps: [AcclimatizationStep]
+        var notes: String
+        var plantsCreated: Bool
+        var createdAt: Date
+        var updatedAt: Date
+
+        enum CodingKeys: String, CodingKey {
+            case id
+            case workspaceId = "workspace_id"
+            case cultureBatchId = "culture_batch_id"
+            case startedAt = "started_at"
+            case initialPlantletCount = "initial_plantlet_count"
+            case currentSurvivorCount = "current_survivor_count"
+            case substrate
+            case humidityProgram = "humidity_program"
+            case temperature, location, status, steps, notes
+            case plantsCreated = "plants_created"
+            case createdAt = "created_at"
+            case updatedAt = "updated_at"
+        }
+    }
+
+    /// Pushed after CultureBatches, whose id it references.
+    private func pushAcclimatizationBatches(workspaceID: UUID, context: ModelContext) async throws {
+        let pending = try context.fetch(FetchDescriptor<AcclimatizationBatch>()).filter { $0.syncStatus != .synced }
+        guard !pending.isEmpty else { return }
+        let dtos = pending.map { batch in
+            AcclimatizationBatchDTO(
+                id: batch.id, workspaceId: workspaceID, cultureBatchId: batch.cultureBatch?.id, startedAt: batch.startedAt,
+                initialPlantletCount: batch.initialPlantletCount, currentSurvivorCount: batch.currentSurvivorCount,
+                substrate: batch.substrate, humidityProgram: batch.humidityProgram, temperature: batch.temperature,
+                location: batch.location, status: batch.status, steps: batch.steps, notes: batch.notes,
+                plantsCreated: batch.plantsCreated, createdAt: batch.createdAt, updatedAt: batch.updatedAt ?? .now
+            )
+        }
+        try await AuthService.client.from("acclimatization_batches").upsert(dtos).execute()
+        for batch in pending { batch.syncStatus = .synced }
+    }
+
+    private struct LabInventoryItemDTO: Encodable {
+        var id: UUID
+        var workspaceId: UUID
+        var name: String
+        var category: LabInventoryCategory
+        var currentQuantity: Int
+        var minimumThreshold: Int?
+        var unit: String
+        var supplier: String?
+        var lotNumber: String?
+        var expiryDate: Date?
+        var notes: String
+        var createdAt: Date
+        var updatedAt: Date
+
+        enum CodingKeys: String, CodingKey {
+            case id
+            case workspaceId = "workspace_id"
+            case name, category
+            case currentQuantity = "current_quantity"
+            case minimumThreshold = "minimum_threshold"
+            case unit, supplier
+            case lotNumber = "lot_number"
+            case expiryDate = "expiry_date"
+            case notes
+            case createdAt = "created_at"
+            case updatedAt = "updated_at"
+        }
+    }
+
+    /// No foreign keys — can push anywhere, kept next to
+    /// AcclimatizationBatch for Phase 7L locality.
+    private func pushLabInventoryItems(workspaceID: UUID, context: ModelContext) async throws {
+        let pending = try context.fetch(FetchDescriptor<LabInventoryItem>()).filter { $0.syncStatus != .synced }
+        guard !pending.isEmpty else { return }
+        let dtos = pending.map { item in
+            LabInventoryItemDTO(
+                id: item.id, workspaceId: workspaceID, name: item.name, category: item.category,
+                currentQuantity: item.currentQuantity, minimumThreshold: item.minimumThreshold, unit: item.unit,
+                supplier: item.supplier, lotNumber: item.lotNumber, expiryDate: item.expiryDate, notes: item.notes,
+                createdAt: item.createdAt, updatedAt: item.updatedAt ?? .now
+            )
+        }
+        try await AuthService.client.from("lab_inventory_items").upsert(dtos).execute()
+        for item in pending { item.syncStatus = .synced }
     }
 
     private struct BioreactorDTO: Encodable {

@@ -10,6 +10,7 @@ struct CultureBatchDetailView: View {
     @State private var isShowingSplit = false
     @State private var isShowingDiscardConfirm = false
     @State private var inspectionSheet: InspectionSheet?
+    @State private var isShowingAcclimatizationForm = false
 
     private var lineageRoot: CultureLineageService.LineageNode {
         CultureLineageService.tree(for: batch)
@@ -105,6 +106,30 @@ struct CultureBatchDetailView: View {
                 Text("Inspections")
             }
 
+            Section {
+                if batch.acclimatizationBatches.isEmpty {
+                    Text("Aucune acclimatation en cours.")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                } else {
+                    ForEach(batch.acclimatizationBatches.sorted { $0.startedAt > $1.startedAt }) { accBatch in
+                        NavigationLink {
+                            AcclimatizationBatchDetailView(batch: accBatch)
+                        } label: {
+                            VStack(alignment: .leading, spacing: 2) {
+                                Text("\(accBatch.currentSurvivorCount) / \(accBatch.initialPlantletCount) survivants")
+                                Text(accBatch.status.label)
+                                    .font(.caption)
+                                    .foregroundStyle(.secondary)
+                            }
+                        }
+                    }
+                }
+                Button("Démarrer une acclimatation") { isShowingAcclimatizationForm = true }
+            } header: {
+                Text("Acclimatation")
+            }
+
             Section("Notes") {
                 TextField("Notes", text: Binding(
                     get: { batch.notes },
@@ -132,6 +157,9 @@ struct CultureBatchDetailView: View {
             case .edit(let inspection):
                 BioreactorInspectionFormView(batch: batch, inspection: inspection)
             }
+        }
+        .sheet(isPresented: $isShowingAcclimatizationForm) {
+            AcclimatizationBatchFormView(cultureBatch: batch)
         }
         .confirmationDialog("Écarter ce lot ?", isPresented: $isShowingDiscardConfirm, titleVisibility: .visible) {
             Button("Écarter", role: .destructive) {

@@ -61,6 +61,12 @@ final class CultureBatch: Syncable {
     @Relationship(deleteRule: .cascade, inverse: \BioreactorInspection.cultureBatch)
     var inspections: [BioreactorInspection] = []
 
+    /// Spec Phase 7L — a source batch can have more than one
+    /// acclimatization attempt over time (e.g. a failed first try, or
+    /// two attempts with different substrates to compare).
+    @Relationship(deleteRule: .cascade, inverse: \AcclimatizationBatch.cultureBatch)
+    var acclimatizationBatches: [AcclimatizationBatch] = []
+
     init(
         batchCode: String,
         speciesName: String,
