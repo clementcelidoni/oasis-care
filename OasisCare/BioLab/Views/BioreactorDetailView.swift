@@ -11,10 +11,16 @@ struct BioreactorDetailView: View {
     // early SwiftData versions — fetching the (small, workspace-scale)
     // full list and filtering here sidesteps that entirely.
     @Query private var allBatches: [CultureBatch]
+    @Query private var allPrograms: [BioreactorProgram]
+    @Query private var allExecutions: [BioreactorCycleExecution]
     @State private var isShowingMaintenanceForm = false
 
     private var activeBatches: [CultureBatch] {
         allBatches.filter { $0.status == .active }
+    }
+
+    private var recentExecutions: [BioreactorCycleExecution] {
+        allExecutions.filter { $0.bioreactor?.id == bioreactor.id }.sorted { $0.plannedStart > $1.plannedStart }
     }
 
     var body: some View {
@@ -58,6 +64,50 @@ struct BioreactorDetailView: View {
                 }
             }
 
+            Section("Programme") {
+                Picker("Programme actif", selection: Binding(
+                    get: { bioreactor.activeProgramVersion },
+                    set: { bioreactor.activeProgramVersion = $0; bioreactor.markDirty() }
+                )) {
+                    Text("Aucun").tag(BioreactorProgramVersion?.none)
+                    ForEach(allPrograms) { program in
+                        if let version = program.latestVersion {
+                            Text("\(program.name) (V\(version.versionNumber))").tag(Optional(version))
+                        }
+                    }
+                }
+                if let program = bioreactor.activeProgramVersion {
+                    if program.immersionEnabled, let next = nextCycleDate(type: .immersion, program: program) {
+                        LabeledContent("Prochaine immersion", value: next.formatted(date: .omitted, time: .shortened))
+                    }
+                    if program.aerationEnabled, let next = nextCycleDate(type: .aeration, program: program) {
+                        LabeledContent("Prochaine aération", value: next.formatted(date: .omitted, time: .shortened))
+                    }
+                }
+            }
+
+            if !recentExecutions.isEmpty {
+                Section("Cycles récents") {
+                    ForEach(recentExecutions.prefix(10)) { execution in
+                        HStack {
+                            VStack(alignment: .leading, spacing: 1) {
+                                Text(execution.cycleType.label).fontWeight(.medium)
+                                Text(execution.plannedStart.formatted(date: .abbreviated, time: .shortened))
+                                    .font(.caption)
+                                    .foregroundStyle(.secondary)
+                                if let reason = execution.failureReason {
+                                    Text(reason).font(.caption2).foregroundStyle(.orange)
+                                }
+                            }
+                            Spacer()
+                            Text(execution.status.label)
+                                .font(.caption.weight(.semibold))
+                                .foregroundStyle(statusColor(execution.status))
+                        }
+                    }
+                }
+            }
+
             Section {
                 if bioreactor.maintenanceEvents.isEmpty {
                     Text("Aucun événement de maintenance.")
@@ -89,6 +139,27 @@ struct BioreactorDetailView: View {
 
     private func formatted(_ value: Double) -> String {
         value.truncatingRemainder(dividingBy: 1) == 0 ? String(format: "%.0f", value) : String(format: "%.2f", value)
+    }
+
+    /// Spec Phase 7E — "NEXT CYCLE." Same anchor rule as
+    /// BioreactorCycleScheduler itself (plannedStart, not actualStart)
+    /// so this display always agrees with what the scheduler will
+    /// actually do on its next tick.
+    private func nextCycleDate(type: BioreactorCycleType, program: BioreactorProgramVersion) -> Date? {
+        let sameType = recentExecutions.filter { $0.cycleType == type }
+        let lastStart = sameType.map(\.plannedStart).max() ?? bioreactor.createdAt
+        return BioreactorCycleScheduler.nextCycleDate(type: type, program: program, lastCycleStart: lastStart)
+    }
+
+    private func statusColor(_ status: CycleExecutionStatus) -> Color {
+        switch status {
+        case .scheduled: return .secondary
+        case .running: return .blue
+        case .completed: return .green
+        case .failed: return .orange
+        case .cancelled: return .secondary
+        case .timeout: return .red
+        }
     }
 }
 

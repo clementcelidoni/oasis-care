@@ -23,6 +23,11 @@ final class Bioreactor: Syncable {
     var updatedAt: Date?
 
     var currentBatch: CultureBatch?
+    /// Spec Phase 7E — which program version is currently assigned.
+    /// Plain optional relationship added to an already-shipped model —
+    /// safe without a migration default (nil is correct for every
+    /// bioreactor that predates this field).
+    var activeProgramVersion: BioreactorProgramVersion?
 
     @Relationship(deleteRule: .cascade, inverse: \BioreactorMaintenanceEvent.bioreactor)
     var maintenanceEvents: [BioreactorMaintenanceEvent] = []

@@ -75,8 +75,15 @@ final class SyncEngine: ObservableObject {
             try await pushMediumRecipeVersions(workspaceID: workspaceID, context: context)
             try await pushCultureBatches(workspaceID: workspaceID, context: context)
             try await pushMediumBatches(workspaceID: workspaceID, context: context)
+            // Programs/versions before bioreactors: activeProgramVersionId
+            // is a real foreign key, same reasoning as recipes/versions
+            // before culture batches above.
+            try await pushBioreactorPrograms(workspaceID: workspaceID, context: context)
+            try await pushBioreactorProgramVersions(workspaceID: workspaceID, context: context)
             try await pushBioreactors(workspaceID: workspaceID, context: context)
             try await pushBioreactorMaintenanceEvents(workspaceID: workspaceID, context: context)
+            try await pushBioreactorCycleExecutions(workspaceID: workspaceID, context: context)
+            try await pushBioLabAlerts(workspaceID: workspaceID, context: context)
             try await pushPendingDeletions(context: context)
             try context.save()
             lastSyncError = nil
@@ -132,12 +139,17 @@ final class SyncEngine: ObservableObject {
         let mediumBatches = (try? context.fetch(FetchDescriptor<MediumBatch>()))?.filter { $0.syncStatus != .synced }.count ?? 0
         let bioreactors = (try? context.fetch(FetchDescriptor<Bioreactor>()))?.filter { $0.syncStatus != .synced }.count ?? 0
         let maintenanceEvents = (try? context.fetch(FetchDescriptor<BioreactorMaintenanceEvent>()))?.filter { $0.syncStatus != .synced }.count ?? 0
+        let bioreactorPrograms = (try? context.fetch(FetchDescriptor<BioreactorProgram>()))?.filter { $0.syncStatus != .synced }.count ?? 0
+        let bioreactorProgramVersions = (try? context.fetch(FetchDescriptor<BioreactorProgramVersion>()))?.filter { $0.syncStatus != .synced }.count ?? 0
+        let cycleExecutions = (try? context.fetch(FetchDescriptor<BioreactorCycleExecution>()))?.filter { $0.syncStatus != .synced }.count ?? 0
+        let biolabAlerts = (try? context.fetch(FetchDescriptor<BioLabAlert>()))?.filter { $0.syncStatus != .synced }.count ?? 0
         return gardens + zones + plants + schedules + events + photos + analyses + preferences + irrigationZones
             + irrigationEvents + smartTags + connectedDevices + sensors + sensorReadings + commandLogs
             + automationRules + automationExecutions + greenhouses + ponds + measurements + inspections + checkups
             + checkupEntries + smartModeSettings + scenes + deletions
             + boundaries + mapObjects + areas + pipes + cultureBatches
             + mediumRecipes + mediumVersions + mediumBatches + bioreactors + maintenanceEvents
+            + bioreactorPrograms + bioreactorProgramVersions + cycleExecutions + biolabAlerts
     }
 
     private static let photoBucket = "plant-photos"
@@ -394,6 +406,81 @@ final class SyncEngine: ObservableObject {
             event.updatedAt = row.updatedAt
             context.insert(event)
             bioreactor.maintenanceEvents.append(event)
+        }
+
+        // Phase 7E.
+        let remotePrograms: [BioreactorProgramRow] = try await AuthService.client.from("bioreactor_programs").select().execute().value
+        var programsByID: [UUID: BioreactorProgram] = [:]
+        for row in remotePrograms {
+            let program = BioreactorProgram(name: row.name)
+            program.id = row.id
+            program.createdAt = row.createdAt
+            program.syncStatus = .synced
+            program.updatedAt = row.updatedAt
+            context.insert(program)
+            programsByID[row.id] = program
+        }
+
+        let remoteProgramVersions: [BioreactorProgramVersionRow] = try await AuthService.client.from("bioreactor_program_versions").select().execute().value
+        var programVersionsByID: [UUID: BioreactorProgramVersion] = [:]
+        for row in remoteProgramVersions {
+            guard let program = programsByID[row.programId] else { continue }
+            let version = BioreactorProgramVersion(
+                program: program, versionNumber: row.versionNumber,
+                immersionEnabled: row.immersionEnabled, immersionDurationSeconds: row.immersionDurationSeconds,
+                immersionIntervalMinutes: row.immersionIntervalMinutes, aerationEnabled: row.aerationEnabled,
+                aerationDurationSeconds: row.aerationDurationSeconds, aerationIntervalMinutes: row.aerationIntervalMinutes,
+                photoperiodEnabled: row.photoperiodEnabled, lightStartMinutesSinceMidnight: row.lightStartMinutesSinceMidnight,
+                lightEndMinutesSinceMidnight: row.lightEndMinutesSinceMidnight, targetTemperature: row.targetTemperature,
+                maxImmersionDurationSeconds: row.maxImmersionDurationSeconds, maxAerationDurationSeconds: row.maxAerationDurationSeconds,
+                notes: row.notes
+            )
+            version.id = row.id
+            version.createdAt = row.createdAt
+            version.syncStatus = .synced
+            version.updatedAt = row.updatedAt
+            context.insert(version)
+            program.versions.append(version)
+            programVersionsByID[row.id] = version
+        }
+        // Deferred: Bioreactor was restored before program versions existed.
+        for row in remoteBioreactors {
+            guard let versionId = row.activeProgramVersionId else { continue }
+            bioreactorsByID[row.id]?.activeProgramVersion = programVersionsByID[versionId]
+        }
+
+        let remoteCycleExecutions: [BioreactorCycleExecutionRow] = try await AuthService.client.from("bioreactor_cycle_executions").select().execute().value
+        for row in remoteCycleExecutions {
+            guard let bioreactor = bioreactorsByID[row.bioreactorId] else { continue }
+            let execution = BioreactorCycleExecution(
+                bioreactor: bioreactor, programVersion: row.programVersionId.flatMap { programVersionsByID[$0] },
+                cycleType: row.cycleType, plannedStart: row.plannedStart, expectedDurationSeconds: row.expectedDurationSeconds
+            )
+            execution.id = row.id
+            execution.actualStart = row.actualStart
+            execution.actualEnd = row.actualEnd
+            execution.actualDurationSeconds = row.actualDurationSeconds
+            execution.status = row.status
+            execution.failureReason = row.failureReason
+            execution.sensorSnapshotBefore = row.sensorSnapshotBefore
+            execution.sensorSnapshotAfter = row.sensorSnapshotAfter
+            execution.syncStatus = .synced
+            execution.updatedAt = row.updatedAt
+            context.insert(execution)
+        }
+
+        let remoteAlerts: [BioLabAlertRow] = try await AuthService.client.from("biolab_alerts").select().execute().value
+        for row in remoteAlerts {
+            let alert = BioLabAlert(
+                alertType: row.alertType, priority: row.priority, message: row.message,
+                bioreactor: row.bioreactorId.flatMap { bioreactorsByID[$0] }, cultureBatch: row.cultureBatchId.flatMap { batchesByID[$0] }
+            )
+            alert.id = row.id
+            alert.createdAt = row.createdAt
+            alert.resolvedAt = row.resolvedAt
+            alert.syncStatus = .synced
+            alert.updatedAt = row.updatedAt
+            context.insert(alert)
         }
 
         let remoteSensors: [SensorRow] = try await AuthService.client.from("sensors").select().execute().value
@@ -1332,6 +1419,7 @@ final class SyncEngine: ObservableObject {
         var componentTypes: [BioreactorComponentType]
         var location: String
         var currentBatchId: UUID?
+        var activeProgramVersionId: UUID?
         var createdAt: Date
         var updatedAt: Date?
 
@@ -1346,6 +1434,7 @@ final class SyncEngine: ObservableObject {
             case componentTypes = "component_types"
             case location
             case currentBatchId = "current_batch_id"
+            case activeProgramVersionId = "active_program_version_id"
             case createdAt = "created_at"
             case updatedAt = "updated_at"
         }
@@ -1365,6 +1454,120 @@ final class SyncEngine: ObservableObject {
             case date
             case eventType = "event_type"
             case notes
+            case updatedAt = "updated_at"
+        }
+    }
+
+    private struct BioreactorProgramRow: Decodable {
+        var id: UUID
+        var name: String
+        var createdAt: Date
+        var updatedAt: Date?
+
+        enum CodingKeys: String, CodingKey {
+            case id
+            case name
+            case createdAt = "created_at"
+            case updatedAt = "updated_at"
+        }
+    }
+
+    private struct BioreactorProgramVersionRow: Decodable {
+        var id: UUID
+        var programId: UUID
+        var versionNumber: Int
+        var immersionEnabled: Bool
+        var immersionDurationSeconds: Int
+        var immersionIntervalMinutes: Int
+        var aerationEnabled: Bool
+        var aerationDurationSeconds: Int
+        var aerationIntervalMinutes: Int
+        var photoperiodEnabled: Bool
+        var lightStartMinutesSinceMidnight: Int?
+        var lightEndMinutesSinceMidnight: Int?
+        var targetTemperature: Double?
+        var maxImmersionDurationSeconds: Int
+        var maxAerationDurationSeconds: Int
+        var notes: String
+        var createdAt: Date
+        var updatedAt: Date?
+
+        enum CodingKeys: String, CodingKey {
+            case id
+            case programId = "program_id"
+            case versionNumber = "version_number"
+            case immersionEnabled = "immersion_enabled"
+            case immersionDurationSeconds = "immersion_duration_seconds"
+            case immersionIntervalMinutes = "immersion_interval_minutes"
+            case aerationEnabled = "aeration_enabled"
+            case aerationDurationSeconds = "aeration_duration_seconds"
+            case aerationIntervalMinutes = "aeration_interval_minutes"
+            case photoperiodEnabled = "photoperiod_enabled"
+            case lightStartMinutesSinceMidnight = "light_start_minutes"
+            case lightEndMinutesSinceMidnight = "light_end_minutes"
+            case targetTemperature = "target_temperature"
+            case maxImmersionDurationSeconds = "max_immersion_duration_seconds"
+            case maxAerationDurationSeconds = "max_aeration_duration_seconds"
+            case notes
+            case createdAt = "created_at"
+            case updatedAt = "updated_at"
+        }
+    }
+
+    private struct BioreactorCycleExecutionRow: Decodable {
+        var id: UUID
+        var bioreactorId: UUID
+        var programVersionId: UUID?
+        var cycleType: BioreactorCycleType
+        var plannedStart: Date
+        var actualStart: Date?
+        var actualEnd: Date?
+        var expectedDurationSeconds: Int
+        var actualDurationSeconds: Int?
+        var status: CycleExecutionStatus
+        var failureReason: String?
+        var sensorSnapshotBefore: String?
+        var sensorSnapshotAfter: String?
+        var updatedAt: Date?
+
+        enum CodingKeys: String, CodingKey {
+            case id
+            case bioreactorId = "bioreactor_id"
+            case programVersionId = "program_version_id"
+            case cycleType = "cycle_type"
+            case plannedStart = "planned_start"
+            case actualStart = "actual_start"
+            case actualEnd = "actual_end"
+            case expectedDurationSeconds = "expected_duration_seconds"
+            case actualDurationSeconds = "actual_duration_seconds"
+            case status
+            case failureReason = "failure_reason"
+            case sensorSnapshotBefore = "sensor_snapshot_before"
+            case sensorSnapshotAfter = "sensor_snapshot_after"
+            case updatedAt = "updated_at"
+        }
+    }
+
+    private struct BioLabAlertRow: Decodable {
+        var id: UUID
+        var alertType: BioLabAlertType
+        var priority: BioLabAlertPriority
+        var message: String
+        var bioreactorId: UUID?
+        var cultureBatchId: UUID?
+        var createdAt: Date
+        var resolvedAt: Date?
+        var updatedAt: Date?
+
+        enum CodingKeys: String, CodingKey {
+            case id
+            case alertType = "alert_type"
+            case priority
+            case message
+            case bioreactorId = "bioreactor_id"
+            case cultureBatchId = "culture_batch_id"
+            case createdAt = "created_at"
+            case resolvedAt = "resolved_at"
             case updatedAt = "updated_at"
         }
     }
@@ -3038,6 +3241,7 @@ final class SyncEngine: ObservableObject {
         var componentTypes: [BioreactorComponentType]
         var location: String
         var currentBatchId: UUID?
+        var activeProgramVersionId: UUID?
         var createdAt: Date
         var updatedAt: Date
 
@@ -3053,14 +3257,15 @@ final class SyncEngine: ObservableObject {
             case componentTypes = "component_types"
             case location
             case currentBatchId = "current_batch_id"
+            case activeProgramVersionId = "active_program_version_id"
             case createdAt = "created_at"
             case updatedAt = "updated_at"
         }
     }
 
-    /// Pushed after culture batches (already earlier in the sequence)
-    /// so current_batch_id's foreign key target always already exists
-    /// remotely.
+    /// Pushed after culture batches and after program versions
+    /// (currentBatchId/activeProgramVersionId's foreign key targets
+    /// must already exist remotely).
     private func pushBioreactors(workspaceID: UUID, context: ModelContext) async throws {
         let pending = try context.fetch(FetchDescriptor<Bioreactor>()).filter { $0.syncStatus != .synced }
         guard !pending.isEmpty else { return }
@@ -3070,7 +3275,8 @@ final class SyncEngine: ObservableObject {
                 bioreactorType: bioreactor.bioreactorType, totalVolumeLiters: bioreactor.totalVolumeLiters,
                 workingVolumeLiters: bioreactor.workingVolumeLiters, status: bioreactor.status,
                 componentTypes: bioreactor.componentTypes, location: bioreactor.location,
-                currentBatchId: bioreactor.currentBatch?.id, createdAt: bioreactor.createdAt, updatedAt: bioreactor.updatedAt ?? .now
+                currentBatchId: bioreactor.currentBatch?.id, activeProgramVersionId: bioreactor.activeProgramVersion?.id,
+                createdAt: bioreactor.createdAt, updatedAt: bioreactor.updatedAt ?? .now
             )
         }
         try await AuthService.client.from("bioreactors").upsert(dtos).execute()
@@ -3109,6 +3315,192 @@ final class SyncEngine: ObservableObject {
         }
         try await AuthService.client.from("bioreactor_maintenance").upsert(dtos).execute()
         for event in pending { event.syncStatus = .synced }
+    }
+
+    private struct BioreactorProgramDTO: Encodable {
+        var id: UUID
+        var workspaceId: UUID
+        var name: String
+        var createdAt: Date
+        var updatedAt: Date
+
+        enum CodingKeys: String, CodingKey {
+            case id
+            case workspaceId = "workspace_id"
+            case name
+            case createdAt = "created_at"
+            case updatedAt = "updated_at"
+        }
+    }
+
+    private func pushBioreactorPrograms(workspaceID: UUID, context: ModelContext) async throws {
+        let pending = try context.fetch(FetchDescriptor<BioreactorProgram>()).filter { $0.syncStatus != .synced }
+        guard !pending.isEmpty else { return }
+        let dtos = pending.map { program in
+            BioreactorProgramDTO(id: program.id, workspaceId: workspaceID, name: program.name, createdAt: program.createdAt, updatedAt: program.updatedAt ?? .now)
+        }
+        try await AuthService.client.from("bioreactor_programs").upsert(dtos).execute()
+        for program in pending { program.syncStatus = .synced }
+    }
+
+    private struct BioreactorProgramVersionDTO: Encodable {
+        var id: UUID
+        var workspaceId: UUID
+        var programId: UUID
+        var versionNumber: Int
+        var immersionEnabled: Bool
+        var immersionDurationSeconds: Int
+        var immersionIntervalMinutes: Int
+        var aerationEnabled: Bool
+        var aerationDurationSeconds: Int
+        var aerationIntervalMinutes: Int
+        var photoperiodEnabled: Bool
+        var lightStartMinutesSinceMidnight: Int?
+        var lightEndMinutesSinceMidnight: Int?
+        var targetTemperature: Double?
+        var maxImmersionDurationSeconds: Int
+        var maxAerationDurationSeconds: Int
+        var notes: String
+        var createdAt: Date
+        var updatedAt: Date
+
+        enum CodingKeys: String, CodingKey {
+            case id
+            case workspaceId = "workspace_id"
+            case programId = "program_id"
+            case versionNumber = "version_number"
+            case immersionEnabled = "immersion_enabled"
+            case immersionDurationSeconds = "immersion_duration_seconds"
+            case immersionIntervalMinutes = "immersion_interval_minutes"
+            case aerationEnabled = "aeration_enabled"
+            case aerationDurationSeconds = "aeration_duration_seconds"
+            case aerationIntervalMinutes = "aeration_interval_minutes"
+            case photoperiodEnabled = "photoperiod_enabled"
+            case lightStartMinutesSinceMidnight = "light_start_minutes"
+            case lightEndMinutesSinceMidnight = "light_end_minutes"
+            case targetTemperature = "target_temperature"
+            case maxImmersionDurationSeconds = "max_immersion_duration_seconds"
+            case maxAerationDurationSeconds = "max_aeration_duration_seconds"
+            case notes
+            case createdAt = "created_at"
+            case updatedAt = "updated_at"
+        }
+    }
+
+    /// Versions are immutable once created (same discipline as
+    /// MediumRecipeVersion) — "pending" only ever means "brand new."
+    private func pushBioreactorProgramVersions(workspaceID: UUID, context: ModelContext) async throws {
+        let pending = try context.fetch(FetchDescriptor<BioreactorProgramVersion>()).filter { $0.syncStatus != .synced }
+        guard !pending.isEmpty else { return }
+        let dtos = pending.compactMap { version -> BioreactorProgramVersionDTO? in
+            guard let programId = version.program?.id else { return nil }
+            return BioreactorProgramVersionDTO(
+                id: version.id, workspaceId: workspaceID, programId: programId, versionNumber: version.versionNumber,
+                immersionEnabled: version.immersionEnabled, immersionDurationSeconds: version.immersionDurationSeconds,
+                immersionIntervalMinutes: version.immersionIntervalMinutes, aerationEnabled: version.aerationEnabled,
+                aerationDurationSeconds: version.aerationDurationSeconds, aerationIntervalMinutes: version.aerationIntervalMinutes,
+                photoperiodEnabled: version.photoperiodEnabled, lightStartMinutesSinceMidnight: version.lightStartMinutesSinceMidnight,
+                lightEndMinutesSinceMidnight: version.lightEndMinutesSinceMidnight, targetTemperature: version.targetTemperature,
+                maxImmersionDurationSeconds: version.maxImmersionDurationSeconds, maxAerationDurationSeconds: version.maxAerationDurationSeconds,
+                notes: version.notes, createdAt: version.createdAt, updatedAt: version.updatedAt ?? .now
+            )
+        }
+        try await AuthService.client.from("bioreactor_program_versions").upsert(dtos).execute()
+        for version in pending { version.syncStatus = .synced }
+    }
+
+    private struct BioreactorCycleExecutionDTO: Encodable {
+        var id: UUID
+        var workspaceId: UUID
+        var bioreactorId: UUID
+        var programVersionId: UUID?
+        var cycleType: BioreactorCycleType
+        var plannedStart: Date
+        var actualStart: Date?
+        var actualEnd: Date?
+        var expectedDurationSeconds: Int
+        var actualDurationSeconds: Int?
+        var status: CycleExecutionStatus
+        var failureReason: String?
+        var sensorSnapshotBefore: String?
+        var sensorSnapshotAfter: String?
+        var updatedAt: Date
+
+        enum CodingKeys: String, CodingKey {
+            case id
+            case workspaceId = "workspace_id"
+            case bioreactorId = "bioreactor_id"
+            case programVersionId = "program_version_id"
+            case cycleType = "cycle_type"
+            case plannedStart = "planned_start"
+            case actualStart = "actual_start"
+            case actualEnd = "actual_end"
+            case expectedDurationSeconds = "expected_duration_seconds"
+            case actualDurationSeconds = "actual_duration_seconds"
+            case status
+            case failureReason = "failure_reason"
+            case sensorSnapshotBefore = "sensor_snapshot_before"
+            case sensorSnapshotAfter = "sensor_snapshot_after"
+            case updatedAt = "updated_at"
+        }
+    }
+
+    private func pushBioreactorCycleExecutions(workspaceID: UUID, context: ModelContext) async throws {
+        let pending = try context.fetch(FetchDescriptor<BioreactorCycleExecution>()).filter { $0.syncStatus != .synced }
+        guard !pending.isEmpty else { return }
+        let dtos = pending.compactMap { execution -> BioreactorCycleExecutionDTO? in
+            guard let bioreactorId = execution.bioreactor?.id else { return nil }
+            return BioreactorCycleExecutionDTO(
+                id: execution.id, workspaceId: workspaceID, bioreactorId: bioreactorId, programVersionId: execution.programVersion?.id,
+                cycleType: execution.cycleType, plannedStart: execution.plannedStart, actualStart: execution.actualStart,
+                actualEnd: execution.actualEnd, expectedDurationSeconds: execution.expectedDurationSeconds,
+                actualDurationSeconds: execution.actualDurationSeconds, status: execution.status, failureReason: execution.failureReason,
+                sensorSnapshotBefore: execution.sensorSnapshotBefore, sensorSnapshotAfter: execution.sensorSnapshotAfter,
+                updatedAt: execution.updatedAt ?? .now
+            )
+        }
+        try await AuthService.client.from("bioreactor_cycle_executions").upsert(dtos).execute()
+        for execution in pending { execution.syncStatus = .synced }
+    }
+
+    private struct BioLabAlertDTO: Encodable {
+        var id: UUID
+        var workspaceId: UUID
+        var alertType: BioLabAlertType
+        var priority: BioLabAlertPriority
+        var message: String
+        var bioreactorId: UUID?
+        var cultureBatchId: UUID?
+        var createdAt: Date
+        var resolvedAt: Date?
+        var updatedAt: Date
+
+        enum CodingKeys: String, CodingKey {
+            case id
+            case workspaceId = "workspace_id"
+            case alertType = "alert_type"
+            case priority
+            case message
+            case bioreactorId = "bioreactor_id"
+            case cultureBatchId = "culture_batch_id"
+            case createdAt = "created_at"
+            case resolvedAt = "resolved_at"
+            case updatedAt = "updated_at"
+        }
+    }
+
+    private func pushBioLabAlerts(workspaceID: UUID, context: ModelContext) async throws {
+        let pending = try context.fetch(FetchDescriptor<BioLabAlert>()).filter { $0.syncStatus != .synced }
+        guard !pending.isEmpty else { return }
+        let dtos = pending.map { alert in
+            BioLabAlertDTO(
+                id: alert.id, workspaceId: workspaceID, alertType: alert.alertType, priority: alert.priority, message: alert.message,
+                bioreactorId: alert.bioreactor?.id, cultureBatchId: alert.cultureBatch?.id,
+                createdAt: alert.createdAt, resolvedAt: alert.resolvedAt, updatedAt: alert.updatedAt ?? .now
+            )
+        }
+        try await AuthService.client.from("biolab_alerts").upsert(dtos).execute()
+        for alert in pending { alert.syncStatus = .synced }
     }
 
     private struct GardenBoundaryDTO: Encodable {

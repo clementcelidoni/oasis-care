@@ -16,8 +16,10 @@ import SwiftUI
 /// récente, performance de la semaine — gets built; this view grows in
 /// place rather than being replaced when that lands.
 struct BioLabDashboardView: View {
+    @Environment(\.modelContext) private var modelContext
     @Query private var cultureBatches: [CultureBatch]
     @Query private var bioreactors: [Bioreactor]
+    @Query private var cycleExecutions: [BioreactorCycleExecution]
 
     private var summary: BioLabDashboardSummary { BioLabDashboardService.summary(batches: cultureBatches, bioreactors: bioreactors) }
 
@@ -41,6 +43,27 @@ struct BioLabDashboardView: View {
         }
         .navigationTitle("Oasis BioLab")
         .navigationBarTitleDisplayMode(.inline)
+        .task { await runCycleSchedulerLoop() }
+    }
+
+    /// Spec Phase 7E — the only place BioreactorCycleScheduler.tick is
+    /// called from. See that service's own doc comment: this only ever
+    /// runs while a BioLab screen is on screen and the app is in the
+    /// foreground — there is no background daemon. `actuate` is a
+    /// deliberate no-op until Phase 7G supplies a real
+    /// DeviceCommandService-backed implementation; every other
+    /// guarantee (watchdog, journal, missed-cycle alert) is already
+    /// fully real without it.
+    private func runCycleSchedulerLoop() async {
+        while !Task.isCancelled {
+            BioreactorCycleScheduler.tick(
+                bioreactors: bioreactors, executions: cycleExecutions,
+                actuate: { _, _ in },
+                context: modelContext
+            )
+            try? modelContext.save()
+            try? await Task.sleep(for: .seconds(30))
+        }
     }
 
     /// Grows in place across the remaining sub-phases (bioréacteurs in
