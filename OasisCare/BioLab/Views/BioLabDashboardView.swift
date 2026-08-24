@@ -136,6 +136,9 @@ struct BioLabDashboardView: View {
             BioLabQuickLinkRow(title: "Inventaire", icon: "shippingbox") {
                 LabInventoryListView()
             }
+            BioLabQuickLinkRow(title: "Étiquette de rack", icon: "qrcode") {
+                RackTagCreationView()
+            }
             if bioreactors.count >= 2 {
                 BioLabQuickLinkRow(title: "Comparer deux bioréacteurs", icon: "arrow.left.arrow.right") {
                     BioLabComparisonView()

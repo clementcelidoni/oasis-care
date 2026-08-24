@@ -58,6 +58,10 @@ final class AcclimatizationBatch: Syncable {
 
     var cultureBatch: CultureBatch?
 
+    /// Spec's "QR / NFC" section — "zone acclimatation."
+    @Relationship(deleteRule: .cascade, inverse: \SmartTag.acclimatizationBatch)
+    var smartTags: [SmartTag] = []
+
     /// Spec "SURVIE — calculer survivalRate."
     var survivalRate: Double? {
         guard initialPlantletCount > 0 else { return nil }

@@ -67,6 +67,10 @@ final class CultureBatch: Syncable {
     @Relationship(deleteRule: .cascade, inverse: \AcclimatizationBatch.cultureBatch)
     var acclimatizationBatches: [AcclimatizationBatch] = []
 
+    /// Spec's "QR / NFC" section.
+    @Relationship(deleteRule: .cascade, inverse: \SmartTag.cultureBatch)
+    var smartTags: [SmartTag] = []
+
     init(
         batchCode: String,
         speciesName: String,

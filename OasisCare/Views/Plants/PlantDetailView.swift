@@ -188,9 +188,13 @@ struct PlantDetailView: View {
             case .placeOnMap:
                 PlacePlantOnMapSheet(plant: plant)
             case .qrCode(let tag):
-                QRCodeSheet(plant: plant, tag: tag)
+                QRCodeSheet(subjectName: plant.customName, tag: tag)
             case .nfcAssociate:
-                NFCAssociationSheet(plant: plant)
+                NFCAssociationSheet(
+                    subjectName: plant.customName, subjectID: plant.id, existingTags: plant.smartTags,
+                    createTag: { context in SmartTagService.tag(for: plant, type: .nfc, in: context) },
+                    reassignTag: { tag, context in SmartTagService.reassign(tag, to: plant, in: context) }
+                )
             case .addMeasurement:
                 TreeMeasurementFormView(plant: plant)
             case .measurementCharts:

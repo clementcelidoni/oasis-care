@@ -43,7 +43,7 @@ enum SmartTagService {
         if let priorSameType = plant.smartTags.first(where: { $0.type == tag.type && $0.active && $0.id != tag.id }) {
             dissociate(priorSameType, in: context)
         }
-        tag.plant?.smartTags.removeAll { $0.id == tag.id }
+        clearLink(of: tag)
         tag.plant = plant
         plant.smartTags.append(tag)
         tag.lastScannedAt = .now
@@ -54,6 +54,139 @@ enum SmartTagService {
     /// just removes the tag row; the plant itself is untouched.
     static func dissociate(_ tag: SmartTag, in context: ModelContext) {
         DeletionService.delete(tag, in: context)
+    }
+
+    // MARK: - BioLab entities (spec's "QR / NFC" section)
+    //
+    // Same fetch-or-create / reassign shape as the Plant functions above,
+    // one overload per entity type rather than a generic function over a
+    // shared protocol — this codebase's own established convention for
+    // "the same behavior across several unrelated model types"
+    // (DeletionService is the precedent: one delete(_:in:) overload per
+    // type, not a generic one).
+
+    static func tag(for bioreactor: Bioreactor, type: SmartTagType, in context: ModelContext) -> SmartTag {
+        if let existing = bioreactor.smartTags.first(where: { $0.type == type && $0.active }) {
+            return existing
+        }
+        let tag = SmartTag(type: type, bioreactor: bioreactor)
+        context.insert(tag)
+        bioreactor.smartTags.append(tag)
+        return tag
+    }
+
+    static func reassign(_ tag: SmartTag, to bioreactor: Bioreactor, in context: ModelContext) {
+        if let priorSameType = bioreactor.smartTags.first(where: { $0.type == tag.type && $0.active && $0.id != tag.id }) {
+            dissociate(priorSameType, in: context)
+        }
+        clearLink(of: tag)
+        tag.bioreactor = bioreactor
+        bioreactor.smartTags.append(tag)
+        tag.lastScannedAt = .now
+        tag.markDirty()
+    }
+
+    static func tag(for batch: CultureBatch, type: SmartTagType, in context: ModelContext) -> SmartTag {
+        if let existing = batch.smartTags.first(where: { $0.type == type && $0.active }) {
+            return existing
+        }
+        let tag = SmartTag(type: type, cultureBatch: batch)
+        context.insert(tag)
+        batch.smartTags.append(tag)
+        return tag
+    }
+
+    static func reassign(_ tag: SmartTag, to batch: CultureBatch, in context: ModelContext) {
+        if let priorSameType = batch.smartTags.first(where: { $0.type == tag.type && $0.active && $0.id != tag.id }) {
+            dissociate(priorSameType, in: context)
+        }
+        clearLink(of: tag)
+        tag.cultureBatch = batch
+        batch.smartTags.append(tag)
+        tag.lastScannedAt = .now
+        tag.markDirty()
+    }
+
+    static func tag(for version: MediumRecipeVersion, type: SmartTagType, in context: ModelContext) -> SmartTag {
+        if let existing = version.smartTags.first(where: { $0.type == type && $0.active }) {
+            return existing
+        }
+        let tag = SmartTag(type: type, mediumRecipeVersion: version)
+        context.insert(tag)
+        version.smartTags.append(tag)
+        return tag
+    }
+
+    static func reassign(_ tag: SmartTag, to version: MediumRecipeVersion, in context: ModelContext) {
+        if let priorSameType = version.smartTags.first(where: { $0.type == tag.type && $0.active && $0.id != tag.id }) {
+            dissociate(priorSameType, in: context)
+        }
+        clearLink(of: tag)
+        tag.mediumRecipeVersion = version
+        version.smartTags.append(tag)
+        tag.lastScannedAt = .now
+        tag.markDirty()
+    }
+
+    static func tag(for accBatch: AcclimatizationBatch, type: SmartTagType, in context: ModelContext) -> SmartTag {
+        if let existing = accBatch.smartTags.first(where: { $0.type == type && $0.active }) {
+            return existing
+        }
+        let tag = SmartTag(type: type, acclimatizationBatch: accBatch)
+        context.insert(tag)
+        accBatch.smartTags.append(tag)
+        return tag
+    }
+
+    static func reassign(_ tag: SmartTag, to accBatch: AcclimatizationBatch, in context: ModelContext) {
+        if let priorSameType = accBatch.smartTags.first(where: { $0.type == tag.type && $0.active && $0.id != tag.id }) {
+            dissociate(priorSameType, in: context)
+        }
+        clearLink(of: tag)
+        tag.acclimatizationBatch = accBatch
+        accBatch.smartTags.append(tag)
+        tag.lastScannedAt = .now
+        tag.markDirty()
+    }
+
+    /// "Rack" has no backing entity (see SmartTag's own doc comment) —
+    /// just a free-text label, created fresh every time rather than
+    /// fetch-or-created, since there's no owning record to search for an
+    /// existing tag on.
+    static func rackTag(label: String, type: SmartTagType, in context: ModelContext) -> SmartTag {
+        let tag = SmartTag(type: type, rackLabel: label)
+        context.insert(tag)
+        return tag
+    }
+
+    /// Removes `tag` from whichever entity's own `smartTags` array
+    /// currently holds it, before `reassign` points it somewhere else —
+    /// every entity type's inverse relationship needs this same cleanup.
+    private static func clearLink(of tag: SmartTag) {
+        tag.plant?.smartTags.removeAll { $0.id == tag.id }
+        tag.bioreactor?.smartTags.removeAll { $0.id == tag.id }
+        tag.cultureBatch?.smartTags.removeAll { $0.id == tag.id }
+        tag.mediumRecipeVersion?.smartTags.removeAll { $0.id == tag.id }
+        tag.acclimatizationBatch?.smartTags.removeAll { $0.id == tag.id }
+        tag.plant = nil
+        tag.bioreactor = nil
+        tag.cultureBatch = nil
+        tag.mediumRecipeVersion = nil
+        tag.acclimatizationBatch = nil
+    }
+
+    /// What a scanned tag actually points to — the single place both
+    /// QRScannerSheet and ScannerView's NFC path resolve a tag to
+    /// "what do I show now," so a token resolving to e.g. a bioreactor
+    /// gets the same handling regardless of which scan method found it.
+    static func scanResult(for tag: SmartTag) -> SmartTagScanResult? {
+        if let plant = tag.plant { return .plant(plant) }
+        if let bioreactor = tag.bioreactor { return .bioreactor(bioreactor) }
+        if let batch = tag.cultureBatch { return .cultureBatch(batch) }
+        if let version = tag.mediumRecipeVersion { return .mediumRecipeVersion(version) }
+        if let accBatch = tag.acclimatizationBatch { return .acclimatizationBatch(accBatch) }
+        if let rackLabel = tag.rackLabel { return .rack(rackLabel) }
+        return nil
     }
 
     private struct RemoteTagRow: Decodable {

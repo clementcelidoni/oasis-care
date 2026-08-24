@@ -57,6 +57,13 @@ struct MediumRecipeDetailView: View {
 
 struct MediumRecipeVersionDetailView: View {
     var version: MediumRecipeVersion
+    @Environment(\.modelContext) private var modelContext
+    @State private var isShowingQR = false
+    @State private var isShowingNFC = false
+
+    private var subjectName: String {
+        "\(version.recipe?.name ?? "Recette") V\(version.versionNumber)"
+    }
 
     var body: some View {
         Form {
@@ -67,6 +74,15 @@ struct MediumRecipeVersionDetailView: View {
                     LabeledContent("pH mesuré", value: String(format: "%.2f", measuredPH))
                 }
                 LabeledContent("Créée le", value: DateFormatting.shortDate(version.createdAt))
+            }
+
+            Section {
+                SmartTagSectionView(
+                    subjectName: subjectName, existingTags: version.smartTags,
+                    onShowQR: { isShowingQR = true }, onAssociateNFC: { isShowingNFC = true }
+                )
+            } footer: {
+                Text("L'étiquette imprimée pointe vers cette version exacte — elle ne changera jamais, même si la recette évolue plus tard.")
             }
 
             Section("Composants") {
@@ -92,6 +108,16 @@ struct MediumRecipeVersionDetailView: View {
         }
         .navigationTitle("Version \(version.versionNumber)")
         .navigationBarTitleDisplayMode(.inline)
+        .sheet(isPresented: $isShowingQR) {
+            QRCodeSheet(subjectName: subjectName, tag: SmartTagService.tag(for: version, type: .qr, in: modelContext))
+        }
+        .sheet(isPresented: $isShowingNFC) {
+            NFCAssociationSheet(
+                subjectName: subjectName, subjectID: version.id, existingTags: version.smartTags,
+                createTag: { context in SmartTagService.tag(for: version, type: .nfc, in: context) },
+                reassignTag: { tag, context in SmartTagService.reassign(tag, to: version, in: context) }
+            )
+        }
     }
 
     private func formattedAmount(_ value: Double) -> String {

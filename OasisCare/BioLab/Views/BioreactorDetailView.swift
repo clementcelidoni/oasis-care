@@ -16,6 +16,8 @@ struct BioreactorDetailView: View {
     @Query private var allDevices: [ConnectedDevice]
     @State private var isShowingMaintenanceForm = false
     @State private var sensorSheet: SensorSheet?
+    @State private var isShowingQR = false
+    @State private var isShowingNFC = false
 
     private var activeBatches: [CultureBatch] {
         allBatches.filter { $0.status == .active }
@@ -156,6 +158,13 @@ struct BioreactorDetailView: View {
             }
 
             Section {
+                SmartTagSectionView(
+                    subjectName: bioreactor.code, existingTags: bioreactor.smartTags,
+                    onShowQR: { isShowingQR = true }, onAssociateNFC: { isShowingNFC = true }
+                )
+            }
+
+            Section {
                 SensorSectionView(
                     sensors: bioreactor.sensors,
                     onAdd: { sensorSheet = .add },
@@ -221,6 +230,16 @@ struct BioreactorDetailView: View {
             case .detail(let sensor):
                 SensorDetailSheet(sensor: sensor)
             }
+        }
+        .sheet(isPresented: $isShowingQR) {
+            QRCodeSheet(subjectName: bioreactor.code, tag: SmartTagService.tag(for: bioreactor, type: .qr, in: modelContext))
+        }
+        .sheet(isPresented: $isShowingNFC) {
+            NFCAssociationSheet(
+                subjectName: bioreactor.code, subjectID: bioreactor.id, existingTags: bioreactor.smartTags,
+                createTag: { context in SmartTagService.tag(for: bioreactor, type: .nfc, in: context) },
+                reassignTag: { tag, context in SmartTagService.reassign(tag, to: bioreactor, in: context) }
+            )
         }
     }
 

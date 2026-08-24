@@ -27,7 +27,7 @@ struct ScannerView: View {
     @State private var prefill: PlantPrefill?
     @State private var isQRScannerPresented = false
     @State private var isScanningNFC = false
-    @State private var nfcScannedPlant: Plant?
+    @State private var nfcScanResult: SmartTagScanResult?
     @State private var nfcErrorMessage: String?
     @Environment(\.modelContext) private var modelContext
 
@@ -92,8 +92,12 @@ struct ScannerView: View {
             .fullScreenCover(isPresented: $isQRScannerPresented) {
                 QRScannerSheet()
             }
-            .sheet(item: $nfcScannedPlant) { plant in
-                QuickActionsAfterScanSheet(plant: plant)
+            .sheet(item: $nfcScanResult) { result in
+                if case .plant(let plant) = result {
+                    QuickActionsAfterScanSheet(plant: plant)
+                } else {
+                    SmartTagScanResultSheet(result: result)
+                }
             }
         }
     }
@@ -143,13 +147,13 @@ struct ScannerView: View {
             let url = try await NFCService.shared.read(alertMessage: "Approchez l'iPhone de l'étiquette NFC")
             guard let token = SmartTagConfig.token(from: url),
                   let tag = SmartTagService.existingTag(forToken: token, in: modelContext),
-                  let plant = tag.plant else {
-                nfcErrorMessage = "Ce tag NFC n'est associé à aucun végétal sur cet appareil."
+                  let result = SmartTagService.scanResult(for: tag) else {
+                nfcErrorMessage = "Ce tag NFC n'est associé à aucun élément sur cet appareil."
                 return
             }
             SmartTagService.markScanned(tag)
             Haptics.success()
-            nfcScannedPlant = plant
+            nfcScanResult = result
         } catch NFCServiceError.cancelled {
             // User backed out — no error to show.
         } catch let error as NFCServiceError {

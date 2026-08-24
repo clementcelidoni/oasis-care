@@ -56,6 +56,10 @@ final class Bioreactor: Syncable {
     @Relationship(deleteRule: .cascade, inverse: \BioreactorDeviceBinding.bioreactor)
     var deviceBindings: [BioreactorDeviceBinding] = []
 
+    /// Spec's "QR / NFC" section.
+    @Relationship(deleteRule: .cascade, inverse: \SmartTag.bioreactor)
+    var smartTags: [SmartTag] = []
+
     init(
         name: String, code: String, bioreactorType: BioreactorType, totalVolumeLiters: Double, workingVolumeLiters: Double,
         componentTypes: [BioreactorComponentType] = [], location: String = ""

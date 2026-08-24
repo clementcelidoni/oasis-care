@@ -12,7 +12,7 @@ struct QRScannerSheet: View {
     @Environment(\.modelContext) private var modelContext
     @Environment(\.dismiss) private var dismiss
 
-    @State private var scannedPlant: Plant?
+    @State private var scanResult: SmartTagScanResult?
     @State private var errorMessage: String?
 
     var body: some View {
@@ -59,8 +59,12 @@ struct QRScannerSheet: View {
                 .padding()
             }
         }
-        .sheet(item: $scannedPlant) { plant in
-            QuickActionsAfterScanSheet(plant: plant)
+        .sheet(item: $scanResult) { result in
+            if case .plant(let plant) = result {
+                QuickActionsAfterScanSheet(plant: plant)
+            } else {
+                SmartTagScanResultSheet(result: result)
+            }
         }
     }
 
@@ -83,13 +87,14 @@ struct QRScannerSheet: View {
             errorMessage = "QR code non reconnu par Oasis Care."
             return
         }
-        guard let tag = SmartTagService.existingTag(forToken: token, in: modelContext), let plant = tag.plant else {
-            errorMessage = "Ce QR code n'est associé à aucun végétal sur cet appareil."
+        guard let tag = SmartTagService.existingTag(forToken: token, in: modelContext),
+              let result = SmartTagService.scanResult(for: tag) else {
+            errorMessage = "Ce QR code n'est associé à aucun élément sur cet appareil."
             return
         }
         errorMessage = nil
         SmartTagService.markScanned(tag)
         Haptics.success()
-        scannedPlant = plant
+        scanResult = result
     }
 }

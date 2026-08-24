@@ -29,6 +29,14 @@ final class MediumRecipeVersion: Syncable {
 
     var recipe: MediumRecipe?
 
+    /// Spec's "QR / NFC" section — "recette imprimée." Points at one
+    /// exact, immutable version, same reasoning as CultureBatch's own
+    /// mediumRecipeVersion: a tag printed today must keep meaning
+    /// exactly what it said today even after the recipe gains newer
+    /// versions.
+    @Relationship(deleteRule: .cascade, inverse: \SmartTag.mediumRecipeVersion)
+    var smartTags: [SmartTag] = []
+
     init(recipe: MediumRecipe?, versionNumber: Int, targetPH: Double, components: [MediumComponentAmount], notes: String = "") {
         self.id = UUID()
         self.recipe = recipe

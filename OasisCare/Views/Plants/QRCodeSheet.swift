@@ -1,14 +1,21 @@
 import SwiftUI
 import SwiftData
 
-/// Spec §42 — generate/view/share/export a plant's QR smart tag.
-/// Share/export are the same action here: the system share sheet's own
-/// "Enregistrer l'image" destination covers export, so there's no
-/// separate export button to build or maintain. Takes an already
-/// resolved `tag` rather than fetching-or-creating one itself — that
-/// happens once, at the moment the caller opens this sheet.
+/// Spec §42 — generate/view/share/export a smart tag's QR code. Not
+/// Plant-specific despite the spec section number: spec's later "QR /
+/// NFC" section reuses the exact same tag for bioréacteur/lot/recette
+/// imprimée/zone d'acclimatation, and this sheet never actually needed
+/// the whole Plant object — only its display name — so generalizing it
+/// to a plain `subjectName` covers every entity type with no risk to
+/// the existing plant flow (same behavior, just the name passed in
+/// directly instead of read off a Plant). Share/export are the same
+/// action here: the system share sheet's own "Enregistrer l'image"
+/// destination covers export, so there's no separate export button to
+/// build or maintain. Takes an already resolved `tag` rather than
+/// fetching-or-creating one itself — that happens once, at the moment
+/// the caller opens this sheet.
 struct QRCodeSheet: View {
-    var plant: Plant
+    var subjectName: String
     var tag: SmartTag
 
     @Environment(\.modelContext) private var modelContext
@@ -21,7 +28,7 @@ struct QRCodeSheet: View {
     var body: some View {
         NavigationStack {
             VStack(spacing: 24) {
-                Text(plant.customName)
+                Text(subjectName)
                     .font(.title3.weight(.semibold))
 
                 if let qrImage {
@@ -36,7 +43,7 @@ struct QRCodeSheet: View {
 
                     ShareLink(
                         item: Image(uiImage: qrImage),
-                        preview: SharePreview("Étiquette Oasis — \(plant.customName)", image: Image(uiImage: qrImage))
+                        preview: SharePreview("Étiquette Oasis — \(subjectName)", image: Image(uiImage: qrImage))
                     ) {
                         Label("Partager", systemImage: "square.and.arrow.up")
                             .frame(maxWidth: .infinity)

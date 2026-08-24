@@ -46,7 +46,6 @@ final class SyncEngine: ObservableObject {
             try await pushGardenCheckupEntries(context: context)
             try await pushPlantPhotos(workspaceID: workspaceID, context: context)
             try await pushAIAnalyses(context: context)
-            try await pushSmartTags(workspaceID: workspaceID, context: context)
             try await pushConnectedDevices(workspaceID: workspaceID, context: context)
             // This whole BioLab chain must run before pushSensors: Phase 7F
             // gave Sensor an optional bioreactor_id foreign key, and
@@ -78,6 +77,13 @@ final class SyncEngine: ObservableObject {
             try await pushAcclimatizationBatches(workspaceID: workspaceID, context: context)
             try await pushLabInventoryItems(workspaceID: workspaceID, context: context)
             try await pushBioreactors(workspaceID: workspaceID, context: context)
+            // Moved here (spec's "QR / NFC" section) from its original
+            // position right after pushAIAnalyses: SmartTag can now
+            // reference Bioreactor/CultureBatch/MediumRecipeVersion/
+            // AcclimatizationBatch too, all of which must already exist
+            // remotely — Plant (its one original target) already pushed
+            // long before this point either way.
+            try await pushSmartTags(workspaceID: workspaceID, context: context)
             try await pushBioreactorDeviceBindings(workspaceID: workspaceID, context: context)
             try await pushBioreactorInspections(workspaceID: workspaceID, context: context)
             try await pushBioLabInspectionPhotos(workspaceID: workspaceID, context: context)
@@ -361,6 +367,7 @@ final class SyncEngine: ObservableObject {
         }
 
         let remoteAcclimatizationBatches: [AcclimatizationBatchRow] = try await AuthService.client.from("acclimatization_batches").select().execute().value
+        var acclimatizationBatchesByID: [UUID: AcclimatizationBatch] = [:]
         for row in remoteAcclimatizationBatches {
             let batch = AcclimatizationBatch(
                 cultureBatch: row.cultureBatchId.flatMap { batchesByID[$0] }, initialPlantletCount: row.initialPlantletCount,
@@ -378,6 +385,7 @@ final class SyncEngine: ObservableObject {
             batch.updatedAt = row.updatedAt
             context.insert(batch)
             batch.cultureBatch?.acclimatizationBatches.append(batch)
+            acclimatizationBatchesByID[row.id] = batch
         }
 
         let remoteLabInventoryItems: [LabInventoryItemRow] = try await AuthService.client.from("lab_inventory_items").select().execute().value
@@ -492,6 +500,35 @@ final class SyncEngine: ObservableObject {
             binding.updatedAt = row.updatedAt
             context.insert(binding)
             bioreactor.deviceBindings.append(binding)
+        }
+
+        // Spec's "QR / NFC" section — moved here from right after
+        // AIAnalysis (its original position, when Plant was the only
+        // possible target): a tag can now also reference Bioreactor,
+        // the last of its five possible targets to become available
+        // during restore (Plant/CultureBatch/MediumRecipeVersion/
+        // AcclimatizationBatch all exist earlier already).
+        let remoteSmartTags: [SmartTagRow] = try await AuthService.client.from("smart_tags").select().execute().value
+        for row in remoteSmartTags {
+            let tag = SmartTag(
+                plant: row.plantId.flatMap { plantsByID[$0] }, type: row.type,
+                bioreactor: row.bioreactorId.flatMap { bioreactorsByID[$0] },
+                cultureBatch: row.cultureBatchId.flatMap { batchesByID[$0] },
+                mediumRecipeVersion: row.mediumRecipeVersionId.flatMap { versionsByID[$0] },
+                acclimatizationBatch: row.acclimatizationBatchId.flatMap { acclimatizationBatchesByID[$0] },
+                rackLabel: row.rackLabel
+            )
+            tag.id = row.id
+            // Must carry over the ORIGINAL token, not the fresh random
+            // one the initializer just generated — physical QR/NFC tags
+            // already have this token printed/written on them.
+            tag.publicToken = row.publicToken
+            tag.active = row.active
+            tag.createdAt = row.createdAt
+            tag.lastScannedAt = row.lastScannedAt
+            tag.syncStatus = .synced
+            tag.updatedAt = row.updatedAt
+            context.insert(tag)
         }
 
         // Phase 7H.
@@ -990,23 +1027,6 @@ final class SyncEngine: ObservableObject {
             context.insert(analysis)
         }
 
-        let remoteSmartTags: [SmartTagRow] = try await AuthService.client.from("smart_tags").select().execute().value
-        for row in remoteSmartTags {
-            guard let plant = plantsByID[row.plantId] else { continue }
-            let tag = SmartTag(plant: plant, type: row.type)
-            tag.id = row.id
-            // Must carry over the ORIGINAL token, not the fresh random
-            // one the initializer just generated — physical QR/NFC tags
-            // already have this token printed/written on them.
-            tag.publicToken = row.publicToken
-            tag.active = row.active
-            tag.createdAt = row.createdAt
-            tag.lastScannedAt = row.lastScannedAt
-            tag.syncStatus = .synced
-            tag.updatedAt = row.updatedAt
-            context.insert(tag)
-        }
-
         let remoteIrrigationEvents: [IrrigationEventRow] = try await AuthService.client.from("irrigation_events").select().execute().value
         for row in remoteIrrigationEvents {
             guard let zone = irrigationZonesByID[row.zoneId] else { continue }
@@ -1375,7 +1395,12 @@ final class SyncEngine: ObservableObject {
 
     private struct SmartTagRow: Decodable {
         var id: UUID
-        var plantId: UUID
+        var plantId: UUID?
+        var bioreactorId: UUID?
+        var cultureBatchId: UUID?
+        var mediumRecipeVersionId: UUID?
+        var acclimatizationBatchId: UUID?
+        var rackLabel: String?
         var type: SmartTagType
         var publicToken: String
         var active: Bool
@@ -1386,6 +1411,11 @@ final class SyncEngine: ObservableObject {
         enum CodingKeys: String, CodingKey {
             case id
             case plantId = "plant_id"
+            case bioreactorId = "bioreactor_id"
+            case cultureBatchId = "culture_batch_id"
+            case mediumRecipeVersionId = "medium_recipe_version_id"
+            case acclimatizationBatchId = "acclimatization_batch_id"
+            case rackLabel = "rack_label"
             case type
             case publicToken = "public_token"
             case active
@@ -2898,7 +2928,12 @@ final class SyncEngine: ObservableObject {
     private struct SmartTagDTO: Encodable {
         var id: UUID
         var workspaceId: UUID
-        var plantId: UUID
+        var plantId: UUID?
+        var bioreactorId: UUID?
+        var cultureBatchId: UUID?
+        var mediumRecipeVersionId: UUID?
+        var acclimatizationBatchId: UUID?
+        var rackLabel: String?
         var type: SmartTagType
         var publicToken: String
         var active: Bool
@@ -2910,6 +2945,11 @@ final class SyncEngine: ObservableObject {
             case id
             case workspaceId = "workspace_id"
             case plantId = "plant_id"
+            case bioreactorId = "bioreactor_id"
+            case cultureBatchId = "culture_batch_id"
+            case mediumRecipeVersionId = "medium_recipe_version_id"
+            case acclimatizationBatchId = "acclimatization_batch_id"
+            case rackLabel = "rack_label"
             case type
             case publicToken = "public_token"
             case active
@@ -2919,20 +2959,24 @@ final class SyncEngine: ObservableObject {
         }
     }
 
+    /// No longer skips a tag just for lacking a plant — spec's later
+    /// "QR / NFC" section means a tag can point at any one of six things
+    /// (five real entities plus a plain rack label), so "has no plant"
+    /// is no longer the same as "not ready to sync."
     private func pushSmartTags(workspaceID: UUID, context: ModelContext) async throws {
         let pending = try context.fetch(FetchDescriptor<SmartTag>()).filter { $0.syncStatus != .synced }
         guard !pending.isEmpty else { return }
-        let dtos = pending.compactMap { tag -> SmartTagDTO? in
-            guard let plantID = tag.plant?.id else { return nil }
-            return SmartTagDTO(
-                id: tag.id, workspaceId: workspaceID, plantId: plantID, type: tag.type,
+        let dtos = pending.map { tag in
+            SmartTagDTO(
+                id: tag.id, workspaceId: workspaceID, plantId: tag.plant?.id, bioreactorId: tag.bioreactor?.id,
+                cultureBatchId: tag.cultureBatch?.id, mediumRecipeVersionId: tag.mediumRecipeVersion?.id,
+                acclimatizationBatchId: tag.acclimatizationBatch?.id, rackLabel: tag.rackLabel, type: tag.type,
                 publicToken: tag.publicToken, active: tag.active, createdAt: tag.createdAt,
                 lastScannedAt: tag.lastScannedAt, updatedAt: tag.updatedAt ?? .now
             )
         }
-        guard !dtos.isEmpty else { return }
         try await AuthService.client.from("smart_tags").upsert(dtos).execute()
-        for tag in pending where tag.plant != nil { tag.syncStatus = .synced }
+        for tag in pending { tag.syncStatus = .synced }
     }
 
     // MARK: - Connected devices

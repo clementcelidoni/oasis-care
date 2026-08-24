@@ -5,8 +5,21 @@ import SwiftData
 /// own system scanning UI via `session.alertMessage` — this view's job
 /// is just to kick off read/write through NFCService and react to the
 /// outcome; it never touches CoreNFC types directly (spec §44).
+///
+/// Generalized past Plant for spec's later "QR / NFC" section (same
+/// tag, now also bioréacteur/lot/recette imprimée/zone d'acclimatation):
+/// rather than a protocol retrofitted onto five otherwise-unrelated
+/// model types, the caller already has its own concrete entity in scope
+/// and passes in exactly the three things this view actually needs —
+/// its display name, its existing tags, and how to create/reassign a
+/// tag onto it — so this view itself stays entity-agnostic without ever
+/// naming Bioreactor/CultureBatch/etc.
 struct NFCAssociationSheet: View {
-    var plant: Plant
+    var subjectName: String
+    var subjectID: UUID
+    var existingTags: [SmartTag]
+    var createTag: (ModelContext) -> SmartTag
+    var reassignTag: (SmartTag, ModelContext) -> Void
 
     @Environment(\.modelContext) private var modelContext
     @Environment(\.dismiss) private var dismiss
@@ -14,7 +27,7 @@ struct NFCAssociationSheet: View {
     private enum Phase {
         case idle
         case working
-        case conflict(tag: SmartTag, otherPlantName: String)
+        case conflict(tag: SmartTag, otherName: String)
         case success
         case failure(String)
     }
@@ -22,7 +35,7 @@ struct NFCAssociationSheet: View {
     @State private var phase: Phase = .idle
 
     private var existingNFCTag: SmartTag? {
-        plant.smartTags.first { $0.type == .nfc && $0.active }
+        existingTags.first { $0.type == .nfc && $0.active }
     }
 
     var body: some View {
@@ -52,7 +65,7 @@ struct NFCAssociationSheet: View {
                     .font(.system(size: 56))
                     .foregroundStyle(.blue)
                 if let existingNFCTag {
-                    Text("\(plant.customName) a déjà un tag NFC associé.")
+                    Text("\(subjectName) a déjà un tag NFC associé.")
                         .multilineTextAlignment(.center)
                         .foregroundStyle(.secondary)
                     Button("Remplacer par un nouveau tag") {
@@ -65,7 +78,7 @@ struct NFCAssociationSheet: View {
                         dismiss()
                     }
                 } else {
-                    Text("Approchez votre iPhone d'un tag NFC pour l'associer à \(plant.customName).")
+                    Text("Approchez votre iPhone d'un tag NFC pour l'associer à \(subjectName).")
                         .multilineTextAlignment(.center)
                         .foregroundStyle(.secondary)
                     Button("Approcher un tag NFC") {
@@ -77,14 +90,14 @@ struct NFCAssociationSheet: View {
             }
         case .working:
             ProgressView("Suivez les instructions à l'écran…")
-        case .conflict(let tag, let otherPlantName):
+        case .conflict(let tag, let otherName):
             VStack(spacing: 16) {
                 Image(systemName: "exclamationmark.triangle.fill")
                     .font(.system(size: 48))
                     .foregroundStyle(.orange)
                 Text("Ce tag est déjà associé à :")
                     .foregroundStyle(.secondary)
-                Text(otherPlantName)
+                Text(otherName)
                     .font(.headline)
                 HStack(spacing: 12) {
                     Button("Annuler", role: .cancel) { phase = .idle }
@@ -102,7 +115,7 @@ struct NFCAssociationSheet: View {
                     .foregroundStyle(.green)
                 Text("✓ Tag NFC associé")
                     .font(.headline)
-                Text(plant.customName)
+                Text(subjectName)
                 Text("Le tag peut désormais ouvrir directement cette fiche.")
                     .font(.caption)
                     .foregroundStyle(.secondary)
@@ -153,24 +166,24 @@ struct NFCAssociationSheet: View {
             return
         }
 
-        if existing.plant?.id == plant.id {
+        if existing.linkedEntityID == subjectID {
             SmartTagService.markScanned(existing)
             phase = .success
             return
         }
 
-        phase = .conflict(tag: existing, otherPlantName: existing.plant?.customName ?? "un autre végétal")
+        phase = .conflict(tag: existing, otherName: existing.linkedDisplayName ?? "un autre élément")
     }
 
     private func reassign(_ tag: SmartTag) async {
         phase = .working
-        SmartTagService.reassign(tag, to: plant, in: modelContext)
+        reassignTag(tag, modelContext)
         phase = .success
     }
 
     private func writeTag() async {
         phase = .working
-        let tag = SmartTagService.tag(for: plant, type: .nfc, in: modelContext)
+        let tag = createTag(modelContext)
         guard let url = URL(string: tag.url) else {
             phase = .failure("URL invalide.")
             return

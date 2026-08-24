@@ -11,6 +11,8 @@ struct CultureBatchDetailView: View {
     @State private var isShowingDiscardConfirm = false
     @State private var inspectionSheet: InspectionSheet?
     @State private var isShowingAcclimatizationForm = false
+    @State private var isShowingQR = false
+    @State private var isShowingNFC = false
 
     private var lineageRoot: CultureLineageService.LineageNode {
         CultureLineageService.tree(for: batch)
@@ -53,6 +55,13 @@ struct CultureBatchDetailView: View {
                         }
                     }
                 }
+            }
+
+            Section {
+                SmartTagSectionView(
+                    subjectName: batch.batchCode, existingTags: batch.smartTags,
+                    onShowQR: { isShowingQR = true }, onAssociateNFC: { isShowingNFC = true }
+                )
             }
 
             Section("Généalogie") {
@@ -160,6 +169,16 @@ struct CultureBatchDetailView: View {
         }
         .sheet(isPresented: $isShowingAcclimatizationForm) {
             AcclimatizationBatchFormView(cultureBatch: batch)
+        }
+        .sheet(isPresented: $isShowingQR) {
+            QRCodeSheet(subjectName: batch.batchCode, tag: SmartTagService.tag(for: batch, type: .qr, in: modelContext))
+        }
+        .sheet(isPresented: $isShowingNFC) {
+            NFCAssociationSheet(
+                subjectName: batch.batchCode, subjectID: batch.id, existingTags: batch.smartTags,
+                createTag: { context in SmartTagService.tag(for: batch, type: .nfc, in: context) },
+                reassignTag: { tag, context in SmartTagService.reassign(tag, to: batch, in: context) }
+            )
         }
         .confirmationDialog("Écarter ce lot ?", isPresented: $isShowingDiscardConfirm, titleVisibility: .visible) {
             Button("Écarter", role: .destructive) {

@@ -8,6 +8,12 @@ struct AcclimatizationBatchDetailView: View {
     @Environment(\.modelContext) private var modelContext
     @State private var isShowingAddStep = false
     @State private var isShowingCreatePlants = false
+    @State private var isShowingQR = false
+    @State private var isShowingNFC = false
+
+    private var subjectName: String {
+        "Acclimatation \(batch.cultureBatch?.batchCode ?? "?")"
+    }
 
     var body: some View {
         Form {
@@ -30,6 +36,13 @@ struct AcclimatizationBatchDetailView: View {
                         Text(status.label).tag(status)
                     }
                 }
+            }
+
+            Section {
+                SmartTagSectionView(
+                    subjectName: subjectName, existingTags: batch.smartTags,
+                    onShowQR: { isShowingQR = true }, onAssociateNFC: { isShowingNFC = true }
+                )
             }
 
             Section {
@@ -103,6 +116,16 @@ struct AcclimatizationBatchDetailView: View {
         }
         .sheet(isPresented: $isShowingCreatePlants) {
             CreateAcclimatizedPlantsSheet(batch: batch)
+        }
+        .sheet(isPresented: $isShowingQR) {
+            QRCodeSheet(subjectName: subjectName, tag: SmartTagService.tag(for: batch, type: .qr, in: modelContext))
+        }
+        .sheet(isPresented: $isShowingNFC) {
+            NFCAssociationSheet(
+                subjectName: subjectName, subjectID: batch.id, existingTags: batch.smartTags,
+                createTag: { context in SmartTagService.tag(for: batch, type: .nfc, in: context) },
+                reassignTag: { tag, context in SmartTagService.reassign(tag, to: batch, in: context) }
+            )
         }
     }
 
