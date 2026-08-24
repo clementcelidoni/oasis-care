@@ -17,8 +17,9 @@ import SwiftUI
 /// place rather than being replaced when that lands.
 struct BioLabDashboardView: View {
     @Query private var cultureBatches: [CultureBatch]
+    @Query private var bioreactors: [Bioreactor]
 
-    private var summary: BioLabDashboardSummary { BioLabDashboardService.summary(batches: cultureBatches) }
+    private var summary: BioLabDashboardSummary { BioLabDashboardService.summary(batches: cultureBatches, bioreactors: bioreactors) }
 
     var body: some View {
         ScrollView {
@@ -48,6 +49,9 @@ struct BioLabDashboardView: View {
     /// destination.
     private var quickLinks: some View {
         VStack(spacing: 10) {
+            BioLabQuickLinkRow(title: "Bioréacteurs (\(bioreactors.count))", icon: "testtube.2") {
+                BioreactorListView()
+            }
             BioLabQuickLinkRow(title: "Lots de culture (\(cultureBatches.count))", icon: "flask") {
                 CultureBatchListView()
             }

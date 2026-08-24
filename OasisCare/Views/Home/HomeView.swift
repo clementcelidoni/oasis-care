@@ -20,6 +20,7 @@ struct HomeView: View {
     @Query private var allSensors: [Sensor]
     @Query private var smartModeSettingsQuery: [SmartModeSettings]
     @Query private var cultureBatches: [CultureBatch]
+    @Query private var bioreactors: [Bioreactor]
     @ObservedObject private var homeKitService = HomeKitService.shared
 
     @State private var selectedGarden: Garden?
@@ -160,7 +161,7 @@ struct HomeView: View {
                                 NavigationLink {
                                     BioLabDashboardView()
                                 } label: {
-                                    BioLabEntryCard(summary: BioLabDashboardService.summary(batches: cultureBatches))
+                                    BioLabEntryCard(summary: BioLabDashboardService.summary(batches: cultureBatches, bioreactors: bioreactors))
                                 }
                                 .buttonStyle(.plain)
                             }

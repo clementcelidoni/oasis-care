@@ -50,7 +50,9 @@ enum SharedModelContainer {
             CultureBatch.self,
             MediumRecipe.self,
             MediumRecipeVersion.self,
-            MediumBatch.self
+            MediumBatch.self,
+            Bioreactor.self,
+            BioreactorMaintenanceEvent.self
         ])
         let configuration = ModelConfiguration(schema: schema)
 

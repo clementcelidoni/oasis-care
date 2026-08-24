@@ -1,0 +1,47 @@
+import Foundation
+import SwiftData
+
+/// Spec Phase 7D — "Bioreactor." Device/sensor bindings deliberately
+/// aren't fields here: 7F scopes Sensor to a bioreactor the same way
+/// Sensor already scopes to plant/garden/zone/device, and 7G's
+/// BioreactorDeviceBinding gives device roles (air pump, valve...)
+/// real structure — a flat deviceIds/sensorIds array here would only
+/// duplicate what those two, more precise mechanisms already express.
+@Model
+final class Bioreactor: Syncable {
+    var id: UUID
+    var name: String
+    var code: String
+    var bioreactorType: BioreactorType
+    var totalVolumeLiters: Double
+    var workingVolumeLiters: Double
+    var status: BioreactorStatus
+    var componentTypes: [BioreactorComponentType]
+    var location: String
+    var createdAt: Date
+    var syncStatus: SyncStatus?
+    var updatedAt: Date?
+
+    var currentBatch: CultureBatch?
+
+    @Relationship(deleteRule: .cascade, inverse: \BioreactorMaintenanceEvent.bioreactor)
+    var maintenanceEvents: [BioreactorMaintenanceEvent] = []
+
+    init(
+        name: String, code: String, bioreactorType: BioreactorType, totalVolumeLiters: Double, workingVolumeLiters: Double,
+        componentTypes: [BioreactorComponentType] = [], location: String = ""
+    ) {
+        self.id = UUID()
+        self.name = name
+        self.code = code
+        self.bioreactorType = bioreactorType
+        self.totalVolumeLiters = totalVolumeLiters
+        self.workingVolumeLiters = workingVolumeLiters
+        self.status = .idle
+        self.componentTypes = componentTypes
+        self.location = location
+        self.createdAt = .now
+        self.syncStatus = .pendingCreate
+        self.updatedAt = .now
+    }
+}
