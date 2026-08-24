@@ -20,8 +20,10 @@ struct BioLabDashboardView: View {
     @Query private var cultureBatches: [CultureBatch]
     @Query private var bioreactors: [Bioreactor]
     @Query private var cycleExecutions: [BioreactorCycleExecution]
+    @State private var isAssistantPresented = false
 
     private var summary: BioLabDashboardSummary { BioLabDashboardService.summary(batches: cultureBatches, bioreactors: bioreactors) }
+    private var aiContext: BioLabAIContext { BioLabAIContext.build(batches: cultureBatches, bioreactors: bioreactors) }
 
     var body: some View {
         ScrollView {
@@ -37,6 +39,7 @@ struct BioLabDashboardView: View {
                     statGrid
                 }
 
+                aiAssistantRow
                 quickLinks
             }
             .padding()
@@ -44,6 +47,28 @@ struct BioLabDashboardView: View {
         .navigationTitle("Oasis BioLab")
         .navigationBarTitleDisplayMode(.inline)
         .task { await runCycleSchedulerLoop() }
+        .sheet(isPresented: $isAssistantPresented) {
+            BioLabAIAssistantSheet(context: aiContext)
+        }
+    }
+
+    /// Spec Phase 7I "QUESTIONS" — same visual convention as HomeView's
+    /// own "Demander quelque chose à Oasis..." row.
+    private var aiAssistantRow: some View {
+        Button {
+            isAssistantPresented = true
+        } label: {
+            HStack {
+                Image(systemName: "text.bubble")
+                Text("Demander quelque chose à Oasis BioLab...")
+                Spacer()
+            }
+            .font(.subheadline)
+            .foregroundStyle(.secondary)
+            .padding(10)
+            .background(Color.purple.opacity(0.08), in: RoundedRectangle(cornerRadius: 10, style: .continuous))
+        }
+        .buttonStyle(.plain)
     }
 
     /// Spec Phase 7E — the only place BioreactorCycleScheduler.tick is
@@ -83,6 +108,11 @@ struct BioLabDashboardView: View {
             }
             BioLabQuickLinkRow(title: "Préparations de milieu", icon: "flask.fill") {
                 MediumBatchListView()
+            }
+            if bioreactors.count >= 2 {
+                BioLabQuickLinkRow(title: "Comparer deux bioréacteurs", icon: "arrow.left.arrow.right") {
+                    BioLabComparisonView()
+                }
             }
         }
     }

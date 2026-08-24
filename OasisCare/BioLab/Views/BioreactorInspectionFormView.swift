@@ -3,13 +3,15 @@ import PhotosUI
 import UIKit
 import SwiftData
 
-/// Spec Phase 7H. Deliberately no AI section here (unlike its closest
-/// analog, TreeInspectionFormView) — photo-based AI analysis with a
-/// confidence level is Phase 7I's "Oasis AI BioLab," a separate,
-/// dedicated sub-phase; building it here would duplicate that work.
-/// CRITIQUE respected by construction: contaminationStatus is always a
-/// value this screen's human user picks — nothing here ever sets it
-/// from an automated analysis.
+/// Spec Phase 7H, with Phase 7I's "ANALYSE PHOTO" AI section added in
+/// place once that sub-phase landed (same pattern as
+/// TreeInspectionFormView's own "✨ Oasis AI" section). CRITIQUE
+/// respected by construction: contaminationStatus is always a value
+/// this screen's human user picks in the "États sanitaires" section
+/// above — the AI analysis below only ever offers its own separate,
+/// hedged "contamination visible potentielle" observation, and nothing
+/// here ever copies that observation into contaminationStatus
+/// automatically.
 struct BioreactorInspectionFormView: View {
     var batch: CultureBatch
     var inspection: BioreactorInspection?
@@ -34,6 +36,11 @@ struct BioreactorInspectionFormView: View {
     @State private var isCameraPresented = false
     @State private var isPhotosPickerPresented = false
     @State private var selectedPhotoItem: PhotosPickerItem?
+
+    @State private var isAnalyzing = false
+    @State private var analysis: BioLabInspectionAnalysis?
+    @State private var analysisError: String?
+    @ObservedObject private var authState = AuthState.shared
 
     private struct PendingPhoto: Identifiable {
         let id = UUID()
@@ -116,6 +123,7 @@ struct BioreactorInspectionFormView: View {
                 }
 
                 photosSection
+                aiSection
 
                 Section("Notes") {
                     TextField("Notes", text: $notes, axis: .vertical)
@@ -204,6 +212,85 @@ struct BioreactorInspectionFormView: View {
         } footer: {
             Text("Vue globale, détail tissus, milieu, bocal ou équipement.")
         }
+    }
+
+    /// Spec Phase 7I "ANALYSE PHOTO." Gated on a real account, same
+    /// cost-control reasoning as every other AI entry point in this app.
+    @ViewBuilder
+    private var aiSection: some View {
+        Section {
+            if case .authenticated = authState.status {
+                if isAnalyzing {
+                    HStack {
+                        ProgressView()
+                        Text("Analyse en cours…")
+                            .foregroundStyle(.secondary)
+                    }
+                } else {
+                    Button {
+                        Task { await analyzePhotos() }
+                    } label: {
+                        Label("Analyser l'inspection", systemImage: "sparkles")
+                    }
+                    .disabled(existingPhotos.isEmpty && newPhotos.isEmpty)
+                }
+            } else {
+                Text("Connectez-vous pour analyser les photos avec Oasis AI.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+
+            if let analysisError {
+                Text(analysisError)
+                    .font(.caption)
+                    .foregroundStyle(.red)
+            }
+
+            if let analysis {
+                analysisRow("Croissance", analysis.growthObservation)
+                analysisRow("Coloration", analysis.colorationObservation)
+                analysisRow("Brunissement", analysis.browningObservation)
+                analysisRow("Nécrose", analysis.necrosisObservation)
+                analysisRow("Hyperhydricité potentielle", analysis.hyperhydricityObservation)
+                analysisRow("Contamination visible potentielle", analysis.contaminationObservation)
+                LabeledContent("Confiance", value: analysis.confidenceLevel.displayName)
+                    .font(.caption)
+                Text("Analyse IA indicative — une contamination ne peut être confirmée que par un examen direct de la culture.")
+                    .font(.caption2)
+                    .foregroundStyle(.secondary)
+            }
+        } header: {
+            Text("✨ Oasis AI")
+        }
+    }
+
+    @ViewBuilder
+    private func analysisRow(_ title: String, _ value: String?) -> some View {
+        if let value, !value.isEmpty {
+            VStack(alignment: .leading, spacing: 2) {
+                Text(title)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                Text(value)
+                    .font(.subheadline)
+            }
+        }
+    }
+
+    private func analyzePhotos() async {
+        isAnalyzing = true
+        analysisError = nil
+        do {
+            var images = newPhotos.map(\.data)
+            images.append(contentsOf: existingPhotos.map(\.imageData))
+            let context = BioLabInspectionAIContext.build(
+                batch: batch, contaminationStatus: contaminationStatus, hyperhydricityStatus: hyperhydricityStatus
+            )
+            analysis = try await BioLabAIService.analyzeInspectionPhotos(images: images, context: context)
+        } catch {
+            analysisError = error.localizedDescription
+        }
+        isAnalyzing = false
     }
 
     private func photoRow(thumbnail: Data, category: Binding<BioLabPhotoCategory>, onRemove: (() -> Void)?) -> some View {
