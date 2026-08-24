@@ -49,16 +49,16 @@ struct BioLabDashboardView: View {
     /// Spec Phase 7E — the only place BioreactorCycleScheduler.tick is
     /// called from. See that service's own doc comment: this only ever
     /// runs while a BioLab screen is on screen and the app is in the
-    /// foreground — there is no background daemon. `actuate` is a
-    /// deliberate no-op until Phase 7G supplies a real
-    /// DeviceCommandService-backed implementation; every other
-    /// guarantee (watchdog, journal, missed-cycle alert) is already
-    /// fully real without it.
+    /// foreground — there is no background daemon. `actuate` is Phase
+    /// 7G's real BioreactorController-backed implementation, itself
+    /// gated on each bioreactor's own automationEnabled opt-in.
     private func runCycleSchedulerLoop() async {
         while !Task.isCancelled {
             BioreactorCycleScheduler.tick(
                 bioreactors: bioreactors, executions: cycleExecutions,
-                actuate: { _, _ in },
+                actuate: { execution, starting in
+                    BioreactorController.actuateCycle(execution, starting: starting, context: modelContext)
+                },
                 context: modelContext
             )
             try? modelContext.save()

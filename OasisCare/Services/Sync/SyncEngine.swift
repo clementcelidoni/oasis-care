@@ -70,6 +70,7 @@ final class SyncEngine: ObservableObject {
             try await pushBioreactorPrograms(workspaceID: workspaceID, context: context)
             try await pushBioreactorProgramVersions(workspaceID: workspaceID, context: context)
             try await pushBioreactors(workspaceID: workspaceID, context: context)
+            try await pushBioreactorDeviceBindings(workspaceID: workspaceID, context: context)
             try await pushSensors(workspaceID: workspaceID, context: context)
             try await pushSensorReadings(context: context)
             try await pushDeviceCommandLogs(workspaceID: workspaceID, context: context)
@@ -150,13 +151,14 @@ final class SyncEngine: ObservableObject {
         let bioreactorProgramVersions = (try? context.fetch(FetchDescriptor<BioreactorProgramVersion>()))?.filter { $0.syncStatus != .synced }.count ?? 0
         let cycleExecutions = (try? context.fetch(FetchDescriptor<BioreactorCycleExecution>()))?.filter { $0.syncStatus != .synced }.count ?? 0
         let biolabAlerts = (try? context.fetch(FetchDescriptor<BioLabAlert>()))?.filter { $0.syncStatus != .synced }.count ?? 0
+        let deviceBindings = (try? context.fetch(FetchDescriptor<BioreactorDeviceBinding>()))?.filter { $0.syncStatus != .synced }.count ?? 0
         return gardens + zones + plants + schedules + events + photos + analyses + preferences + irrigationZones
             + irrigationEvents + smartTags + connectedDevices + sensors + sensorReadings + commandLogs
             + automationRules + automationExecutions + greenhouses + ponds + measurements + inspections + checkups
             + checkupEntries + smartModeSettings + scenes + deletions
             + boundaries + mapObjects + areas + pipes + cultureBatches
             + mediumRecipes + mediumVersions + mediumBatches + bioreactors + maintenanceEvents
-            + bioreactorPrograms + bioreactorProgramVersions + cycleExecutions + biolabAlerts
+            + bioreactorPrograms + bioreactorProgramVersions + cycleExecutions + biolabAlerts + deviceBindings
     }
 
     private static let photoBucket = "plant-photos"
@@ -396,6 +398,8 @@ final class SyncEngine: ObservableObject {
             bioreactor.id = row.id
             bioreactor.status = row.status
             bioreactor.currentBatch = row.currentBatchId.flatMap { batchesByID[$0] }
+            bioreactor.automationEnabled = row.automationEnabled
+            bioreactor.scheduleResumedAt = row.scheduleResumedAt
             bioreactor.createdAt = row.createdAt
             bioreactor.syncStatus = .synced
             bioreactor.updatedAt = row.updatedAt
@@ -413,6 +417,23 @@ final class SyncEngine: ObservableObject {
             event.updatedAt = row.updatedAt
             context.insert(event)
             bioreactor.maintenanceEvents.append(event)
+        }
+
+        // Phase 7G — ConnectedDevice was already restored earlier (Sensor's
+        // own device references above already depend on it), so
+        // connectedDevicesByID is safe to read here.
+        let remoteDeviceBindings: [BioreactorDeviceBindingRow] = try await AuthService.client.from("bioreactor_device_bindings").select().execute().value
+        for row in remoteDeviceBindings {
+            guard let bioreactor = bioreactorsByID[row.bioreactorId] else { continue }
+            let binding = BioreactorDeviceBinding(
+                bioreactor: bioreactor, role: row.role, device: row.deviceId.flatMap { connectedDevicesByID[$0] }
+            )
+            binding.id = row.id
+            binding.createdAt = row.createdAt
+            binding.syncStatus = .synced
+            binding.updatedAt = row.updatedAt
+            context.insert(binding)
+            bioreactor.deviceBindings.append(binding)
         }
 
         // Phase 7E.
@@ -1428,6 +1449,8 @@ final class SyncEngine: ObservableObject {
         var location: String
         var currentBatchId: UUID?
         var activeProgramVersionId: UUID?
+        var automationEnabled: Bool
+        var scheduleResumedAt: Date?
         var createdAt: Date
         var updatedAt: Date?
 
@@ -1443,6 +1466,26 @@ final class SyncEngine: ObservableObject {
             case location
             case currentBatchId = "current_batch_id"
             case activeProgramVersionId = "active_program_version_id"
+            case automationEnabled = "automation_enabled"
+            case scheduleResumedAt = "schedule_resumed_at"
+            case createdAt = "created_at"
+            case updatedAt = "updated_at"
+        }
+    }
+
+    private struct BioreactorDeviceBindingRow: Decodable {
+        var id: UUID
+        var bioreactorId: UUID
+        var role: BioreactorDeviceRole
+        var deviceId: UUID?
+        var createdAt: Date
+        var updatedAt: Date?
+
+        enum CodingKeys: String, CodingKey {
+            case id
+            case bioreactorId = "bioreactor_id"
+            case role
+            case deviceId = "device_id"
             case createdAt = "created_at"
             case updatedAt = "updated_at"
         }
@@ -3255,6 +3298,8 @@ final class SyncEngine: ObservableObject {
         var location: String
         var currentBatchId: UUID?
         var activeProgramVersionId: UUID?
+        var automationEnabled: Bool
+        var scheduleResumedAt: Date?
         var createdAt: Date
         var updatedAt: Date
 
@@ -3271,6 +3316,8 @@ final class SyncEngine: ObservableObject {
             case location
             case currentBatchId = "current_batch_id"
             case activeProgramVersionId = "active_program_version_id"
+            case automationEnabled = "automation_enabled"
+            case scheduleResumedAt = "schedule_resumed_at"
             case createdAt = "created_at"
             case updatedAt = "updated_at"
         }
@@ -3289,11 +3336,48 @@ final class SyncEngine: ObservableObject {
                 workingVolumeLiters: bioreactor.workingVolumeLiters, status: bioreactor.status,
                 componentTypes: bioreactor.componentTypes, location: bioreactor.location,
                 currentBatchId: bioreactor.currentBatch?.id, activeProgramVersionId: bioreactor.activeProgramVersion?.id,
+                automationEnabled: bioreactor.automationEnabled, scheduleResumedAt: bioreactor.scheduleResumedAt,
                 createdAt: bioreactor.createdAt, updatedAt: bioreactor.updatedAt ?? .now
             )
         }
         try await AuthService.client.from("bioreactors").upsert(dtos).execute()
         for bioreactor in pending { bioreactor.syncStatus = .synced }
+    }
+
+    private struct BioreactorDeviceBindingDTO: Encodable {
+        var id: UUID
+        var workspaceId: UUID
+        var bioreactorId: UUID
+        var role: BioreactorDeviceRole
+        var deviceId: UUID?
+        var createdAt: Date
+        var updatedAt: Date
+
+        enum CodingKeys: String, CodingKey {
+            case id
+            case workspaceId = "workspace_id"
+            case bioreactorId = "bioreactor_id"
+            case role
+            case deviceId = "device_id"
+            case createdAt = "created_at"
+            case updatedAt = "updated_at"
+        }
+    }
+
+    /// Pushed after both bioreactors and connected devices, whose ids it
+    /// references as foreign keys.
+    private func pushBioreactorDeviceBindings(workspaceID: UUID, context: ModelContext) async throws {
+        let pending = try context.fetch(FetchDescriptor<BioreactorDeviceBinding>()).filter { $0.syncStatus != .synced }
+        guard !pending.isEmpty else { return }
+        let dtos = pending.compactMap { binding -> BioreactorDeviceBindingDTO? in
+            guard let bioreactorId = binding.bioreactor?.id else { return nil }
+            return BioreactorDeviceBindingDTO(
+                id: binding.id, workspaceId: workspaceID, bioreactorId: bioreactorId, role: binding.role,
+                deviceId: binding.device?.id, createdAt: binding.createdAt, updatedAt: binding.updatedAt ?? .now
+            )
+        }
+        try await AuthService.client.from("bioreactor_device_bindings").upsert(dtos).execute()
+        for binding in pending { binding.syncStatus = .synced }
     }
 
     private struct BioreactorMaintenanceEventDTO: Encodable {

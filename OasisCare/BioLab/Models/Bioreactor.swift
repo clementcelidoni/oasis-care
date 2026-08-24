@@ -18,6 +18,19 @@ final class Bioreactor: Syncable {
     var status: BioreactorStatus
     var componentTypes: [BioreactorComponentType]
     var location: String
+    /// Spec Phase 7G — "AUTOMATIC MODE: l'utilisateur doit activer
+    /// explicitement." Defaults false so BioreactorCycleScheduler never
+    /// actuates real hardware for a bioreactor the user hasn't
+    /// deliberately opted in — it still tracks/journals cycles either
+    /// way (see that type's own tick logic), just without ever calling
+    /// the actuate closure for real when this is false.
+    var automationEnabled: Bool = false
+    /// Spec Phase 7G — "REPRISE doit recalculer proprement le planning."
+    /// Stamped to `.now` whenever automation is (re)activated or the
+    /// status Picker leaves `.paused` — BioreactorCycleScheduler floors
+    /// its due-date anchor on this so a long pause/deactivation never
+    /// creates a backlog of synthetic missed cycles on resume.
+    var scheduleResumedAt: Date?
     var createdAt: Date
     var syncStatus: SyncStatus?
     var updatedAt: Date?
@@ -39,6 +52,10 @@ final class Bioreactor: Syncable {
     @Relationship(deleteRule: .cascade, inverse: \Sensor.bioreactor)
     var sensors: [Sensor] = []
 
+    /// Spec Phase 7G — "DEVICE MAPPING."
+    @Relationship(deleteRule: .cascade, inverse: \BioreactorDeviceBinding.bioreactor)
+    var deviceBindings: [BioreactorDeviceBinding] = []
+
     init(
         name: String, code: String, bioreactorType: BioreactorType, totalVolumeLiters: Double, workingVolumeLiters: Double,
         componentTypes: [BioreactorComponentType] = [], location: String = ""
@@ -52,6 +69,7 @@ final class Bioreactor: Syncable {
         self.status = .idle
         self.componentTypes = componentTypes
         self.location = location
+        self.automationEnabled = false
         self.createdAt = .now
         self.syncStatus = .pendingCreate
         self.updatedAt = .now

@@ -52,13 +52,13 @@ enum BioreactorCycleScheduler {
         type == .immersion ? program.maxImmersionDurationSeconds : program.maxAerationDurationSeconds
     }
 
-    /// `actuate` is the only bridge to real hardware — Phase 7E itself
-    /// has no actuator code. `true` means "start," `false` means
-    /// "stop." Phase 7G's BioreactorController is expected to supply
-    /// the real implementation; until then (or if a bioreactor has no
-    /// device bound at all), passing a no-op closure still keeps every
-    /// other guarantee here — the watchdog, the journal, the missed-
-    /// cycle alert — fully real, it just never claims a pump moved.
+    /// `actuate` is the only bridge to real hardware. `true` means
+    /// "start," `false` means "stop." BioLabDashboardView wires this to
+    /// BioreactorController.actuateCycle, which itself no-ops for any
+    /// bioreactor without automationEnabled or without an air pump
+    /// bound — every other guarantee here (the watchdog, the journal,
+    /// the missed-cycle alert) stays fully real either way, it just
+    /// never claims a pump moved.
     static func tick(bioreactors: [Bioreactor], executions: [BioreactorCycleExecution], now: Date = .now, actuate: (BioreactorCycleExecution, Bool) -> Void, context: ModelContext) {
         for bioreactor in bioreactors {
             guard let program = bioreactor.activeProgramVersion else { continue }
@@ -106,12 +106,28 @@ enum BioreactorCycleScheduler {
             return
         }
 
-        // 2. Nothing running: is a new cycle due, or was one missed?
+        // 2. Spec Phase 7G — "AUTOMATIC MODE: l'utilisateur doit activer
+        // explicitement," and pausing (the existing Statut picker's
+        // `.paused` case) must stop new cycles from being scheduled at
+        // all, not just stop actuation. The watchdog above still always
+        // runs regardless — pausing future scheduling must never weaken
+        // the safety cutoff on a cycle already in flight.
+        guard bioreactor.automationEnabled, bioreactor.status != .paused else { return }
+
+        // 3. Nothing running: is a new cycle due, or was one missed?
         // Anchored on plannedStart, not actualStart: a missed cycle
         // never gets an actualStart, and anchoring on actualStart would
         // leave the schedule stuck recomputing the same missed slot
-        // forever instead of advancing to the next one.
-        let lastStart = typedExecutions.map(\.plannedStart).max() ?? bioreactor.createdAt
+        // forever instead of advancing to the next one. Also floored on
+        // scheduleResumedAt (Phase 7G's "reprise doit recalculer
+        // proprement le planning") so a bioreactor that was paused or
+        // deactivated for a long time doesn't come back to a backlog of
+        // synthetic missed cycles — the moment it resumes becomes the
+        // new baseline instead of whatever the schedule was before.
+        let lastStart = max(
+            typedExecutions.map(\.plannedStart).max() ?? bioreactor.createdAt,
+            bioreactor.scheduleResumedAt ?? .distantPast
+        )
         guard let due = nextCycleDate(type: type, program: program, lastCycleStart: lastStart, now: now) else { return }
         guard now >= due else { return }
 
