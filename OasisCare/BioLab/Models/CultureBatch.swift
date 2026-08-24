@@ -53,6 +53,10 @@ final class CultureBatch: Syncable {
     @Relationship(deleteRule: .nullify, inverse: \CultureBatch.parentBatch)
     var childBatches: [CultureBatch] = []
 
+    /// Spec Phase 7H.
+    @Relationship(deleteRule: .cascade, inverse: \BioreactorInspection.cultureBatch)
+    var inspections: [BioreactorInspection] = []
+
     init(
         batchCode: String,
         speciesName: String,

@@ -71,6 +71,8 @@ final class SyncEngine: ObservableObject {
             try await pushBioreactorProgramVersions(workspaceID: workspaceID, context: context)
             try await pushBioreactors(workspaceID: workspaceID, context: context)
             try await pushBioreactorDeviceBindings(workspaceID: workspaceID, context: context)
+            try await pushBioreactorInspections(workspaceID: workspaceID, context: context)
+            try await pushBioLabInspectionPhotos(workspaceID: workspaceID, context: context)
             try await pushSensors(workspaceID: workspaceID, context: context)
             try await pushSensorReadings(context: context)
             try await pushDeviceCommandLogs(workspaceID: workspaceID, context: context)
@@ -152,6 +154,8 @@ final class SyncEngine: ObservableObject {
         let cycleExecutions = (try? context.fetch(FetchDescriptor<BioreactorCycleExecution>()))?.filter { $0.syncStatus != .synced }.count ?? 0
         let biolabAlerts = (try? context.fetch(FetchDescriptor<BioLabAlert>()))?.filter { $0.syncStatus != .synced }.count ?? 0
         let deviceBindings = (try? context.fetch(FetchDescriptor<BioreactorDeviceBinding>()))?.filter { $0.syncStatus != .synced }.count ?? 0
+        let bioreactorInspections = (try? context.fetch(FetchDescriptor<BioreactorInspection>()))?.filter { $0.syncStatus != .synced }.count ?? 0
+        let inspectionPhotos = (try? context.fetch(FetchDescriptor<BioLabInspectionPhoto>()))?.filter { $0.syncStatus != .synced }.count ?? 0
         return gardens + zones + plants + schedules + events + photos + analyses + preferences + irrigationZones
             + irrigationEvents + smartTags + connectedDevices + sensors + sensorReadings + commandLogs
             + automationRules + automationExecutions + greenhouses + ponds + measurements + inspections + checkups
@@ -159,6 +163,7 @@ final class SyncEngine: ObservableObject {
             + boundaries + mapObjects + areas + pipes + cultureBatches
             + mediumRecipes + mediumVersions + mediumBatches + bioreactors + maintenanceEvents
             + bioreactorPrograms + bioreactorProgramVersions + cycleExecutions + biolabAlerts + deviceBindings
+            + bioreactorInspections + inspectionPhotos
     }
 
     private static let photoBucket = "plant-photos"
@@ -434,6 +439,42 @@ final class SyncEngine: ObservableObject {
             binding.updatedAt = row.updatedAt
             context.insert(binding)
             bioreactor.deviceBindings.append(binding)
+        }
+
+        // Phase 7H.
+        let remoteInspections: [BioreactorInspectionRow] = try await AuthService.client.from("bioreactor_inspections").select().execute().value
+        var inspectionsByID: [UUID: BioreactorInspection] = [:]
+        for row in remoteInspections {
+            let batch = row.cultureBatchId.flatMap { batchesByID[$0] }
+            let inspection = BioreactorInspection(
+                cultureBatch: batch, bioreactor: row.bioreactorId.flatMap { bioreactorsByID[$0] }, date: row.date,
+                cultureAppearance: row.cultureAppearance, contaminationStatus: row.contaminationStatus,
+                hyperhydricityStatus: row.hyperhydricityStatus, necrosisStatus: row.necrosisStatus,
+                browningStatus: row.browningStatus, growthStatus: row.growthStatus,
+                estimatedCount: row.estimatedCount, notes: row.notes
+            )
+            inspection.id = row.id
+            inspection.createdAt = row.createdAt
+            inspection.syncStatus = .synced
+            inspection.updatedAt = row.updatedAt
+            context.insert(inspection)
+            batch?.inspections.append(inspection)
+            inspectionsByID[row.id] = inspection
+        }
+
+        let remoteInspectionPhotos: [BioLabInspectionPhotoRow] = try await AuthService.client.from("biolab_inspection_photos").select().execute().value
+        for row in remoteInspectionPhotos {
+            guard let inspection = inspectionsByID[row.inspectionId] else { continue }
+            guard let imageData = try? await downloadPhoto(path: row.storagePath),
+                  let thumbnailData = try? await downloadPhoto(path: row.thumbnailStoragePath) else { continue }
+            let photo = BioLabInspectionPhoto(
+                inspection: inspection, imageData: imageData, thumbnailData: thumbnailData,
+                category: row.category, date: row.date
+            )
+            photo.id = row.id
+            photo.syncStatus = .synced
+            context.insert(photo)
+            inspection.photos.append(photo)
         }
 
         // Phase 7E.
@@ -1488,6 +1529,57 @@ final class SyncEngine: ObservableObject {
             case deviceId = "device_id"
             case createdAt = "created_at"
             case updatedAt = "updated_at"
+        }
+    }
+
+    private struct BioreactorInspectionRow: Decodable {
+        var id: UUID
+        var cultureBatchId: UUID?
+        var bioreactorId: UUID?
+        var date: Date
+        var cultureAppearance: String
+        var contaminationStatus: ContaminationStatus
+        var hyperhydricityStatus: ObservedSeverity
+        var necrosisStatus: ObservedSeverity
+        var browningStatus: ObservedSeverity
+        var growthStatus: String
+        var estimatedCount: Int?
+        var notes: String
+        var createdAt: Date
+        var updatedAt: Date?
+
+        enum CodingKeys: String, CodingKey {
+            case id
+            case cultureBatchId = "culture_batch_id"
+            case bioreactorId = "bioreactor_id"
+            case date
+            case cultureAppearance = "culture_appearance"
+            case contaminationStatus = "contamination_status"
+            case hyperhydricityStatus = "hyperhydricity_status"
+            case necrosisStatus = "necrosis_status"
+            case browningStatus = "browning_status"
+            case growthStatus = "growth_status"
+            case estimatedCount = "estimated_count"
+            case notes
+            case createdAt = "created_at"
+            case updatedAt = "updated_at"
+        }
+    }
+
+    private struct BioLabInspectionPhotoRow: Decodable {
+        var id: UUID
+        var inspectionId: UUID
+        var storagePath: String
+        var thumbnailStoragePath: String
+        var category: BioLabPhotoCategory
+        var date: Date
+
+        enum CodingKeys: String, CodingKey {
+            case id
+            case inspectionId = "inspection_id"
+            case storagePath = "storage_path"
+            case thumbnailStoragePath = "thumbnail_storage_path"
+            case category, date
         }
     }
 
@@ -3378,6 +3470,100 @@ final class SyncEngine: ObservableObject {
         }
         try await AuthService.client.from("bioreactor_device_bindings").upsert(dtos).execute()
         for binding in pending { binding.syncStatus = .synced }
+    }
+
+    private struct BioreactorInspectionDTO: Encodable {
+        var id: UUID
+        var workspaceId: UUID
+        var cultureBatchId: UUID?
+        var bioreactorId: UUID?
+        var date: Date
+        var cultureAppearance: String
+        var contaminationStatus: ContaminationStatus
+        var hyperhydricityStatus: ObservedSeverity
+        var necrosisStatus: ObservedSeverity
+        var browningStatus: ObservedSeverity
+        var growthStatus: String
+        var estimatedCount: Int?
+        var notes: String
+        var createdAt: Date
+        var updatedAt: Date
+
+        enum CodingKeys: String, CodingKey {
+            case id
+            case workspaceId = "workspace_id"
+            case cultureBatchId = "culture_batch_id"
+            case bioreactorId = "bioreactor_id"
+            case date
+            case cultureAppearance = "culture_appearance"
+            case contaminationStatus = "contamination_status"
+            case hyperhydricityStatus = "hyperhydricity_status"
+            case necrosisStatus = "necrosis_status"
+            case browningStatus = "browning_status"
+            case growthStatus = "growth_status"
+            case estimatedCount = "estimated_count"
+            case notes
+            case createdAt = "created_at"
+            case updatedAt = "updated_at"
+        }
+    }
+
+    /// Pushed after culture batches and bioreactors, whose ids it
+    /// references as foreign keys.
+    private func pushBioreactorInspections(workspaceID: UUID, context: ModelContext) async throws {
+        let pending = try context.fetch(FetchDescriptor<BioreactorInspection>()).filter { $0.syncStatus != .synced }
+        guard !pending.isEmpty else { return }
+        let dtos = pending.map { inspection in
+            BioreactorInspectionDTO(
+                id: inspection.id, workspaceId: workspaceID, cultureBatchId: inspection.cultureBatch?.id,
+                bioreactorId: inspection.bioreactor?.id, date: inspection.date, cultureAppearance: inspection.cultureAppearance,
+                contaminationStatus: inspection.contaminationStatus, hyperhydricityStatus: inspection.hyperhydricityStatus,
+                necrosisStatus: inspection.necrosisStatus, browningStatus: inspection.browningStatus,
+                growthStatus: inspection.growthStatus, estimatedCount: inspection.estimatedCount, notes: inspection.notes,
+                createdAt: inspection.createdAt, updatedAt: inspection.updatedAt ?? .now
+            )
+        }
+        try await AuthService.client.from("bioreactor_inspections").upsert(dtos).execute()
+        for inspection in pending { inspection.syncStatus = .synced }
+    }
+
+    private struct BioLabInspectionPhotoDTO: Encodable {
+        var id: UUID
+        var inspectionId: UUID
+        var storagePath: String
+        var thumbnailStoragePath: String
+        var category: BioLabPhotoCategory
+        var date: Date
+
+        enum CodingKeys: String, CodingKey {
+            case id
+            case inspectionId = "inspection_id"
+            case storagePath = "storage_path"
+            case thumbnailStoragePath = "thumbnail_storage_path"
+            case category, date
+        }
+    }
+
+    /// Pushed after bioreactor inspections, whose id it references —
+    /// same storage-path-not-inline-data shape as pushPlantPhotos.
+    private func pushBioLabInspectionPhotos(workspaceID: UUID, context: ModelContext) async throws {
+        let pending = try context.fetch(FetchDescriptor<BioLabInspectionPhoto>()).filter { $0.syncStatus != .synced }
+        guard !pending.isEmpty else { return }
+        var dtos: [BioLabInspectionPhotoDTO] = []
+        for photo in pending {
+            guard let inspectionID = photo.inspection?.id else { continue }
+            let path = "\(workspaceID)/biolab/\(inspectionID)/\(photo.id).jpg"
+            let thumbnailPath = "\(workspaceID)/biolab/\(inspectionID)/\(photo.id)_thumb.jpg"
+            try await uploadPhoto(photo.imageData, path: path)
+            try await uploadPhoto(photo.thumbnailData, path: thumbnailPath)
+            dtos.append(BioLabInspectionPhotoDTO(
+                id: photo.id, inspectionId: inspectionID, storagePath: path,
+                thumbnailStoragePath: thumbnailPath, category: photo.category, date: photo.date
+            ))
+        }
+        guard !dtos.isEmpty else { return }
+        try await AuthService.client.from("biolab_inspection_photos").upsert(dtos).execute()
+        for photo in pending where photo.inspection != nil { photo.syncStatus = .synced }
     }
 
     private struct BioreactorMaintenanceEventDTO: Encodable {

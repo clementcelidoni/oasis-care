@@ -8,6 +8,7 @@ struct CultureBatchDetailView: View {
 
     @State private var isShowingSplit = false
     @State private var isShowingDiscardConfirm = false
+    @State private var inspectionSheet: InspectionSheet?
 
     private var lineageRoot: CultureLineageService.LineageNode {
         CultureLineageService.tree(for: batch)
@@ -55,6 +56,43 @@ struct CultureBatchDetailView: View {
                 }
             }
 
+            Section {
+                // Spec Phase 7H "TIMELINE" — J0 inoculation, J7
+                // multiplication, J14 inspection... rendered here as
+                // days-since-start next to each inspection's most
+                // notable finding, rather than a separate dedicated
+                // timeline view.
+                if batch.inspections.isEmpty {
+                    Text("Aucune inspection enregistrée.")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                } else {
+                    ForEach(batch.inspections.sorted { $0.date < $1.date }) { inspection in
+                        Button {
+                            inspectionSheet = .edit(inspection)
+                        } label: {
+                            HStack(alignment: .top, spacing: 10) {
+                                Text("J\(dayNumber(for: inspection))")
+                                    .font(.caption.weight(.semibold))
+                                    .foregroundStyle(.secondary)
+                                    .frame(width: 32, alignment: .leading)
+                                VStack(alignment: .leading, spacing: 2) {
+                                    Text(inspectionSummary(inspection))
+                                        .foregroundStyle(.primary)
+                                    Text(DateFormatting.shortDate(inspection.date))
+                                        .font(.caption2)
+                                        .foregroundStyle(.secondary)
+                                }
+                            }
+                        }
+                        .buttonStyle(.plain)
+                    }
+                }
+                Button("Ajouter une inspection") { inspectionSheet = .add }
+            } header: {
+                Text("Inspections")
+            }
+
             Section("Notes") {
                 TextField("Notes", text: Binding(
                     get: { batch.notes },
@@ -75,12 +113,55 @@ struct CultureBatchDetailView: View {
         .sheet(isPresented: $isShowingSplit) {
             CultureBatchSplitSheet(batch: batch)
         }
+        .sheet(item: $inspectionSheet) { sheet in
+            switch sheet {
+            case .add:
+                BioreactorInspectionFormView(batch: batch, inspection: nil)
+            case .edit(let inspection):
+                BioreactorInspectionFormView(batch: batch, inspection: inspection)
+            }
+        }
         .confirmationDialog("Écarter ce lot ?", isPresented: $isShowingDiscardConfirm, titleVisibility: .visible) {
             Button("Écarter", role: .destructive) {
                 CultureBatchService.discard(batch, reason: "")
                 try? modelContext.save()
             }
             Button("Annuler", role: .cancel) {}
+        }
+    }
+
+    private func dayNumber(for inspection: BioreactorInspection) -> Int {
+        max(0, Calendar.current.dateComponents([.day], from: batch.startedAt, to: inspection.date).day ?? 0)
+    }
+
+    /// Most safety-relevant finding first, matching the spec's own
+    /// timeline example labels (e.g. "hyperhydricité légère") rather
+    /// than a generic "Inspection" whenever there's something notable
+    /// to actually name.
+    private func inspectionSummary(_ inspection: BioreactorInspection) -> String {
+        if inspection.contaminationStatus == .confirmed { return "Contamination confirmée" }
+        if inspection.contaminationStatus == .suspected { return "Contamination suspectée" }
+        if inspection.hyperhydricityStatus != .none, inspection.hyperhydricityStatus != .unknown {
+            return "Hyperhydricité \(inspection.hyperhydricityStatus.label.lowercased())"
+        }
+        if inspection.necrosisStatus != .none, inspection.necrosisStatus != .unknown {
+            return "Nécrose \(inspection.necrosisStatus.label.lowercased())"
+        }
+        if inspection.browningStatus != .none, inspection.browningStatus != .unknown {
+            return "Brunissement \(inspection.browningStatus.label.lowercased())"
+        }
+        return "Inspection"
+    }
+}
+
+private enum InspectionSheet: Identifiable {
+    case add
+    case edit(BioreactorInspection)
+
+    var id: String {
+        switch self {
+        case .add: return "add"
+        case .edit(let inspection): return inspection.id.uuidString
         }
     }
 }
