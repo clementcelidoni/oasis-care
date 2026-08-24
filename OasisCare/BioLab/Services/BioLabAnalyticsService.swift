@@ -28,6 +28,26 @@ enum BioLabAnalyticsService {
         var averageCycleDurationSeconds: Double?
     }
 
+    /// Spec Phase 7J "PAR BIORÉACTEUR" — its own example (BR04: cycles
+    /// réalisés/échoués, disponibilité, lots terminés). `availabilityRate`
+    /// is a success-rate proxy (completed / (completed + failed)), not
+    /// literal calendar uptime — this app has no maintenance-downtime
+    /// duration tracking to compute that from. `completedBatchCount`
+    /// counts batches with at least one BioreactorInspection recorded
+    /// against this specific bioreactor that have since reached
+    /// `.completed` — the only real, recorded batch↔bioreactor link
+    /// this app has (Bioreactor.currentBatch is a live snapshot, not
+    /// history), so it's a proxy for "finished in this vessel," not a
+    /// guaranteed exact count.
+    struct BioreactorStats: Identifiable {
+        var id: UUID
+        var code: String
+        var completedCycleCount: Int
+        var failedCycleCount: Int
+        var availabilityRate: Double?
+        var completedBatchCount: Int
+    }
+
     static func speciesStats(batches: [CultureBatch]) -> [SpeciesStats] {
         let grouped = Dictionary(grouping: batches, by: \.speciesName)
         return grouped.map { speciesName, speciesBatches in
@@ -76,5 +96,29 @@ enum BioLabAnalyticsService {
         let averageCycleDurationSeconds = completedDurations.isEmpty ? nil : completedDurations.reduce(0, +) / Double(completedDurations.count)
 
         return LabWideStats(totalBatchCount: batches.count, lossRate: lossRate, averageCycleDurationSeconds: averageCycleDurationSeconds)
+    }
+
+    static func bioreactorStats(
+        bioreactors: [Bioreactor], batches: [CultureBatch], executions: [BioreactorCycleExecution], inspections: [BioreactorInspection]
+    ) -> [BioreactorStats] {
+        let batchesByID = Dictionary(uniqueKeysWithValues: batches.map { ($0.id, $0) })
+        return bioreactors.map { bioreactor in
+            let ownExecutions = executions.filter { $0.bioreactor?.id == bioreactor.id }
+            let completedCycles = ownExecutions.filter { $0.status == .completed }.count
+            let failedCycles = ownExecutions.filter { $0.status == .failed || $0.status == .timeout }.count
+            let attempted = completedCycles + failedCycles
+            let availabilityRate = attempted == 0 ? nil : Double(completedCycles) / Double(attempted)
+
+            let batchIDsInspectedHere = Set(
+                inspections.filter { $0.bioreactor?.id == bioreactor.id }.compactMap { $0.cultureBatch?.id }
+            )
+            let completedBatchCount = batchIDsInspectedHere.filter { batchesByID[$0]?.status == .completed }.count
+
+            return BioreactorStats(
+                id: bioreactor.id, code: bioreactor.code, completedCycleCount: completedCycles,
+                failedCycleCount: failedCycles, availabilityRate: availabilityRate,
+                completedBatchCount: completedBatchCount
+            )
+        }
     }
 }

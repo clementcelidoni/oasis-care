@@ -1,20 +1,31 @@
 import SwiftUI
 import SwiftData
 
-/// Spec Phase 7J — "STATISTIQUES." Layout mirrors the spec's own
-/// example almost verbatim (species name, Lots, Multiplication
-/// moyenne, Contamination, Hyperhydricité, Enracinement, Survie
-/// acclimatation) plus a lab-wide section for the two indicators that
-/// don't naturally group by species (averageCycleDuration, lossRate).
+/// Spec Phase 7J — "STATISTIQUES." Three groupings, each mirroring the
+/// spec's own examples almost verbatim: "PAR ESPÈCE" (Lots,
+/// Multiplication moyenne, Contamination, Hyperhydricité, Enracinement,
+/// Survie acclimatation), "PAR BIORÉACTEUR" (Cycles réalisés/échoués,
+/// Disponibilité, Lots terminés), and a lab-wide section for the two
+/// indicators that don't naturally group by either (averageCycleDuration,
+/// lossRate). Filtering "par recette/programme/période" (also named in
+/// spec's own "PAR ESPÈCE" list) isn't built — recette/programme
+/// comparison already exists via BioLabComparisonView (Phase 7I), and a
+/// full time-period filter across every indicator here is a documented
+/// Phase 8 candidate rather than in scope now.
 struct BioLabAnalyticsView: View {
     @Query private var batches: [CultureBatch]
+    @Query private var bioreactors: [Bioreactor]
     @Query private var executions: [BioreactorCycleExecution]
+    @Query private var inspections: [BioreactorInspection]
 
     private var speciesStats: [BioLabAnalyticsService.SpeciesStats] {
         BioLabAnalyticsService.speciesStats(batches: batches)
     }
     private var labWideStats: BioLabAnalyticsService.LabWideStats {
         BioLabAnalyticsService.labWideStats(batches: batches, executions: executions)
+    }
+    private var bioreactorStats: [BioLabAnalyticsService.BioreactorStats] {
+        BioLabAnalyticsService.bioreactorStats(bioreactors: bioreactors, batches: batches, executions: executions, inspections: inspections)
     }
 
     var body: some View {
@@ -34,6 +45,15 @@ struct BioLabAnalyticsView: View {
                     LabeledContent("Hyperhydricité", value: formattedPercent(stats.hyperhydricityRate))
                     LabeledContent("Enracinement", value: formattedPercent(stats.rootingRate))
                     LabeledContent("Survie acclimatation", value: formattedPercent(stats.acclimatizationSurvivalRate))
+                }
+            }
+
+            ForEach(bioreactorStats) { stats in
+                Section(stats.code) {
+                    LabeledContent("Cycles réalisés", value: "\(stats.completedCycleCount)")
+                    LabeledContent("Cycles échoués", value: "\(stats.failedCycleCount)")
+                    LabeledContent("Disponibilité", value: formattedPercent(stats.availabilityRate))
+                    LabeledContent("Lots terminés", value: "\(stats.completedBatchCount)")
                 }
             }
 
