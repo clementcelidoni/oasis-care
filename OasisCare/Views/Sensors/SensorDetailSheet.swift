@@ -83,7 +83,7 @@ struct SensorDetailSheet: View {
                 }
             }
             .sheet(isPresented: $isEditPresented) {
-                SensorFormSheet(plant: sensor.plant, zone: sensor.zone, garden: sensor.garden, sensor: sensor)
+                SensorFormSheet(plant: sensor.plant, zone: sensor.zone, garden: sensor.garden, bioreactor: sensor.bioreactor, sensor: sensor)
             }
         }
     }

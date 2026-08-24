@@ -14,6 +14,7 @@ struct BioreactorDetailView: View {
     @Query private var allPrograms: [BioreactorProgram]
     @Query private var allExecutions: [BioreactorCycleExecution]
     @State private var isShowingMaintenanceForm = false
+    @State private var sensorSheet: SensorSheet?
 
     private var activeBatches: [CultureBatch] {
         allBatches.filter { $0.status == .active }
@@ -86,6 +87,16 @@ struct BioreactorDetailView: View {
                 }
             }
 
+            Section {
+                SensorSectionView(
+                    sensors: bioreactor.sensors,
+                    onAdd: { sensorSheet = .add },
+                    onSelect: { sensor in sensorSheet = .detail(sensor) }
+                )
+                .listRowInsets(EdgeInsets())
+                .listRowBackground(Color.clear)
+            }
+
             if !recentExecutions.isEmpty {
                 Section("Cycles récents") {
                     ForEach(recentExecutions.prefix(10)) { execution in
@@ -135,6 +146,14 @@ struct BioreactorDetailView: View {
         .sheet(isPresented: $isShowingMaintenanceForm) {
             BioreactorMaintenanceFormView(bioreactor: bioreactor)
         }
+        .sheet(item: $sensorSheet) { sheet in
+            switch sheet {
+            case .add:
+                SensorFormSheet(bioreactor: bioreactor)
+            case .detail(let sensor):
+                SensorDetailSheet(sensor: sensor)
+            }
+        }
     }
 
     private func formatted(_ value: Double) -> String {
@@ -159,6 +178,18 @@ struct BioreactorDetailView: View {
         case .failed: return .orange
         case .cancelled: return .secondary
         case .timeout: return .red
+        }
+    }
+}
+
+private enum SensorSheet: Identifiable {
+    case add
+    case detail(Sensor)
+
+    var id: String {
+        switch self {
+        case .add: return "add"
+        case .detail(let sensor): return sensor.id.uuidString
         }
     }
 }

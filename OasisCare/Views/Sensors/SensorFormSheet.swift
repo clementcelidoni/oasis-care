@@ -10,6 +10,7 @@ struct SensorFormSheet: View {
     var plant: Plant?
     var zone: GardenZone?
     var garden: Garden?
+    var bioreactor: Bioreactor?
     var sensor: Sensor?
 
     @Environment(\.dismiss) private var dismiss
@@ -96,7 +97,7 @@ struct SensorFormSheet: View {
     }
 
     private func save() {
-        let target = sensor ?? Sensor(name: name, type: type, plant: plant, garden: garden ?? plant?.garden, zone: zone)
+        let target = sensor ?? Sensor(name: name, type: type, plant: plant, garden: garden ?? plant?.garden, zone: zone, bioreactor: bioreactor)
         target.name = name
         target.type = type
         target.unit = type.defaultUnit

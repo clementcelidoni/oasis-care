@@ -9,6 +9,10 @@ enum EventOverlayKind: String, CaseIterable, Identifiable {
     case ventilation
     case heating
     case misting
+    /// Spec Phase 7F — "afficher les immersions et aérations sur les
+    /// graphiques."
+    case immersion
+    case aeration
 
     var id: String { rawValue }
 
@@ -18,6 +22,8 @@ enum EventOverlayKind: String, CaseIterable, Identifiable {
         case .ventilation: return "Ventilation"
         case .heating: return "Chauffage"
         case .misting: return "Brumisation"
+        case .immersion: return "Immersion"
+        case .aeration: return "Aération"
         }
     }
 
@@ -27,6 +33,8 @@ enum EventOverlayKind: String, CaseIterable, Identifiable {
         case .ventilation: return "fan.fill"
         case .heating: return "flame.fill"
         case .misting: return "aqi.medium"
+        case .immersion: return "drop.circle.fill"
+        case .aeration: return "wind"
         }
     }
 }

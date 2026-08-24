@@ -38,7 +38,8 @@ enum GraphAggregationService {
     }
 
     static func points(for sensor: Sensor, period: GraphPeriod, context: ModelContext) -> [ReadingPoint] {
-        let cutoff = Date.now.addingTimeInterval(-period.lookback)
+        let lookback = period == .cycleComplete ? (cycleCompleteLookback(for: sensor) ?? period.lookback) : period.lookback
+        let cutoff = Date.now.addingTimeInterval(-lookback)
         let readings = sensor.readings
             .filter { $0.timestamp >= cutoff }
             .sorted { $0.timestamp < $1.timestamp }
@@ -71,11 +72,39 @@ enum GraphAggregationService {
             if greenhouse.heaterDevice != nil { kinds.append(.heating) }
             if greenhouse.misterDevice != nil { kinds.append(.misting) }
         }
+        if sensor.bioreactor != nil {
+            kinds.append(.immersion)
+            kinds.append(.aeration)
+        }
         return kinds
     }
 
+    /// Spec Phase 7F — "Cycle complet" only makes sense, and is only
+    /// offered, for a bioreactor sensor whose active program actually
+    /// defines a usable interval — never guessed for anything else.
+    static func availablePeriods(for sensor: Sensor) -> [GraphPeriod] {
+        var periods = GraphPeriod.allCases.filter { $0 != .cycleComplete }
+        if cycleCompleteLookback(for: sensor) != nil {
+            periods.append(.cycleComplete)
+        }
+        return periods
+    }
+
+    /// One full repetition of whichever enabled cycle (immersion or
+    /// aeration) repeats less often, so a "Cycle complet" window is
+    /// guaranteed to contain at least one complete instance of both.
+    private static func cycleCompleteLookback(for sensor: Sensor) -> TimeInterval? {
+        guard let program = sensor.bioreactor?.activeProgramVersion else { return nil }
+        var minutes: [Int] = []
+        if program.immersionEnabled { minutes.append(program.immersionIntervalMinutes) }
+        if program.aerationEnabled { minutes.append(program.aerationIntervalMinutes) }
+        guard let longest = minutes.max(), longest > 0 else { return nil }
+        return TimeInterval(longest * 60)
+    }
+
     static func overlay(for kind: EventOverlayKind, sensor: Sensor, period: GraphPeriod, context: ModelContext) -> Overlay {
-        let windowStart = Date.now.addingTimeInterval(-period.lookback)
+        let lookback = period == .cycleComplete ? (cycleCompleteLookback(for: sensor) ?? period.lookback) : period.lookback
+        let windowStart = Date.now.addingTimeInterval(-lookback)
         let windowEnd = Date.now
         let intervals: [DateInterval]
 
@@ -95,12 +124,26 @@ enum GraphAggregationService {
                 case .ventilation: return greenhouse.fanDevice
                 case .heating: return greenhouse.heaterDevice
                 case .misting: return greenhouse.misterDevice
-                case .irrigation: return nil
+                case .irrigation, .immersion, .aeration: return nil
                 }
             }
             intervals = device.map {
                 onOffIntervals(device: $0, windowStart: windowStart, windowEnd: windowEnd, context: context)
             } ?? []
+        case .immersion, .aeration:
+            let cycleType: BioreactorCycleType = kind == .immersion ? .immersion : .aeration
+            if let bioreactor = sensor.bioreactor {
+                let bioreactorID = bioreactor.id
+                let executions = ((try? context.fetch(FetchDescriptor<BioreactorCycleExecution>())) ?? [])
+                    .filter { $0.bioreactor?.id == bioreactorID && $0.cycleType == cycleType && $0.actualStart != nil }
+                intervals = executions.compactMap { execution in
+                    guard let start = execution.actualStart else { return nil }
+                    let end = execution.actualEnd ?? (execution.status == .running ? .now : start)
+                    return clamped(start: start, end: end, to: windowStart, windowEnd)
+                }
+            } else {
+                intervals = []
+            }
         }
         return Overlay(kind: kind, intervals: intervals)
     }

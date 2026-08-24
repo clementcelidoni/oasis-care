@@ -30,6 +30,12 @@ final class Sensor: Syncable {
     var garden: Garden?
     var zone: GardenZone?
     var device: ConnectedDevice?
+    /// Spec Phase 7F — "réutiliser Sensor/SensorReading de Phase 5.
+    /// Ajouter les usages BioLab." One more optional scope, same
+    /// "any combination" pattern as the others above — plain optional
+    /// relationship added to an already-shipped model, safe without a
+    /// migration default.
+    var bioreactor: Bioreactor?
 
     @Relationship(deleteRule: .cascade, inverse: \SensorReading.sensor)
     var readings: [SensorReading] = []
@@ -37,7 +43,7 @@ final class Sensor: Syncable {
     init(
         name: String, type: SensorType, unit: String? = nil, enabled: Bool = true, source: SensorSource = .manual,
         minimumExpected: Double? = nil, maximumExpected: Double? = nil,
-        plant: Plant? = nil, garden: Garden? = nil, zone: GardenZone? = nil, device: ConnectedDevice? = nil
+        plant: Plant? = nil, garden: Garden? = nil, zone: GardenZone? = nil, device: ConnectedDevice? = nil, bioreactor: Bioreactor? = nil
     ) {
         self.id = UUID()
         self.name = name
@@ -52,6 +58,7 @@ final class Sensor: Syncable {
         self.garden = garden
         self.zone = zone
         self.device = device
+        self.bioreactor = bioreactor
         self.syncStatus = .pendingCreate
         self.updatedAt = .now
     }

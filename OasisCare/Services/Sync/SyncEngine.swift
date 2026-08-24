@@ -48,6 +48,28 @@ final class SyncEngine: ObservableObject {
             try await pushAIAnalyses(context: context)
             try await pushSmartTags(workspaceID: workspaceID, context: context)
             try await pushConnectedDevices(workspaceID: workspaceID, context: context)
+            // This whole BioLab chain must run before pushSensors: Phase 7F
+            // gave Sensor an optional bioreactor_id foreign key, and
+            // Greenhouse/Pond below (which Sensor must in turn precede —
+            // they hold their own sensor_id foreign keys) already fixes
+            // Sensor's position relative to them, so the chain that Sensor
+            // now depends on has to move up here instead of staying next
+            // to the rest of the BioLab pushes further down.
+            // Recipes/versions before batches: a batch can reference a
+            // brand-new version created in the same session, and
+            // medium_recipe_version_id is a real foreign key — pushing
+            // it first means that key always already exists remotely
+            // by the time a batch referencing it is upserted.
+            try await pushMediumRecipes(workspaceID: workspaceID, context: context)
+            try await pushMediumRecipeVersions(workspaceID: workspaceID, context: context)
+            try await pushCultureBatches(workspaceID: workspaceID, context: context)
+            try await pushMediumBatches(workspaceID: workspaceID, context: context)
+            // Programs/versions before bioreactors: activeProgramVersionId
+            // is a real foreign key, same reasoning as recipes/versions
+            // before culture batches above.
+            try await pushBioreactorPrograms(workspaceID: workspaceID, context: context)
+            try await pushBioreactorProgramVersions(workspaceID: workspaceID, context: context)
+            try await pushBioreactors(workspaceID: workspaceID, context: context)
             try await pushSensors(workspaceID: workspaceID, context: context)
             try await pushSensorReadings(context: context)
             try await pushDeviceCommandLogs(workspaceID: workspaceID, context: context)
@@ -66,21 +88,6 @@ final class SyncEngine: ObservableObject {
             try await pushGardenMapObjects(workspaceID: workspaceID, context: context)
             try await pushGardenAreas(workspaceID: workspaceID, context: context)
             try await pushIrrigationPipes(workspaceID: workspaceID, context: context)
-            // Recipes/versions before batches: a batch can reference a
-            // brand-new version created in the same session, and
-            // medium_recipe_version_id is a real foreign key — pushing
-            // it first means that key always already exists remotely
-            // by the time a batch referencing it is upserted.
-            try await pushMediumRecipes(workspaceID: workspaceID, context: context)
-            try await pushMediumRecipeVersions(workspaceID: workspaceID, context: context)
-            try await pushCultureBatches(workspaceID: workspaceID, context: context)
-            try await pushMediumBatches(workspaceID: workspaceID, context: context)
-            // Programs/versions before bioreactors: activeProgramVersionId
-            // is a real foreign key, same reasoning as recipes/versions
-            // before culture batches above.
-            try await pushBioreactorPrograms(workspaceID: workspaceID, context: context)
-            try await pushBioreactorProgramVersions(workspaceID: workspaceID, context: context)
-            try await pushBioreactors(workspaceID: workspaceID, context: context)
             try await pushBioreactorMaintenanceEvents(workspaceID: workspaceID, context: context)
             try await pushBioreactorCycleExecutions(workspaceID: workspaceID, context: context)
             try await pushBioLabAlerts(workspaceID: workspaceID, context: context)
@@ -490,7 +497,8 @@ final class SyncEngine: ObservableObject {
                 name: row.name, type: row.type, unit: row.unit, enabled: row.enabled, source: row.source,
                 minimumExpected: row.minimumExpected, maximumExpected: row.maximumExpected,
                 plant: row.plantId.flatMap { plantsByID[$0] }, garden: row.gardenId.flatMap { gardensByID[$0] },
-                zone: row.zoneId.flatMap { zonesByID[$0] }, device: row.deviceId.flatMap { connectedDevicesByID[$0] }
+                zone: row.zoneId.flatMap { zonesByID[$0] }, device: row.deviceId.flatMap { connectedDevicesByID[$0] },
+                bioreactor: row.bioreactorId.flatMap { bioreactorsByID[$0] }
             )
             sensor.id = row.id
             sensor.createdAt = row.createdAt
@@ -1850,6 +1858,7 @@ final class SyncEngine: ObservableObject {
         var gardenId: UUID?
         var zoneId: UUID?
         var deviceId: UUID?
+        var bioreactorId: UUID?
         var name: String
         var type: SensorType
         var unit: String
@@ -1866,6 +1875,7 @@ final class SyncEngine: ObservableObject {
             case gardenId = "garden_id"
             case zoneId = "zone_id"
             case deviceId = "device_id"
+            case bioreactorId = "bioreactor_id"
             case name, type, unit, enabled, source
             case minimumExpected = "minimum_expected"
             case maximumExpected = "maximum_expected"
@@ -2633,6 +2643,7 @@ final class SyncEngine: ObservableObject {
         var gardenId: UUID?
         var zoneId: UUID?
         var deviceId: UUID?
+        var bioreactorId: UUID?
         var name: String
         var type: SensorType
         var unit: String
@@ -2650,6 +2661,7 @@ final class SyncEngine: ObservableObject {
             case gardenId = "garden_id"
             case zoneId = "zone_id"
             case deviceId = "device_id"
+            case bioreactorId = "bioreactor_id"
             case name, type, unit, enabled, source
             case minimumExpected = "minimum_expected"
             case maximumExpected = "maximum_expected"
@@ -2664,7 +2676,8 @@ final class SyncEngine: ObservableObject {
         let dtos = pending.map { sensor in
             SensorDTO(
                 id: sensor.id, workspaceId: workspaceID, plantId: sensor.plant?.id, gardenId: sensor.garden?.id,
-                zoneId: sensor.zone?.id, deviceId: sensor.device?.id, name: sensor.name, type: sensor.type,
+                zoneId: sensor.zone?.id, deviceId: sensor.device?.id, bioreactorId: sensor.bioreactor?.id,
+                name: sensor.name, type: sensor.type,
                 unit: sensor.unit, enabled: sensor.enabled, source: sensor.source,
                 minimumExpected: sensor.minimumExpected, maximumExpected: sensor.maximumExpected,
                 createdAt: sensor.createdAt, updatedAt: sensor.updatedAt ?? .now

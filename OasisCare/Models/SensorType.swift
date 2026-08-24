@@ -20,6 +20,16 @@ enum SensorType: String, Codable, CaseIterable, Identifiable {
     case ph
     case conductivity
     case energyConsumption
+    /// Spec Phase 7F — BioLab bioreactor usages, distinct from the
+    /// existing water-related cases above: a bioreactor's liquid is
+    /// culture medium, not irrigation/pond water, a genuinely different
+    /// fact about the garden even where the unit happens to match.
+    case mediumTemperature
+    case dissolvedOxygen
+    case pressure
+    case airFlow
+    case liquidFlow
+    case liquidLevel
     case custom
 
     var id: String { rawValue }
@@ -39,6 +49,12 @@ enum SensorType: String, Codable, CaseIterable, Identifiable {
         case .ph: return "pH"
         case .conductivity: return "Conductivité"
         case .energyConsumption: return "Consommation électrique"
+        case .mediumTemperature: return "Température du milieu"
+        case .dissolvedOxygen: return "Oxygène dissous"
+        case .pressure: return "Pression"
+        case .airFlow: return "Débit d'air"
+        case .liquidFlow: return "Débit de liquide"
+        case .liquidLevel: return "Niveau de liquide"
         case .custom: return "Personnalisé"
         }
     }
@@ -58,6 +74,12 @@ enum SensorType: String, Codable, CaseIterable, Identifiable {
         case .ph: return "eyedropper.halffull"
         case .conductivity: return "bolt.horizontal.fill"
         case .energyConsumption: return "bolt.fill"
+        case .mediumTemperature: return "thermometer.and.liquid.waves.and.rays"
+        case .dissolvedOxygen: return "bubbles.and.sparkles.fill"
+        case .pressure: return "gauge.with.dots.needle.33percent"
+        case .airFlow: return "wind"
+        case .liquidFlow: return "drop.circle.fill"
+        case .liquidLevel: return "cylinder.fill"
         case .custom: return "questionmark.circle.fill"
         }
     }
@@ -74,6 +96,11 @@ enum SensorType: String, Codable, CaseIterable, Identifiable {
         case .ph: return "pH"
         case .conductivity: return "µS/cm"
         case .energyConsumption: return "W"
+        case .mediumTemperature: return "°C"
+        case .dissolvedOxygen: return "mg/L"
+        case .pressure: return "bar"
+        case .airFlow, .liquidFlow: return "L/min"
+        case .liquidLevel: return "%"
         case .custom: return ""
         }
     }
@@ -93,6 +120,7 @@ enum SensorType: String, Codable, CaseIterable, Identifiable {
         case .waterFlow: return .flowSensor
         case .energyConsumption: return .energyMeter
         case .waterTemperature, .ph, .conductivity, .custom: return nil
+        case .mediumTemperature, .dissolvedOxygen, .pressure, .airFlow, .liquidFlow, .liquidLevel: return nil
         }
     }
 }

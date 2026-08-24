@@ -21,6 +21,10 @@ struct SensorHistoryChartView: View {
         GraphAggregationService.availableOverlayKinds(for: sensor, context: modelContext)
     }
 
+    private var availablePeriods: [GraphPeriod] {
+        GraphAggregationService.availablePeriods(for: sensor)
+    }
+
     private var overlays: [GraphAggregationService.Overlay] {
         selectedOverlays.map { GraphAggregationService.overlay(for: $0, sensor: sensor, period: period, context: modelContext) }
     }
@@ -28,7 +32,7 @@ struct SensorHistoryChartView: View {
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
             Picker("Période", selection: $period) {
-                ForEach(GraphPeriod.allCases) { period in
+                ForEach(availablePeriods) { period in
                     Text(period.displayName).tag(period)
                 }
             }
@@ -109,6 +113,8 @@ struct SensorHistoryChartView: View {
         case .ventilation: return .cyan
         case .heating: return .red
         case .misting: return .teal
+        case .immersion: return .indigo
+        case .aeration: return .mint
         }
     }
 }

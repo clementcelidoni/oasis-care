@@ -32,6 +32,13 @@ final class Bioreactor: Syncable {
     @Relationship(deleteRule: .cascade, inverse: \BioreactorMaintenanceEvent.bioreactor)
     var maintenanceEvents: [BioreactorMaintenanceEvent] = []
 
+    /// Spec Phase 7F — "réutiliser Sensor... ajouter les usages BioLab."
+    /// Same cascade semantics as Plant/Garden/GardenZone's own `sensors`:
+    /// a bioreactor's sensor history has no meaning once the bioreactor
+    /// itself is deleted.
+    @Relationship(deleteRule: .cascade, inverse: \Sensor.bioreactor)
+    var sensors: [Sensor] = []
+
     init(
         name: String, code: String, bioreactorType: BioreactorType, totalVolumeLiters: Double, workingVolumeLiters: Double,
         componentTypes: [BioreactorComponentType] = [], location: String = ""
