@@ -43,6 +43,12 @@ final class CultureBatch: Syncable {
     /// resolved by name when one happens to match — never required.
     var speciesProfile: SpeciesProfile?
     var parentBatch: CultureBatch?
+    /// Spec Phase 7C — the exact, immutable version used. A plain
+    /// optional relationship added to an already-shipped model is safe
+    /// without a migration default (unlike a non-optional scalar): nil
+    /// is the correct, natural value for every batch that predates this
+    /// field.
+    var mediumRecipeVersion: MediumRecipeVersion?
 
     @Relationship(deleteRule: .nullify, inverse: \CultureBatch.parentBatch)
     var childBatches: [CultureBatch] = []

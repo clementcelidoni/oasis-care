@@ -34,20 +34,30 @@ struct BioLabDashboardView: View {
                     statGrid
                 }
 
-                NavigationLink {
-                    CultureBatchListView()
-                } label: {
-                    Label("Lots de culture (\(cultureBatches.count))", systemImage: "flask")
-                        .frame(maxWidth: .infinity, alignment: .leading)
-                        .padding()
-                        .background(Color(.secondarySystemBackground), in: RoundedRectangle(cornerRadius: 14, style: .continuous))
-                }
-                .buttonStyle(.plain)
+                quickLinks
             }
             .padding()
         }
         .navigationTitle("Oasis BioLab")
         .navigationBarTitleDisplayMode(.inline)
+    }
+
+    /// Grows in place across the remaining sub-phases (bioréacteurs in
+    /// 7D, recettes/inventaire already here from 7C, etc.) — one shared
+    /// row style rather than a hand-styled NavigationLink per
+    /// destination.
+    private var quickLinks: some View {
+        VStack(spacing: 10) {
+            BioLabQuickLinkRow(title: "Lots de culture (\(cultureBatches.count))", icon: "flask") {
+                CultureBatchListView()
+            }
+            BioLabQuickLinkRow(title: "Recettes de milieu", icon: "testtube.2") {
+                MediumRecipeListView()
+            }
+            BioLabQuickLinkRow(title: "Préparations de milieu", icon: "flask.fill") {
+                MediumBatchListView()
+            }
+        }
     }
 
     private var statGrid: some View {
@@ -76,5 +86,23 @@ struct BioLabDashboardView: View {
         .frame(maxWidth: .infinity, alignment: .leading)
         .padding()
         .background(Color(.secondarySystemBackground), in: RoundedRectangle(cornerRadius: 14, style: .continuous))
+    }
+}
+
+private struct BioLabQuickLinkRow<Destination: View>: View {
+    var title: String
+    var icon: String
+    @ViewBuilder var destination: () -> Destination
+
+    var body: some View {
+        NavigationLink {
+            destination()
+        } label: {
+            Label(title, systemImage: icon)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .padding()
+                .background(Color(.secondarySystemBackground), in: RoundedRectangle(cornerRadius: 14, style: .continuous))
+        }
+        .buttonStyle(.plain)
     }
 }

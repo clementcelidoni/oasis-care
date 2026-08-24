@@ -66,7 +66,15 @@ final class SyncEngine: ObservableObject {
             try await pushGardenMapObjects(workspaceID: workspaceID, context: context)
             try await pushGardenAreas(workspaceID: workspaceID, context: context)
             try await pushIrrigationPipes(workspaceID: workspaceID, context: context)
+            // Recipes/versions before batches: a batch can reference a
+            // brand-new version created in the same session, and
+            // medium_recipe_version_id is a real foreign key — pushing
+            // it first means that key always already exists remotely
+            // by the time a batch referencing it is upserted.
+            try await pushMediumRecipes(workspaceID: workspaceID, context: context)
+            try await pushMediumRecipeVersions(workspaceID: workspaceID, context: context)
             try await pushCultureBatches(workspaceID: workspaceID, context: context)
+            try await pushMediumBatches(workspaceID: workspaceID, context: context)
             try await pushPendingDeletions(context: context)
             try context.save()
             lastSyncError = nil
@@ -117,11 +125,15 @@ final class SyncEngine: ObservableObject {
         let areas = (try? context.fetch(FetchDescriptor<GardenArea>()))?.filter { $0.syncStatus != .synced }.count ?? 0
         let pipes = (try? context.fetch(FetchDescriptor<IrrigationPipe>()))?.filter { $0.syncStatus != .synced }.count ?? 0
         let cultureBatches = (try? context.fetch(FetchDescriptor<CultureBatch>()))?.filter { $0.syncStatus != .synced }.count ?? 0
+        let mediumRecipes = (try? context.fetch(FetchDescriptor<MediumRecipe>()))?.filter { $0.syncStatus != .synced }.count ?? 0
+        let mediumVersions = (try? context.fetch(FetchDescriptor<MediumRecipeVersion>()))?.filter { $0.syncStatus != .synced }.count ?? 0
+        let mediumBatches = (try? context.fetch(FetchDescriptor<MediumBatch>()))?.filter { $0.syncStatus != .synced }.count ?? 0
         return gardens + zones + plants + schedules + events + photos + analyses + preferences + irrigationZones
             + irrigationEvents + smartTags + connectedDevices + sensors + sensorReadings + commandLogs
             + automationRules + automationExecutions + greenhouses + ponds + measurements + inspections + checkups
             + checkupEntries + smartModeSettings + scenes + deletions
             + boundaries + mapObjects + areas + pipes + cultureBatches
+            + mediumRecipes + mediumVersions + mediumBatches
     }
 
     private static let photoBucket = "plant-photos"
@@ -297,6 +309,57 @@ final class SyncEngine: ObservableObject {
         for row in remoteBatches {
             guard let parentId = row.parentBatchId else { continue }
             batchesByID[row.id]?.parentBatch = batchesByID[parentId]
+        }
+
+        // Phase 7C.
+        let remoteRecipes: [MediumRecipeRow] = try await AuthService.client.from("medium_recipes").select().execute().value
+        var recipesByID: [UUID: MediumRecipe] = [:]
+        for row in remoteRecipes {
+            let recipe = MediumRecipe(name: row.name, speciesName: row.speciesName, notes: row.notes)
+            recipe.id = row.id
+            recipe.createdAt = row.createdAt
+            recipe.syncStatus = .synced
+            recipe.updatedAt = row.updatedAt
+            context.insert(recipe)
+            recipesByID[row.id] = recipe
+        }
+
+        let remoteVersions: [MediumRecipeVersionRow] = try await AuthService.client.from("medium_recipe_versions").select().execute().value
+        var versionsByID: [UUID: MediumRecipeVersion] = [:]
+        for row in remoteVersions {
+            guard let recipe = recipesByID[row.recipeId] else { continue }
+            let version = MediumRecipeVersion(
+                recipe: recipe, versionNumber: row.versionNumber, targetPH: row.targetPH,
+                components: row.components, notes: row.notes
+            )
+            version.id = row.id
+            version.measuredPH = row.measuredPH
+            version.createdAt = row.createdAt
+            version.syncStatus = .synced
+            version.updatedAt = row.updatedAt
+            context.insert(version)
+            recipe.versions.append(version)
+            versionsByID[row.id] = version
+        }
+        // Deferred until here: CultureBatch's own restore ran before
+        // recipe versions existed to link to.
+        for row in remoteBatches {
+            guard let versionId = row.mediumRecipeVersionId else { continue }
+            batchesByID[row.id]?.mediumRecipeVersion = versionsByID[versionId]
+        }
+
+        let remoteMediumBatches: [MediumBatchRow] = try await AuthService.client.from("medium_batches").select().execute().value
+        for row in remoteMediumBatches {
+            let mediumBatch = MediumBatch(
+                code: row.code, recipeVersion: row.recipeVersionId.flatMap { versionsByID[$0] },
+                volumeLiters: row.volumeLiters, notes: row.notes
+            )
+            mediumBatch.id = row.id
+            mediumBatch.preparedAt = row.preparedAt
+            mediumBatch.createdAt = row.createdAt
+            mediumBatch.syncStatus = .synced
+            mediumBatch.updatedAt = row.updatedAt
+            context.insert(mediumBatch)
         }
 
         let remoteSensors: [SensorRow] = try await AuthService.client.from("sensors").select().execute().value
@@ -1138,6 +1201,7 @@ final class SyncEngine: ObservableObject {
         var createdAt: Date
         var motherPlantId: UUID?
         var parentBatchId: UUID?
+        var mediumRecipeVersionId: UUID?
         var updatedAt: Date?
 
         enum CodingKeys: String, CodingKey {
@@ -1154,6 +1218,71 @@ final class SyncEngine: ObservableObject {
             case createdAt = "created_at"
             case motherPlantId = "mother_plant_id"
             case parentBatchId = "parent_batch_id"
+            case mediumRecipeVersionId = "medium_recipe_version_id"
+            case updatedAt = "updated_at"
+        }
+    }
+
+    private struct MediumRecipeRow: Decodable {
+        var id: UUID
+        var name: String
+        var speciesName: String
+        var notes: String
+        var createdAt: Date
+        var updatedAt: Date?
+
+        enum CodingKeys: String, CodingKey {
+            case id
+            case name
+            case speciesName = "species_name"
+            case notes
+            case createdAt = "created_at"
+            case updatedAt = "updated_at"
+        }
+    }
+
+    private struct MediumRecipeVersionRow: Decodable {
+        var id: UUID
+        var recipeId: UUID
+        var versionNumber: Int
+        var targetPH: Double
+        var measuredPH: Double?
+        var components: [MediumComponentAmount]
+        var notes: String
+        var createdAt: Date
+        var updatedAt: Date?
+
+        enum CodingKeys: String, CodingKey {
+            case id
+            case recipeId = "recipe_id"
+            case versionNumber = "version_number"
+            case targetPH = "target_ph"
+            case measuredPH = "measured_ph"
+            case components
+            case notes
+            case createdAt = "created_at"
+            case updatedAt = "updated_at"
+        }
+    }
+
+    private struct MediumBatchRow: Decodable {
+        var id: UUID
+        var code: String
+        var recipeVersionId: UUID?
+        var volumeLiters: Double
+        var preparedAt: Date
+        var notes: String
+        var createdAt: Date
+        var updatedAt: Date?
+
+        enum CodingKeys: String, CodingKey {
+            case id
+            case code
+            case recipeVersionId = "recipe_version_id"
+            case volumeLiters = "volume_liters"
+            case preparedAt = "prepared_at"
+            case notes
+            case createdAt = "created_at"
             case updatedAt = "updated_at"
         }
     }
@@ -2660,6 +2789,7 @@ final class SyncEngine: ObservableObject {
         var createdAt: Date
         var motherPlantId: UUID?
         var parentBatchId: UUID?
+        var mediumRecipeVersionId: UUID?
         var updatedAt: Date
 
         enum CodingKeys: String, CodingKey {
@@ -2677,6 +2807,7 @@ final class SyncEngine: ObservableObject {
             case createdAt = "created_at"
             case motherPlantId = "mother_plant_id"
             case parentBatchId = "parent_batch_id"
+            case mediumRecipeVersionId = "medium_recipe_version_id"
             case updatedAt = "updated_at"
         }
     }
@@ -2690,10 +2821,126 @@ final class SyncEngine: ObservableObject {
                 cultureStage: batch.cultureStage, status: batch.status, startedAt: batch.startedAt,
                 expectedEndAt: batch.expectedEndAt, initialExplantCount: batch.initialExplantCount,
                 currentCount: batch.currentCount, notes: batch.notes, createdAt: batch.createdAt,
-                motherPlantId: batch.motherPlant?.id, parentBatchId: batch.parentBatch?.id, updatedAt: batch.updatedAt ?? .now
+                motherPlantId: batch.motherPlant?.id, parentBatchId: batch.parentBatch?.id,
+                mediumRecipeVersionId: batch.mediumRecipeVersion?.id, updatedAt: batch.updatedAt ?? .now
             )
         }
         try await AuthService.client.from("culture_batches").upsert(dtos).execute()
+        for batch in pending { batch.syncStatus = .synced }
+    }
+
+    private struct MediumRecipeDTO: Encodable {
+        var id: UUID
+        var workspaceId: UUID
+        var name: String
+        var speciesName: String
+        var notes: String
+        var createdAt: Date
+        var updatedAt: Date
+
+        enum CodingKeys: String, CodingKey {
+            case id
+            case workspaceId = "workspace_id"
+            case name
+            case speciesName = "species_name"
+            case notes
+            case createdAt = "created_at"
+            case updatedAt = "updated_at"
+        }
+    }
+
+    private func pushMediumRecipes(workspaceID: UUID, context: ModelContext) async throws {
+        let pending = try context.fetch(FetchDescriptor<MediumRecipe>()).filter { $0.syncStatus != .synced }
+        guard !pending.isEmpty else { return }
+        let dtos = pending.map { recipe in
+            MediumRecipeDTO(
+                id: recipe.id, workspaceId: workspaceID, name: recipe.name, speciesName: recipe.speciesName,
+                notes: recipe.notes, createdAt: recipe.createdAt, updatedAt: recipe.updatedAt ?? .now
+            )
+        }
+        try await AuthService.client.from("medium_recipes").upsert(dtos).execute()
+        for recipe in pending { recipe.syncStatus = .synced }
+    }
+
+    private struct MediumRecipeVersionDTO: Encodable {
+        var id: UUID
+        var workspaceId: UUID
+        var recipeId: UUID
+        var versionNumber: Int
+        var targetPH: Double
+        var measuredPH: Double?
+        var components: [MediumComponentAmount]
+        var notes: String
+        var createdAt: Date
+        var updatedAt: Date
+
+        enum CodingKeys: String, CodingKey {
+            case id
+            case workspaceId = "workspace_id"
+            case recipeId = "recipe_id"
+            case versionNumber = "version_number"
+            case targetPH = "target_ph"
+            case measuredPH = "measured_ph"
+            case components
+            case notes
+            case createdAt = "created_at"
+            case updatedAt = "updated_at"
+        }
+    }
+
+    /// Versions are never edited after creation (see the model's own
+    /// doc comment), so "pending" here only ever means "brand new,
+    /// never pushed" — never a retroactive change to one already synced.
+    private func pushMediumRecipeVersions(workspaceID: UUID, context: ModelContext) async throws {
+        let pending = try context.fetch(FetchDescriptor<MediumRecipeVersion>()).filter { $0.syncStatus != .synced }
+        guard !pending.isEmpty else { return }
+        let dtos = pending.compactMap { version -> MediumRecipeVersionDTO? in
+            guard let recipeId = version.recipe?.id else { return nil }
+            return MediumRecipeVersionDTO(
+                id: version.id, workspaceId: workspaceID, recipeId: recipeId, versionNumber: version.versionNumber,
+                targetPH: version.targetPH, measuredPH: version.measuredPH, components: version.components,
+                notes: version.notes, createdAt: version.createdAt, updatedAt: version.updatedAt ?? .now
+            )
+        }
+        try await AuthService.client.from("medium_recipe_versions").upsert(dtos).execute()
+        for version in pending { version.syncStatus = .synced }
+    }
+
+    private struct MediumBatchDTO: Encodable {
+        var id: UUID
+        var workspaceId: UUID
+        var code: String
+        var recipeVersionId: UUID?
+        var volumeLiters: Double
+        var preparedAt: Date
+        var notes: String
+        var createdAt: Date
+        var updatedAt: Date
+
+        enum CodingKeys: String, CodingKey {
+            case id
+            case workspaceId = "workspace_id"
+            case code
+            case recipeVersionId = "recipe_version_id"
+            case volumeLiters = "volume_liters"
+            case preparedAt = "prepared_at"
+            case notes
+            case createdAt = "created_at"
+            case updatedAt = "updated_at"
+        }
+    }
+
+    private func pushMediumBatches(workspaceID: UUID, context: ModelContext) async throws {
+        let pending = try context.fetch(FetchDescriptor<MediumBatch>()).filter { $0.syncStatus != .synced }
+        guard !pending.isEmpty else { return }
+        let dtos = pending.map { batch in
+            MediumBatchDTO(
+                id: batch.id, workspaceId: workspaceID, code: batch.code, recipeVersionId: batch.recipeVersion?.id,
+                volumeLiters: batch.volumeLiters, preparedAt: batch.preparedAt, notes: batch.notes,
+                createdAt: batch.createdAt, updatedAt: batch.updatedAt ?? .now
+            )
+        }
+        try await AuthService.client.from("medium_batches").upsert(dtos).execute()
         for batch in pending { batch.syncStatus = .synced }
     }
 
