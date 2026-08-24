@@ -1,28 +1,38 @@
 import SwiftData
 import SwiftUI
 
-/// Spec Phase 7A — "Ajouter un nouvel espace principal : BioLab...
-/// Créer un dashboard BioLab." Pushed from HomeView's existing
-/// NavigationStack (a plain NavigationLink, no tab bar change) rather
-/// than a sixth tab — a sixth item would push "Planning" into iOS's
-/// automatic tab-bar overflow ("More"), exactly the kind of disruption
-/// to existing navigation spec explicitly warns against ("sans
-/// perturber la navigation existante"). No NavigationStack of its own
-/// here, matching every other pushed (not sheeted) destination in this
-/// app (e.g. SettingsView) — it's already inside Home's.
-///
-/// This is 7A's own minimal example layout (five counts). 7M
-/// ("Dashboard BioLab") is where the fuller lab home page — activité
-/// récente, performance de la semaine — gets built; this view grows in
-/// place rather than being replaced when that lands.
+/// Spec Phase 7A/7M — "Ajouter un nouvel espace principal : BioLab...
+/// Créer une vraie page d'accueil laboratoire." Pushed from HomeView's
+/// existing NavigationStack (a plain NavigationLink, no tab bar change)
+/// rather than a sixth tab — a sixth item would push "Planning" into
+/// iOS's automatic tab-bar overflow ("More"), exactly the kind of
+/// disruption to existing navigation spec explicitly warns against
+/// ("sans perturber la navigation existante"). No NavigationStack of its
+/// own here, matching every other pushed (not sheeted) destination in
+/// this app (e.g. SettingsView) — it's already inside Home's.
 struct BioLabDashboardView: View {
     @Environment(\.modelContext) private var modelContext
     @Query private var cultureBatches: [CultureBatch]
     @Query private var bioreactors: [Bioreactor]
     @Query private var cycleExecutions: [BioreactorCycleExecution]
+    @Query private var inspections: [BioreactorInspection]
+    @Query private var mediumBatches: [MediumBatch]
+    @Query private var acclimatizationBatches: [AcclimatizationBatch]
+    @Query private var alerts: [BioLabAlert]
     @State private var isAssistantPresented = false
 
-    private var summary: BioLabDashboardSummary { BioLabDashboardService.summary(batches: cultureBatches, bioreactors: bioreactors) }
+    private var summary: BioLabDashboardSummary {
+        BioLabDashboardService.summary(
+            batches: cultureBatches, bioreactors: bioreactors, executions: cycleExecutions, inspections: inspections,
+            mediumBatches: mediumBatches, acclimatizationBatches: acclimatizationBatches, alerts: alerts
+        )
+    }
+    private var activeAlerts: [BioLabAlert] {
+        alerts.filter(\.isActive).sorted { $0.priority > $1.priority }
+    }
+    private var recentActivity: [BioLabDashboardService.ActivityItem] {
+        BioLabDashboardService.recentActivity(executions: cycleExecutions, inspections: inspections, mediumBatches: mediumBatches)
+    }
     private var aiContext: BioLabAIContext { BioLabAIContext.build(batches: cultureBatches, bioreactors: bioreactors) }
 
     var body: some View {
@@ -37,6 +47,14 @@ struct BioLabDashboardView: View {
                     .padding(.top, 40)
                 } else {
                     statGrid
+                    if !activeAlerts.isEmpty {
+                        alertsSection
+                    }
+                    todaySection
+                    performanceSection
+                    if !recentActivity.isEmpty {
+                        activitySection
+                    }
                 }
 
                 aiAssistantRow
@@ -46,9 +64,30 @@ struct BioLabDashboardView: View {
         }
         .navigationTitle("Oasis BioLab")
         .navigationBarTitleDisplayMode(.inline)
-        .task { await runCycleSchedulerLoop() }
+        .task { await runBackgroundLoop() }
         .sheet(isPresented: $isAssistantPresented) {
             BioLabAIAssistantSheet(context: aiContext)
+        }
+    }
+
+    /// Spec Phase 7E/7M "ALERTES" — the only place BioreactorCycleScheduler.tick
+    /// and BioLabAlertService.scan run from. See their own doc comments:
+    /// this only ever runs while a BioLab screen is on screen and the
+    /// app is in the foreground — there is no background daemon.
+    private func runBackgroundLoop() async {
+        while !Task.isCancelled {
+            BioreactorCycleScheduler.tick(
+                bioreactors: bioreactors, executions: cycleExecutions,
+                actuate: { execution, starting in
+                    BioreactorController.actuateCycle(execution, starting: starting, context: modelContext)
+                },
+                context: modelContext
+            )
+            BioLabAlertService.scan(
+                bioreactors: bioreactors, activeBatches: cultureBatches.filter { $0.status == .active }, context: modelContext
+            )
+            try? modelContext.save()
+            try? await Task.sleep(for: .seconds(30))
         }
     }
 
@@ -71,30 +110,6 @@ struct BioLabDashboardView: View {
         .buttonStyle(.plain)
     }
 
-    /// Spec Phase 7E — the only place BioreactorCycleScheduler.tick is
-    /// called from. See that service's own doc comment: this only ever
-    /// runs while a BioLab screen is on screen and the app is in the
-    /// foreground — there is no background daemon. `actuate` is Phase
-    /// 7G's real BioreactorController-backed implementation, itself
-    /// gated on each bioreactor's own automationEnabled opt-in.
-    private func runCycleSchedulerLoop() async {
-        while !Task.isCancelled {
-            BioreactorCycleScheduler.tick(
-                bioreactors: bioreactors, executions: cycleExecutions,
-                actuate: { execution, starting in
-                    BioreactorController.actuateCycle(execution, starting: starting, context: modelContext)
-                },
-                context: modelContext
-            )
-            try? modelContext.save()
-            try? await Task.sleep(for: .seconds(30))
-        }
-    }
-
-    /// Grows in place across the remaining sub-phases (bioréacteurs in
-    /// 7D, recettes/inventaire already here from 7C, etc.) — one shared
-    /// row style rather than a hand-styled NavigationLink per
-    /// destination.
     private var quickLinks: some View {
         VStack(spacing: 10) {
             BioLabQuickLinkRow(title: "Bioréacteurs (\(bioreactors.count))", icon: "testtube.2") {
@@ -123,18 +138,117 @@ struct BioLabDashboardView: View {
                     BioLabComparisonView()
                 }
             }
+            if !alerts.isEmpty {
+                BioLabQuickLinkRow(title: "Toutes les alertes (\(alerts.count))", icon: "bell") {
+                    BioLabAlertListView()
+                }
+            }
         }
     }
 
     private var statGrid: some View {
         LazyVGrid(columns: [GridItem(.flexible()), GridItem(.flexible())], spacing: 12) {
             statCard(title: "Bioréacteurs actifs", value: "\(summary.activeBioreactorCount)", icon: "testtube.2", tint: .teal)
-            statCard(title: "Lots en multiplication", value: "\(summary.multiplicationBatchCount)", icon: "leaf.arrow.circlepath", tint: .green)
+            statCard(title: "Explants en culture", value: "\(summary.totalExplantCount)", icon: "leaf.fill", tint: .green)
             statCard(title: "Lots en enracinement", value: "\(summary.rootingBatchCount)", icon: "arrow.down.to.line", tint: .brown)
-            statCard(title: "Acclimatation", value: "\(summary.acclimatizingPlantCount) plantes", icon: "sun.max.fill", tint: .orange)
+            statCard(title: "En acclimatation", value: "\(summary.acclimatizingPlantCount) plantes", icon: "sun.max.fill", tint: .orange)
             if summary.alertCount > 0 {
-                statCard(title: "Alertes", value: "\(summary.alertCount)", icon: "exclamationmark.triangle.fill", tint: .red)
+                statCard(title: "Alertes actives", value: "\(summary.alertCount)", icon: "exclamationmark.triangle.fill", tint: .red)
             }
+        }
+    }
+
+    private var alertsSection: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            Text("Alertes").font(.headline)
+            VStack(spacing: 0) {
+                ForEach(Array(activeAlerts.prefix(5).enumerated()), id: \.element.id) { index, alert in
+                    NavigationLink {
+                        BioLabAlertListView()
+                    } label: {
+                        HStack(alignment: .top, spacing: 8) {
+                            Image(systemName: "circle.fill")
+                                .font(.system(size: 7))
+                                .foregroundStyle(alertColor(alert.priority))
+                                .padding(.top, 5)
+                            Text(alert.message)
+                                .font(.subheadline)
+                                .foregroundStyle(.primary)
+                                .multilineTextAlignment(.leading)
+                            Spacer()
+                        }
+                        .padding(.vertical, 8)
+                    }
+                    if index < min(activeAlerts.count, 5) - 1 { Divider() }
+                }
+            }
+            .padding(.horizontal, 12)
+            .background(Color(.secondarySystemBackground), in: RoundedRectangle(cornerRadius: 14, style: .continuous))
+        }
+    }
+
+    private var todaySection: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            Text("Aujourd'hui").font(.headline)
+            VStack(spacing: 6) {
+                todayRow("Immersions", summary.todayImmersionCount, "drop.fill")
+                todayRow("Aérations", summary.todayAerationCount, "wind")
+                todayRow("Inspections", summary.todayInspectionCount, "eye.fill")
+                todayRow("Changements de milieu", summary.todayMediumChangeCount, "flask.fill")
+            }
+            .padding()
+            .background(Color(.secondarySystemBackground), in: RoundedRectangle(cornerRadius: 14, style: .continuous))
+        }
+    }
+
+    private func todayRow(_ title: String, _ count: Int, _ icon: String) -> some View {
+        HStack {
+            Label(title, systemImage: icon)
+                .font(.subheadline)
+                .foregroundStyle(.secondary)
+            Spacer()
+            Text("\(count)").font(.subheadline.weight(.medium))
+        }
+    }
+
+    private var performanceSection: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            Text("Performance").font(.headline)
+            VStack(spacing: 6) {
+                performanceRow("Multiplication moyenne", summary.averageMultiplicationRate.map { "x\(String(format: "%.1f", $0))" })
+                performanceRow("Contamination (7 derniers jours)", summary.weeklyContaminationRate.map { "\(String(format: "%.1f", $0 * 100)) %" })
+                performanceRow("Survie acclimatation", summary.averageAcclimatizationSurvivalRate.map { "\(String(format: "%.1f", $0 * 100)) %" })
+            }
+            .padding()
+            .background(Color(.secondarySystemBackground), in: RoundedRectangle(cornerRadius: 14, style: .continuous))
+        }
+    }
+
+    private func performanceRow(_ title: String, _ value: String?) -> some View {
+        HStack {
+            Text(title).font(.subheadline).foregroundStyle(.secondary)
+            Spacer()
+            Text(value ?? "Non disponible").font(.subheadline.weight(.medium))
+        }
+    }
+
+    private var activitySection: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            Text("Activité récente").font(.headline)
+            VStack(spacing: 6) {
+                ForEach(recentActivity) { item in
+                    HStack {
+                        Text(item.date.formatted(date: .omitted, time: .shortened))
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                            .frame(width: 50, alignment: .leading)
+                        Text(item.text).font(.subheadline)
+                        Spacer()
+                    }
+                }
+            }
+            .padding()
+            .background(Color(.secondarySystemBackground), in: RoundedRectangle(cornerRadius: 14, style: .continuous))
         }
     }
 
@@ -152,6 +266,15 @@ struct BioLabDashboardView: View {
         .frame(maxWidth: .infinity, alignment: .leading)
         .padding()
         .background(Color(.secondarySystemBackground), in: RoundedRectangle(cornerRadius: 14, style: .continuous))
+    }
+
+    private func alertColor(_ priority: BioLabAlertPriority) -> Color {
+        switch priority {
+        case .info: return .blue
+        case .warning: return .yellow
+        case .important: return .orange
+        case .critical: return .red
+        }
     }
 }
 

@@ -351,6 +351,7 @@ struct BioreactorInspectionFormView: View {
             attachPhoto(pending, to: target)
         }
 
+        BioLabAlertService.reportContaminationIfNeeded(target, context: modelContext)
         try? modelContext.save()
         dismiss()
     }
