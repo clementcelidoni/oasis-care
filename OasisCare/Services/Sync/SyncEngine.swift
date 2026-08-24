@@ -442,9 +442,9 @@ final class SyncEngine: ObservableObject {
         }
 
         // Phase 7H.
-        let remoteInspections: [BioreactorInspectionRow] = try await AuthService.client.from("bioreactor_inspections").select().execute().value
+        let remoteBioreactorInspections: [BioreactorInspectionRow] = try await AuthService.client.from("bioreactor_inspections").select().execute().value
         var inspectionsByID: [UUID: BioreactorInspection] = [:]
-        for row in remoteInspections {
+        for row in remoteBioreactorInspections {
             let batch = row.cultureBatchId.flatMap { batchesByID[$0] }
             let inspection = BioreactorInspection(
                 cultureBatch: batch, bioreactor: row.bioreactorId.flatMap { bioreactorsByID[$0] }, date: row.date,
