@@ -14,7 +14,10 @@ struct BioLabDashboardSummary {
 }
 
 enum BioLabDashboardService {
-    static func summary() -> BioLabDashboardSummary {
-        BioLabDashboardSummary()
+    static func summary(batches: [CultureBatch] = []) -> BioLabDashboardSummary {
+        var summary = BioLabDashboardSummary()
+        summary.multiplicationBatchCount = batches.filter { $0.status == .active && $0.cultureStage == .multiplication }.count
+        summary.rootingBatchCount = batches.filter { $0.status == .active && $0.cultureStage == .rooting }.count
+        return summary
     }
 }

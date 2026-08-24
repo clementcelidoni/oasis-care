@@ -66,6 +66,7 @@ final class SyncEngine: ObservableObject {
             try await pushGardenMapObjects(workspaceID: workspaceID, context: context)
             try await pushGardenAreas(workspaceID: workspaceID, context: context)
             try await pushIrrigationPipes(workspaceID: workspaceID, context: context)
+            try await pushCultureBatches(workspaceID: workspaceID, context: context)
             try await pushPendingDeletions(context: context)
             try context.save()
             lastSyncError = nil
@@ -104,10 +105,23 @@ final class SyncEngine: ObservableObject {
         let smartModeSettings = (try? context.fetch(FetchDescriptor<SmartModeSettings>()))?.filter { $0.syncStatus != .synced }.count ?? 0
         let scenes = (try? context.fetch(FetchDescriptor<OasisScene>()))?.filter { $0.syncStatus != .synced }.count ?? 0
         let deletions = (try? context.fetchCount(FetchDescriptor<PendingDeletion>())) ?? 0
+        // These four (Phase 6B-6D) were never added here when they were
+        // built — found while adding CultureBatch below and fixed in
+        // passing, since it's the same aggregate this new type belongs
+        // in. Cosmetic-only gap (an undercounted "pending" display in
+        // Réglages, not a sync failure — push/restore for all four were
+        // already correct), unlike the SwiftData schema-registration
+        // incident from the same phase.
+        let boundaries = (try? context.fetch(FetchDescriptor<GardenBoundary>()))?.filter { $0.syncStatus != .synced }.count ?? 0
+        let mapObjects = (try? context.fetch(FetchDescriptor<GardenMapObject>()))?.filter { $0.syncStatus != .synced }.count ?? 0
+        let areas = (try? context.fetch(FetchDescriptor<GardenArea>()))?.filter { $0.syncStatus != .synced }.count ?? 0
+        let pipes = (try? context.fetch(FetchDescriptor<IrrigationPipe>()))?.filter { $0.syncStatus != .synced }.count ?? 0
+        let cultureBatches = (try? context.fetch(FetchDescriptor<CultureBatch>()))?.filter { $0.syncStatus != .synced }.count ?? 0
         return gardens + zones + plants + schedules + events + photos + analyses + preferences + irrigationZones
             + irrigationEvents + smartTags + connectedDevices + sensors + sensorReadings + commandLogs
             + automationRules + automationExecutions + greenhouses + ponds + measurements + inspections + checkups
             + checkupEntries + smartModeSettings + scenes + deletions
+            + boundaries + mapObjects + areas + pipes + cultureBatches
     }
 
     private static let photoBucket = "plant-photos"
@@ -255,6 +269,34 @@ final class SyncEngine: ObservableObject {
             if let path = row.thumbnailStoragePath { plant.thumbnailData = try? await downloadPhoto(path: path) }
             context.insert(plant)
             plantsByID[row.id] = plant
+        }
+
+        // Phase 7B — two passes: parentBatch can reference another
+        // batch from this same remote array, which may not exist as a
+        // local object yet on a first pass (same pattern already used
+        // for IrrigationZone.soilSensor/flowSensor in Phase 5E).
+        let remoteBatches: [CultureBatchRow] = try await AuthService.client.from("culture_batches").select().execute().value
+        var batchesByID: [UUID: CultureBatch] = [:]
+        for row in remoteBatches {
+            let batch = CultureBatch(
+                batchCode: row.batchCode, speciesName: row.speciesName, cultureStage: row.cultureStage,
+                initialExplantCount: row.initialExplantCount, motherPlant: row.motherPlantId.flatMap { plantsByID[$0] }
+            )
+            batch.id = row.id
+            batch.status = row.status
+            batch.startedAt = row.startedAt
+            batch.expectedEndAt = row.expectedEndAt
+            batch.currentCount = row.currentCount
+            batch.notes = row.notes
+            batch.createdAt = row.createdAt
+            batch.syncStatus = .synced
+            batch.updatedAt = row.updatedAt
+            context.insert(batch)
+            batchesByID[row.id] = batch
+        }
+        for row in remoteBatches {
+            guard let parentId = row.parentBatchId else { continue }
+            batchesByID[row.id]?.parentBatch = batchesByID[parentId]
         }
 
         let remoteSensors: [SensorRow] = try await AuthService.client.from("sensors").select().execute().value
@@ -1078,6 +1120,40 @@ final class SyncEngine: ObservableObject {
             case misterDeviceId = "mister_device_id"
             case lightDeviceId = "light_device_id"
             case valveDeviceId = "valve_device_id"
+            case updatedAt = "updated_at"
+        }
+    }
+
+    private struct CultureBatchRow: Decodable {
+        var id: UUID
+        var batchCode: String
+        var speciesName: String
+        var cultureStage: CultureStage
+        var status: CultureBatchStatus
+        var startedAt: Date
+        var expectedEndAt: Date?
+        var initialExplantCount: Int
+        var currentCount: Int
+        var notes: String
+        var createdAt: Date
+        var motherPlantId: UUID?
+        var parentBatchId: UUID?
+        var updatedAt: Date?
+
+        enum CodingKeys: String, CodingKey {
+            case id
+            case batchCode = "batch_code"
+            case speciesName = "species_name"
+            case cultureStage = "culture_stage"
+            case status
+            case startedAt = "started_at"
+            case expectedEndAt = "expected_end_at"
+            case initialExplantCount = "initial_explant_count"
+            case currentCount = "current_count"
+            case notes
+            case createdAt = "created_at"
+            case motherPlantId = "mother_plant_id"
+            case parentBatchId = "parent_batch_id"
             case updatedAt = "updated_at"
         }
     }
@@ -2566,6 +2642,60 @@ final class SyncEngine: ObservableObject {
     }
 
     // MARK: - Garden boundary (Phase 6B)
+
+    // MARK: - BioLab culture batches (Phase 7B)
+
+    private struct CultureBatchDTO: Encodable {
+        var id: UUID
+        var workspaceId: UUID
+        var batchCode: String
+        var speciesName: String
+        var cultureStage: CultureStage
+        var status: CultureBatchStatus
+        var startedAt: Date
+        var expectedEndAt: Date?
+        var initialExplantCount: Int
+        var currentCount: Int
+        var notes: String
+        var createdAt: Date
+        var motherPlantId: UUID?
+        var parentBatchId: UUID?
+        var updatedAt: Date
+
+        enum CodingKeys: String, CodingKey {
+            case id
+            case workspaceId = "workspace_id"
+            case batchCode = "batch_code"
+            case speciesName = "species_name"
+            case cultureStage = "culture_stage"
+            case status
+            case startedAt = "started_at"
+            case expectedEndAt = "expected_end_at"
+            case initialExplantCount = "initial_explant_count"
+            case currentCount = "current_count"
+            case notes
+            case createdAt = "created_at"
+            case motherPlantId = "mother_plant_id"
+            case parentBatchId = "parent_batch_id"
+            case updatedAt = "updated_at"
+        }
+    }
+
+    private func pushCultureBatches(workspaceID: UUID, context: ModelContext) async throws {
+        let pending = try context.fetch(FetchDescriptor<CultureBatch>()).filter { $0.syncStatus != .synced }
+        guard !pending.isEmpty else { return }
+        let dtos = pending.map { batch in
+            CultureBatchDTO(
+                id: batch.id, workspaceId: workspaceID, batchCode: batch.batchCode, speciesName: batch.speciesName,
+                cultureStage: batch.cultureStage, status: batch.status, startedAt: batch.startedAt,
+                expectedEndAt: batch.expectedEndAt, initialExplantCount: batch.initialExplantCount,
+                currentCount: batch.currentCount, notes: batch.notes, createdAt: batch.createdAt,
+                motherPlantId: batch.motherPlant?.id, parentBatchId: batch.parentBatch?.id, updatedAt: batch.updatedAt ?? .now
+            )
+        }
+        try await AuthService.client.from("culture_batches").upsert(dtos).execute()
+        for batch in pending { batch.syncStatus = .synced }
+    }
 
     private struct GardenBoundaryDTO: Encodable {
         var id: UUID

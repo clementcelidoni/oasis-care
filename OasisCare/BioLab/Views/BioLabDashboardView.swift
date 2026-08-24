@@ -1,3 +1,4 @@
+import SwiftData
 import SwiftUI
 
 /// Spec Phase 7A — "Ajouter un nouvel espace principal : BioLab...
@@ -15,12 +16,14 @@ import SwiftUI
 /// récente, performance de la semaine — gets built; this view grows in
 /// place rather than being replaced when that lands.
 struct BioLabDashboardView: View {
-    private var summary: BioLabDashboardSummary { BioLabDashboardService.summary() }
+    @Query private var cultureBatches: [CultureBatch]
+
+    private var summary: BioLabDashboardSummary { BioLabDashboardService.summary(batches: cultureBatches) }
 
     var body: some View {
         ScrollView {
             VStack(alignment: .leading, spacing: 20) {
-                if summary.activeBioreactorCount == 0 && summary.multiplicationBatchCount == 0 {
+                if cultureBatches.isEmpty {
                     EmptyStateView(
                         icon: "testtube.2",
                         title: "Bienvenue dans Oasis BioLab",
@@ -30,6 +33,16 @@ struct BioLabDashboardView: View {
                 } else {
                     statGrid
                 }
+
+                NavigationLink {
+                    CultureBatchListView()
+                } label: {
+                    Label("Lots de culture (\(cultureBatches.count))", systemImage: "flask")
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .padding()
+                        .background(Color(.secondarySystemBackground), in: RoundedRectangle(cornerRadius: 14, style: .continuous))
+                }
+                .buttonStyle(.plain)
             }
             .padding()
         }

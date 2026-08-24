@@ -46,7 +46,8 @@ enum SharedModelContainer {
             GardenMapObject.self,
             GardenArea.self,
             IrrigationPipe.self,
-            GardenPlanImage.self
+            GardenPlanImage.self,
+            CultureBatch.self
         ])
         let configuration = ModelConfiguration(schema: schema)
 
