@@ -112,6 +112,9 @@ struct BioLabDashboardView: View {
 
     private var quickLinks: some View {
         VStack(spacing: 10) {
+            BioLabQuickLinkRow(title: "Plan du laboratoire", icon: "square.grid.3x3.fill") {
+                LabDigitalTwinView()
+            }
             BioLabQuickLinkRow(title: "Bioréacteurs (\(bioreactors.count))", icon: "testtube.2") {
                 BioreactorListView()
             }
