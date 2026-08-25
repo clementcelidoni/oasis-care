@@ -136,6 +136,12 @@ struct BioLabDashboardView: View {
             BioLabQuickLinkRow(title: "Inventaire", icon: "shippingbox") {
                 LabInventoryListView()
             }
+            BioLabQuickLinkRow(title: "Composés", icon: "atom") {
+                LabCompoundListView()
+            }
+            BioLabQuickLinkRow(title: "Solutions stock", icon: "eyedropper") {
+                StockSolutionListView()
+            }
             BioLabQuickLinkRow(title: "Étiquette de rack", icon: "qrcode") {
                 RackTagCreationView()
             }
