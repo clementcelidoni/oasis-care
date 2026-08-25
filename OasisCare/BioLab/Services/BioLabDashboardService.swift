@@ -67,6 +67,61 @@ enum BioLabDashboardService {
         return summary
     }
 
+    struct Suggestion: Identifiable {
+        var id = UUID()
+        var icon: String
+        var text: String
+    }
+
+    /// Enhancement §7R "DASHBOARD — ✨ Suggestions Oasis." Every
+    /// suggestion here comes from a real, already-recorded signal —
+    /// `expectedEndAt` the user entered, `BioLabKnowledgeEngine`
+    /// performance actually computed from this workspace's batches, or
+    /// `LabInventoryItem`'s own threshold — never a generic tip invented
+    /// to fill space. Returns an empty array rather than padding with
+    /// filler when nothing genuinely warrants surfacing.
+    static func suggestions(
+        batches: [CultureBatch], recipeVersions: [MediumRecipeVersion], acclimatizationBatches: [AcclimatizationBatch],
+        inventoryItems: [LabInventoryItem]
+    ) -> [Suggestion] {
+        var suggestions: [Suggestion] = []
+        let calendar = Calendar.current
+        let now = Date.now
+        let soon = calendar.date(byAdding: .day, value: 7, to: now) ?? now
+
+        let endingSoonCount = batches.filter { batch in
+            guard batch.status == .active, let expectedEndAt = batch.expectedEndAt else { return false }
+            return expectedEndAt >= now && expectedEndAt <= soon
+        }.count
+        if endingSoonCount > 0 {
+            suggestions.append(Suggestion(
+                icon: "hourglass",
+                text: "\(endingSoonCount) lot\(endingSoonCount > 1 ? "s" : "") arrive\(endingSoonCount > 1 ? "nt" : "") en fin de cycle prévue cette semaine."
+            ))
+        }
+
+        let versionsByRecipe = Dictionary(grouping: recipeVersions) { $0.recipe?.id }
+        for (_, versions) in versionsByRecipe where versions.count > 1 {
+            let performances = BioLabKnowledgeEngine.performance(for: versions, batches: batches, acclimatizationBatches: acclimatizationBatches)
+            guard performances.count > 1 else { continue }
+            let scored = ProtocolPerformanceScore.score(performances)
+            guard let best = scored.max(by: { ($0.score ?? -1) < ($1.score ?? -1) }), best.score != nil,
+                  let version = versions.first(where: { $0.id == best.versionId }) else { continue }
+            suggestions.append(Suggestion(
+                icon: "trophy",
+                text: "V\(version.versionNumber) (\(version.recipe?.name ?? "recette")) obtient actuellement le meilleur score interne, basé sur \(best.batchCount) lot(s)."
+            ))
+        }
+
+        let lowStockItems = inventoryItems.filter(\.isLowStock)
+        if let first = lowStockItems.first {
+            let suffix = lowStockItems.count > 1 ? " et \(lowStockItems.count - 1) autre(s)" : ""
+            suggestions.append(Suggestion(icon: "shippingbox", text: "Stock faible : \(first.name)\(suffix)."))
+        }
+
+        return suggestions
+    }
+
     struct ActivityItem: Identifiable {
         var id = UUID()
         var date: Date

@@ -19,6 +19,8 @@ struct BioLabDashboardView: View {
     @Query private var mediumBatches: [MediumBatch]
     @Query private var acclimatizationBatches: [AcclimatizationBatch]
     @Query private var alerts: [BioLabAlert]
+    @Query private var recipeVersions: [MediumRecipeVersion]
+    @Query private var inventoryItems: [LabInventoryItem]
     @State private var isAssistantPresented = false
 
     private var summary: BioLabDashboardSummary {
@@ -34,6 +36,12 @@ struct BioLabDashboardView: View {
         BioLabDashboardService.recentActivity(executions: cycleExecutions, inspections: inspections, mediumBatches: mediumBatches)
     }
     private var aiContext: BioLabAIContext { BioLabAIContext.build(batches: cultureBatches, bioreactors: bioreactors) }
+    private var suggestions: [BioLabDashboardService.Suggestion] {
+        BioLabDashboardService.suggestions(
+            batches: cultureBatches, recipeVersions: recipeVersions, acclimatizationBatches: acclimatizationBatches,
+            inventoryItems: inventoryItems
+        )
+    }
 
     var body: some View {
         ScrollView {
@@ -47,6 +55,9 @@ struct BioLabDashboardView: View {
                     .padding(.top, 40)
                 } else {
                     statGrid
+                    if !suggestions.isEmpty {
+                        suggestionsSection
+                    }
                     if !activeAlerts.isEmpty {
                         alertsSection
                     }
@@ -167,6 +178,25 @@ struct BioLabDashboardView: View {
             if summary.alertCount > 0 {
                 statCard(title: "Alertes actives", value: "\(summary.alertCount)", icon: "exclamationmark.triangle.fill", tint: .red)
             }
+        }
+    }
+
+    private var suggestionsSection: some View {
+        VStack(alignment: .leading, spacing: 10) {
+            Text("✨ Suggestions Oasis").font(.headline)
+            VStack(alignment: .leading, spacing: 10) {
+                ForEach(suggestions) { suggestion in
+                    HStack(alignment: .top, spacing: 8) {
+                        Image(systemName: suggestion.icon)
+                            .foregroundStyle(.purple)
+                            .frame(width: 20)
+                        Text(suggestion.text)
+                            .font(.subheadline)
+                    }
+                }
+            }
+            .padding()
+            .background(Color.purple.opacity(0.08), in: RoundedRectangle(cornerRadius: 12, style: .continuous))
         }
     }
 
