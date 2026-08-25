@@ -97,6 +97,7 @@ struct MediumRecipeVersionDetailView: View {
     @Query private var allAcclimatizationBatches: [AcclimatizationBatch]
     @State private var isShowingQR = false
     @State private var isShowingNFC = false
+    @State private var isShowingGuidedPreparation = false
 
     private var subjectName: String {
         "\(version.recipe?.name ?? "Recette") V\(version.versionNumber)"
@@ -166,6 +167,10 @@ struct MediumRecipeVersionDetailView: View {
                     Text(version.notes)
                 }
             }
+
+            Section {
+                Button("Préparer ce milieu") { isShowingGuidedPreparation = true }
+            }
         }
         .navigationTitle("Version \(version.versionNumber)")
         .navigationBarTitleDisplayMode(.inline)
@@ -178,6 +183,9 @@ struct MediumRecipeVersionDetailView: View {
                 createTag: { context in SmartTagService.tag(for: version, type: .nfc, in: context) },
                 reassignTag: { tag, context in SmartTagService.reassign(tag, to: version, in: context) }
             )
+        }
+        .sheet(isPresented: $isShowingGuidedPreparation) {
+            GuidedMediaPreparationView(version: version)
         }
     }
 
