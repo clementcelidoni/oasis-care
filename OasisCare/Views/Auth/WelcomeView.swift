@@ -12,9 +12,10 @@ struct WelcomeView: View {
             Spacer()
 
             VStack(spacing: 8) {
-                Image(systemName: "leaf.fill")
-                    .font(.system(size: 48))
-                    .foregroundStyle(Color.accentColor)
+                Image("OasisLogo")
+                    .resizable()
+                    .scaledToFit()
+                    .frame(width: 96, height: 96)
                 Text("Oasis Care")
                     .font(.largeTitle.weight(.bold))
                 Text("Prenez soin de tout votre univers végétal.")
