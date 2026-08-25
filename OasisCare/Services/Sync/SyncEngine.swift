@@ -65,6 +65,7 @@ final class SyncEngine: ObservableObject {
             try await pushLabCompounds(workspaceID: workspaceID, context: context)
             try await pushStockSolutions(workspaceID: workspaceID, context: context)
             try await pushInventoryLots(workspaceID: workspaceID, context: context)
+            try await pushBioLabAuditEntries(workspaceID: workspaceID, context: context)
             try await pushMediumRecipes(workspaceID: workspaceID, context: context)
             try await pushMediumRecipeVersions(workspaceID: workspaceID, context: context)
             // Programs/versions moved up here (Phase 7K) so
@@ -183,6 +184,7 @@ final class SyncEngine: ObservableObject {
         let labCompounds = (try? context.fetch(FetchDescriptor<LabCompound>()))?.filter { $0.syncStatus != .synced }.count ?? 0
         let stockSolutions = (try? context.fetch(FetchDescriptor<StockSolution>()))?.filter { $0.syncStatus != .synced }.count ?? 0
         let inventoryLots = (try? context.fetch(FetchDescriptor<InventoryLot>()))?.filter { $0.syncStatus != .synced }.count ?? 0
+        let auditEntries = (try? context.fetch(FetchDescriptor<BioLabAuditEntry>()))?.filter { $0.syncStatus != .synced }.count ?? 0
         return gardens + zones + plants + schedules + events + photos + analyses + preferences + irrigationZones
             + irrigationEvents + smartTags + connectedDevices + sensors + sensorReadings + commandLogs
             + automationRules + automationExecutions + greenhouses + ponds + measurements + inspections + checkups
@@ -191,7 +193,7 @@ final class SyncEngine: ObservableObject {
             + mediumRecipes + mediumVersions + mediumBatches + bioreactors + maintenanceEvents
             + bioreactorPrograms + bioreactorProgramVersions + cycleExecutions + biolabAlerts + deviceBindings
             + bioreactorInspections + inspectionPhotos + bioLabExperiments + experimentGroups
-            + acclimatizationBatches + labInventoryItems + labCompounds + stockSolutions + inventoryLots
+            + acclimatizationBatches + labInventoryItems + labCompounds + stockSolutions + inventoryLots + auditEntries
     }
 
     private static let photoBucket = "plant-photos"
@@ -466,6 +468,20 @@ final class SyncEngine: ObservableObject {
             lot.syncStatus = .synced
             lot.updatedAt = row.updatedAt
             context.insert(lot)
+        }
+
+        // Enhancement Phase 7T — entityId is a plain UUID, not a live
+        // relationship, so this has no ordering dependency on anything.
+        let remoteAuditEntries: [BioLabAuditEntryRow] = try await AuthService.client.from("biolab_audit_entries").select().execute().value
+        for row in remoteAuditEntries {
+            let entry = BioLabAuditEntry(
+                entityType: row.entityType, entityId: row.entityId, action: row.action, detail: row.detail, performedBy: row.performedBy
+            )
+            entry.id = row.id
+            entry.occurredAt = row.occurredAt
+            entry.syncStatus = .synced
+            entry.updatedAt = row.updatedAt
+            context.insert(entry)
         }
 
         // Phase 7C.
@@ -1890,6 +1906,27 @@ final class SyncEngine: ObservableObject {
             case costTotal = "cost_total"
             case notes
             case createdAt = "created_at"
+            case updatedAt = "updated_at"
+        }
+    }
+
+    private struct BioLabAuditEntryRow: Decodable {
+        var id: UUID
+        var entityType: String
+        var entityId: UUID
+        var action: String
+        var detail: String
+        var performedBy: String?
+        var occurredAt: Date
+        var updatedAt: Date?
+
+        enum CodingKeys: String, CodingKey {
+            case id
+            case entityType = "entity_type"
+            case entityId = "entity_id"
+            case action, detail
+            case performedBy = "performed_by"
+            case occurredAt = "occurred_at"
             case updatedAt = "updated_at"
         }
     }
@@ -4189,6 +4226,44 @@ final class SyncEngine: ObservableObject {
         }
         try await AuthService.client.from("inventory_lots").upsert(dtos).execute()
         for lot in pending { lot.syncStatus = .synced }
+    }
+
+    private struct BioLabAuditEntryDTO: Encodable {
+        var id: UUID
+        var workspaceId: UUID
+        var entityType: String
+        var entityId: UUID
+        var action: String
+        var detail: String
+        var performedBy: String?
+        var occurredAt: Date
+        var updatedAt: Date
+
+        enum CodingKeys: String, CodingKey {
+            case id
+            case workspaceId = "workspace_id"
+            case entityType = "entity_type"
+            case entityId = "entity_id"
+            case action, detail
+            case performedBy = "performed_by"
+            case occurredAt = "occurred_at"
+            case updatedAt = "updated_at"
+        }
+    }
+
+    /// Append-only — never edited after creation.
+    private func pushBioLabAuditEntries(workspaceID: UUID, context: ModelContext) async throws {
+        let pending = try context.fetch(FetchDescriptor<BioLabAuditEntry>()).filter { $0.syncStatus != .synced }
+        guard !pending.isEmpty else { return }
+        let dtos = pending.map { entry in
+            BioLabAuditEntryDTO(
+                id: entry.id, workspaceId: workspaceID, entityType: entry.entityType, entityId: entry.entityId,
+                action: entry.action, detail: entry.detail, performedBy: entry.performedBy,
+                occurredAt: entry.occurredAt, updatedAt: entry.updatedAt ?? .now
+            )
+        }
+        try await AuthService.client.from("biolab_audit_entries").upsert(dtos).execute()
+        for entry in pending { entry.syncStatus = .synced }
     }
 
     private struct BioreactorDTO: Encodable {

@@ -81,7 +81,7 @@ struct MediumRecipeVersionFormView: View {
         let validComponents = components.filter { !$0.name.trimmingCharacters(in: .whitespaces).isEmpty }
         _ = MediumRecipeService.createNewVersion(
             for: recipe, targetPH: targetPH, components: validComponents, notes: notes,
-            parentVersion: parentVersion, changeReason: changeReason, context: modelContext
+            parentVersion: parentVersion, changeReason: changeReason, performedBy: AuthState.shared.session?.user.email, context: modelContext
         )
         dismiss()
     }

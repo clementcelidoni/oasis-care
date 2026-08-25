@@ -313,7 +313,7 @@ private struct CultureBatchSplitSheet: View {
                 }
                 ToolbarItem(placement: .confirmationAction) {
                     Button("Diviser") {
-                        _ = CultureBatchService.split(batch, into: parsedCounts, context: modelContext)
+                        _ = CultureBatchService.split(batch, into: parsedCounts, performedBy: AuthState.shared.session?.user.email, context: modelContext)
                         dismiss()
                     }
                     .disabled(parsedCounts.count < 2 || totalSplit > batch.currentCount)

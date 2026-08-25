@@ -95,9 +95,14 @@ struct MediumRecipeVersionDetailView: View {
     @Environment(\.modelContext) private var modelContext
     @Query private var allBatches: [CultureBatch]
     @Query private var allAcclimatizationBatches: [AcclimatizationBatch]
+    @Query private var allAuditEntries: [BioLabAuditEntry]
     @State private var isShowingQR = false
     @State private var isShowingNFC = false
     @State private var isShowingGuidedPreparation = false
+
+    private var auditEntries: [BioLabAuditEntry] {
+        allAuditEntries.filter { $0.entityId == version.id }.sorted { $0.occurredAt > $1.occurredAt }
+    }
 
     private var subjectName: String {
         "\(version.recipe?.name ?? "Recette") V\(version.versionNumber)"
@@ -170,6 +175,19 @@ struct MediumRecipeVersionDetailView: View {
 
             Section {
                 Button("Préparer ce milieu") { isShowingGuidedPreparation = true }
+            }
+
+            if !auditEntries.isEmpty {
+                Section("Historique") {
+                    ForEach(auditEntries) { entry in
+                        VStack(alignment: .leading, spacing: 2) {
+                            Text(entry.detail).font(.subheadline)
+                            Text("\(DateFormatting.shortDate(entry.occurredAt))\(entry.performedBy.map { " · \($0)" } ?? "")")
+                                .font(.caption2)
+                                .foregroundStyle(.secondary)
+                        }
+                    }
+                }
             }
         }
         .navigationTitle("Version \(version.versionNumber)")

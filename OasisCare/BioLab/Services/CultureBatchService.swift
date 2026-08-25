@@ -28,7 +28,7 @@ enum CultureBatchService {
     /// a true historical record of what this batch was before
     /// dividing, not zeroed out — only its status changes to `.split`
     /// so it reads as no longer independently active.
-    static func split(_ parent: CultureBatch, into counts: [Int], context: ModelContext) -> [CultureBatch] {
+    static func split(_ parent: CultureBatch, into counts: [Int], performedBy: String? = nil, context: ModelContext) -> [CultureBatch] {
         guard !counts.isEmpty else { return [] }
         let children = counts.enumerated().map { index, count -> CultureBatch in
             let child = CultureBatch(
@@ -45,6 +45,11 @@ enum CultureBatchService {
         }
         parent.status = .split
         parent.markDirty()
+        BioLabAuditService.log(
+            entityType: "culture_batches", entityId: parent.id, action: BioLabAuditAction.split,
+            detail: "Divisé en \(children.count) lot(s) : \(children.map(\.batchCode).joined(separator: ", "))",
+            performedBy: performedBy, context: context
+        )
         try? context.save()
         return children
     }

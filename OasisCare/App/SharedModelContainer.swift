@@ -66,7 +66,8 @@ enum SharedModelContainer {
             LabInventoryItem.self,
             LabCompound.self,
             StockSolution.self,
-            InventoryLot.self
+            InventoryLot.self,
+            BioLabAuditEntry.self
         ])
         let configuration = ModelConfiguration(schema: schema)
 
