@@ -27,6 +27,19 @@ final class CultureBatch: Syncable {
     /// cultivar granularity finer than that cross-user cache, and a
     /// batch must never be blocked on a profile that doesn't exist yet.
     var speciesName: String
+    /// Enhancement §2 — free text like `speciesName`: cultivar naming
+    /// has no fixed vocabulary to enumerate. Nil for every batch created
+    /// before this field existed.
+    var cultivar: String?
+    /// Enhancement §2 — spec names the concept but gives no fixed
+    /// vocabulary (unlike CultureStage/CultureSystem below), so free
+    /// text rather than an invented taxonomy of explant types.
+    var explantType: String?
+    /// Enhancement §2 — one more recommendation-engine input, alongside
+    /// `cultureStage`. Distinct from `Bioreactor.bioreactorType` (a
+    /// physical vessel model): this can be known before any bioreactor
+    /// is assigned.
+    var cultureSystem: CultureSystem?
     var cultureStage: CultureStage
     var status: CultureBatchStatus
     var startedAt: Date
