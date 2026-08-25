@@ -2,12 +2,12 @@ import Foundation
 
 /// Enhancement §4 "PLUSIEURS PROPOSITIONS" + §8 "FICHE DE PROPOSITION" —
 /// one AI-generated medium proposal (the response shape for
-/// `SmartMediaService.recommend`). Plain Codable DTO exchanged with the
-/// Edge Function, same "never persisted as-is" pattern as
+/// `SmartMediaService.recommend`). Decode-only (never sent back as
+/// JSON anywhere in this app) — same "never persisted as-is" pattern as
 /// BioLabComparisonResult/BioLabInspectionAnalysis: once the user acts
 /// on it (§9 "Utiliser cette recette"), it becomes a real
 /// MediumRecipe/MediumRecipeVersion instead.
-struct MediaRecommendation: Codable, Identifiable, Hashable {
+struct MediaRecommendation: Decodable, Identifiable, Hashable {
     var id: UUID = UUID()
     /// "Proposition A" / "Proposition B"...
     var label: String
