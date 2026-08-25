@@ -17,11 +17,18 @@ struct BioLabExperimentFormView: View {
     @State private var outcomes: String
     @State private var notes: String
 
-    init(experiment: BioLabExperiment?) {
+    /// `prefillQuestion`/`prefillIndependentVariables` — enhancement
+    /// "PROPOSITION DU PROCHAIN ESSAI": pre-fills from an observed
+    /// difference between two recipe versions, never auto-submitted
+    /// (spec §32 "L'IA PROPOSE. L'utilisateur doit [Créer l'expérience]
+    /// [Modifier] [Ignorer]") — the user always sees and can edit these
+    /// fields before saving, same as every other AI-touched form field
+    /// in this app.
+    init(experiment: BioLabExperiment?, prefillQuestion: String = "", prefillIndependentVariables: String = "") {
         self.experiment = experiment
         _code = State(initialValue: experiment?.code ?? "")
-        _question = State(initialValue: experiment?.question ?? "")
-        _independentVariables = State(initialValue: experiment?.independentVariables ?? "")
+        _question = State(initialValue: experiment?.question ?? prefillQuestion)
+        _independentVariables = State(initialValue: experiment?.independentVariables ?? prefillIndependentVariables)
         _controlledVariables = State(initialValue: experiment?.controlledVariables ?? "")
         _outcomes = State(initialValue: experiment?.outcomes ?? "")
         _notes = State(initialValue: experiment?.notes ?? "")

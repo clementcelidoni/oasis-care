@@ -14,6 +14,7 @@ struct GuidedMediaPreparationView: View {
 
     @Environment(\.modelContext) private var modelContext
     @Environment(\.dismiss) private var dismiss
+    @Query private var inventoryLots: [InventoryLot]
 
     @State private var code = ""
     @State private var targetVolumeText = "1"
@@ -21,6 +22,7 @@ struct GuidedMediaPreparationView: View {
     @State private var measuredPHText = ""
     @State private var actualAmounts: [UUID: String] = [:]
     @State private var notes = ""
+    @State private var deductionProposals: [InventoryDeductionService.Proposal] = []
 
     private var targetVolumeLiters: Double {
         Double(targetVolumeText.replacingOccurrences(of: ",", with: ".")) ?? 0
@@ -83,6 +85,24 @@ struct GuidedMediaPreparationView: View {
                         .disabled(code.trimmingCharacters(in: .whitespaces).isEmpty || targetVolumeLiters <= 0)
                 }
             }
+            .confirmationDialog(
+                "Déduire du stock ?",
+                isPresented: Binding(get: { !deductionProposals.isEmpty }, set: { if !$0 { deductionProposals = [] } }),
+                titleVisibility: .visible
+            ) {
+                Button("Déduire") {
+                    for proposal in deductionProposals { InventoryDeductionService.apply(proposal) }
+                    try? modelContext.save()
+                    deductionProposals = []
+                    dismiss()
+                }
+                Button("Ne pas déduire", role: .cancel) {
+                    deductionProposals = []
+                    dismiss()
+                }
+            } message: {
+                Text(deductionProposals.map { "\($0.compoundName) : -\(formattedAmount($0.amountToDeduct)) \($0.unit.label)" }.joined(separator: "\n"))
+            }
         }
     }
 
@@ -140,6 +160,12 @@ struct GuidedMediaPreparationView: View {
 
         modelContext.insert(batch)
         try? modelContext.save()
-        dismiss()
+
+        let proposals = InventoryDeductionService.proposals(for: batch, lots: inventoryLots)
+        if proposals.isEmpty {
+            dismiss()
+        } else {
+            deductionProposals = proposals
+        }
     }
 }

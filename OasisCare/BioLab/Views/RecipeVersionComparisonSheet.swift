@@ -11,6 +11,7 @@ struct RecipeVersionComparisonSheet: View {
 
     @Environment(\.dismiss) private var dismiss
     @State private var selectedVersionIDs: Set<UUID> = []
+    @State private var isShowingExperimentProposal = false
 
     private var selectedVersions: [MediumRecipeVersion] {
         versions.filter { selectedVersionIDs.contains($0.id) }.sorted { $0.versionNumber < $1.versionNumber }
@@ -42,6 +43,9 @@ struct RecipeVersionComparisonSheet: View {
                         Section {
                             Text("Ces versions diffèrent principalement sur : \(comparison.differingFieldNames.joined(separator: ", ")).")
                                 .font(.callout)
+                            Button("✨ Proposer un essai à partir de ces différences") {
+                                isShowingExperimentProposal = true
+                            }
                         }
                     }
                     Section("Comparaison") {
@@ -82,6 +86,13 @@ struct RecipeVersionComparisonSheet: View {
                 ToolbarItem(placement: .cancellationAction) {
                     Button("Fermer") { dismiss() }
                 }
+            }
+            .sheet(isPresented: $isShowingExperimentProposal) {
+                BioLabExperimentFormView(
+                    experiment: nil,
+                    prefillQuestion: comparison.map { "Quel est l'effet de \($0.differingFieldNames.joined(separator: ", ")) sur les résultats de culture ?" } ?? "",
+                    prefillIndependentVariables: comparison?.differingFieldNames.joined(separator: ", ") ?? ""
+                )
             }
         }
     }
