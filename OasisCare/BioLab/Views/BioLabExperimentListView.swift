@@ -3,8 +3,10 @@ import SwiftUI
 
 /// Spec Phase 7K.
 struct BioLabExperimentListView: View {
+    @Environment(\.modelContext) private var modelContext
     @Query(sort: \BioLabExperiment.startedAt, order: .reverse) private var experiments: [BioLabExperiment]
     @State private var isShowingNewExperiment = false
+    @State private var experimentPendingDeletion: BioLabExperiment?
 
     var body: some View {
         Group {
@@ -28,6 +30,13 @@ struct BioLabExperimentListView: View {
                                     .lineLimit(2)
                             }
                         }
+                        .swipeActions(edge: .trailing) {
+                            Button(role: .destructive) {
+                                experimentPendingDeletion = experiment
+                            } label: {
+                                Label("Supprimer", systemImage: "trash")
+                            }
+                        }
                     }
                 }
                 .listStyle(.plain)
@@ -42,6 +51,19 @@ struct BioLabExperimentListView: View {
         }
         .sheet(isPresented: $isShowingNewExperiment) {
             BioLabExperimentFormView(experiment: nil)
+        }
+        .confirmationDialog(
+            "Supprimer l'expérimentation \(experimentPendingDeletion?.code ?? "") ?",
+            isPresented: Binding(get: { experimentPendingDeletion != nil }, set: { if !$0 { experimentPendingDeletion = nil } }),
+            titleVisibility: .visible
+        ) {
+            Button("Supprimer", role: .destructive) {
+                if let experimentPendingDeletion { DeletionService.delete(experimentPendingDeletion, in: modelContext) }
+                experimentPendingDeletion = nil
+            }
+            Button("Annuler", role: .cancel) { experimentPendingDeletion = nil }
+        } message: {
+            Text("Les groupes de cette expérimentation seront aussi supprimés. Les lots qui y étaient rattachés seront conservés, sans groupe associé. Cette action est irréversible.")
         }
     }
 }

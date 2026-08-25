@@ -9,6 +9,7 @@ struct MediumBatchListView: View {
     @Query(sort: \MediumRecipe.name) private var recipes: [MediumRecipe]
 
     @State private var isShowingNew = false
+    @State private var batchPendingDeletion: MediumBatch?
 
     var body: some View {
         Group {
@@ -26,6 +27,13 @@ struct MediumBatchListView: View {
                             .font(.caption)
                             .foregroundStyle(.secondary)
                     }
+                    .swipeActions(edge: .trailing) {
+                        Button(role: .destructive) {
+                            batchPendingDeletion = batch
+                        } label: {
+                            Label("Supprimer", systemImage: "trash")
+                        }
+                    }
                 }
                 .listStyle(.plain)
             }
@@ -40,6 +48,19 @@ struct MediumBatchListView: View {
         }
         .sheet(isPresented: $isShowingNew) {
             MediumBatchFormView(recipes: recipes)
+        }
+        .confirmationDialog(
+            "Supprimer la préparation \(batchPendingDeletion?.code ?? "") ?",
+            isPresented: Binding(get: { batchPendingDeletion != nil }, set: { if !$0 { batchPendingDeletion = nil } }),
+            titleVisibility: .visible
+        ) {
+            Button("Supprimer", role: .destructive) {
+                if let batchPendingDeletion { DeletionService.delete(batchPendingDeletion, in: modelContext) }
+                batchPendingDeletion = nil
+            }
+            Button("Annuler", role: .cancel) { batchPendingDeletion = nil }
+        } message: {
+            Text("Cette action est irréversible.")
         }
     }
 }

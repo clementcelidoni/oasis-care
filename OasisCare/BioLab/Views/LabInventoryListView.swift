@@ -3,8 +3,10 @@ import SwiftUI
 
 /// Spec "INVENTAIRE DE LABORATOIRE — gestion simple, pas comptable."
 struct LabInventoryListView: View {
+    @Environment(\.modelContext) private var modelContext
     @Query(sort: \LabInventoryItem.name) private var items: [LabInventoryItem]
     @State private var itemSheet: ItemSheet?
+    @State private var itemPendingDeletion: LabInventoryItem?
 
     private var lowStockItems: [LabInventoryItem] {
         items.filter(\.isLowStock)
@@ -56,6 +58,19 @@ struct LabInventoryListView: View {
                 LabInventoryFormView(item: item)
             }
         }
+        .confirmationDialog(
+            "Supprimer \(itemPendingDeletion?.name ?? "cet article") ?",
+            isPresented: Binding(get: { itemPendingDeletion != nil }, set: { if !$0 { itemPendingDeletion = nil } }),
+            titleVisibility: .visible
+        ) {
+            Button("Supprimer", role: .destructive) {
+                if let itemPendingDeletion { DeletionService.delete(itemPendingDeletion, in: modelContext) }
+                itemPendingDeletion = nil
+            }
+            Button("Annuler", role: .cancel) { itemPendingDeletion = nil }
+        } message: {
+            Text("Cette action est irréversible.")
+        }
     }
 
     private func row(for item: LabInventoryItem) -> some View {
@@ -77,6 +92,13 @@ struct LabInventoryListView: View {
             }
         }
         .buttonStyle(.plain)
+        .swipeActions(edge: .trailing) {
+            Button(role: .destructive) {
+                itemPendingDeletion = item
+            } label: {
+                Label("Supprimer", systemImage: "trash")
+            }
+        }
     }
 }
 

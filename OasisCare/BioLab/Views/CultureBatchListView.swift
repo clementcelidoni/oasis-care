@@ -7,6 +7,7 @@ struct CultureBatchListView: View {
     @Query(sort: \CultureBatch.createdAt, order: .reverse) private var batches: [CultureBatch]
 
     @State private var isShowingNewBatch = false
+    @State private var batchPendingDeletion: CultureBatch?
 
     var body: some View {
         Group {
@@ -23,6 +24,13 @@ struct CultureBatchListView: View {
                             CultureBatchDetailView(batch: batch)
                         } label: {
                             CultureBatchRow(batch: batch)
+                        }
+                        .swipeActions(edge: .trailing) {
+                            Button(role: .destructive) {
+                                batchPendingDeletion = batch
+                            } label: {
+                                Label("Supprimer", systemImage: "trash")
+                            }
                         }
                     }
                 }
@@ -42,6 +50,19 @@ struct CultureBatchListView: View {
         }
         .sheet(isPresented: $isShowingNewBatch) {
             CultureBatchFormView(existingBatches: batches)
+        }
+        .confirmationDialog(
+            "Supprimer le lot \(batchPendingDeletion?.batchCode ?? "") ?",
+            isPresented: Binding(get: { batchPendingDeletion != nil }, set: { if !$0 { batchPendingDeletion = nil } }),
+            titleVisibility: .visible
+        ) {
+            Button("Supprimer", role: .destructive) {
+                if let batchPendingDeletion { DeletionService.delete(batchPendingDeletion, in: modelContext) }
+                batchPendingDeletion = nil
+            }
+            Button("Annuler", role: .cancel) { batchPendingDeletion = nil }
+        } message: {
+            Text("Les inspections et acclimatations liées à ce lot seront aussi supprimées. Cette action est irréversible.")
         }
     }
 }

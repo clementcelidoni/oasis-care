@@ -9,6 +9,7 @@ struct MediumRecipeListView: View {
     @State private var isShowingNewRecipe = false
     @State private var newRecipeName = ""
     @State private var newRecipeSpecies = ""
+    @State private var recipePendingDeletion: MediumRecipe?
 
     var body: some View {
         Group {
@@ -31,6 +32,13 @@ struct MediumRecipeListView: View {
                                     .foregroundStyle(.secondary)
                             }
                         }
+                        .swipeActions(edge: .trailing) {
+                            Button(role: .destructive) {
+                                recipePendingDeletion = recipe
+                            } label: {
+                                Label("Supprimer", systemImage: "trash")
+                            }
+                        }
                     }
                 }
                 .listStyle(.plain)
@@ -48,6 +56,19 @@ struct MediumRecipeListView: View {
             TextField("Espèce (optionnel)", text: $newRecipeSpecies)
             Button("Créer") { createRecipe() }
             Button("Annuler", role: .cancel) { newRecipeName = ""; newRecipeSpecies = "" }
+        }
+        .confirmationDialog(
+            "Supprimer \(recipePendingDeletion?.name ?? "cette recette") ?",
+            isPresented: Binding(get: { recipePendingDeletion != nil }, set: { if !$0 { recipePendingDeletion = nil } }),
+            titleVisibility: .visible
+        ) {
+            Button("Supprimer", role: .destructive) {
+                if let recipePendingDeletion { DeletionService.delete(recipePendingDeletion, in: modelContext) }
+                recipePendingDeletion = nil
+            }
+            Button("Annuler", role: .cancel) { recipePendingDeletion = nil }
+        } message: {
+            Text("Toutes les versions de cette recette seront supprimées. Les lots et préparations qui utilisaient une de ces versions perdront cette référence. Cette action est irréversible.")
         }
     }
 

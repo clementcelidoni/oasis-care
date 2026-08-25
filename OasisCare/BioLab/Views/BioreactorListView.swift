@@ -7,6 +7,7 @@ struct BioreactorListView: View {
     @Query(sort: \Bioreactor.code) private var bioreactors: [Bioreactor]
 
     @State private var isShowingNew = false
+    @State private var bioreactorPendingDeletion: Bioreactor?
 
     var body: some View {
         Group {
@@ -24,6 +25,13 @@ struct BioreactorListView: View {
                         } label: {
                             BioreactorRow(bioreactor: bioreactor)
                         }
+                        .swipeActions(edge: .trailing) {
+                            Button(role: .destructive) {
+                                bioreactorPendingDeletion = bioreactor
+                            } label: {
+                                Label("Supprimer", systemImage: "trash")
+                            }
+                        }
                     }
                 }
                 .listStyle(.plain)
@@ -38,6 +46,19 @@ struct BioreactorListView: View {
         }
         .sheet(isPresented: $isShowingNew) {
             BioreactorFormView()
+        }
+        .confirmationDialog(
+            "Supprimer \(bioreactorPendingDeletion?.code ?? "ce bioréacteur") ?",
+            isPresented: Binding(get: { bioreactorPendingDeletion != nil }, set: { if !$0 { bioreactorPendingDeletion = nil } }),
+            titleVisibility: .visible
+        ) {
+            Button("Supprimer", role: .destructive) {
+                if let bioreactorPendingDeletion { DeletionService.delete(bioreactorPendingDeletion, in: modelContext) }
+                bioreactorPendingDeletion = nil
+            }
+            Button("Annuler", role: .cancel) { bioreactorPendingDeletion = nil }
+        } message: {
+            Text("L'historique de maintenance, les capteurs et les étiquettes associés seront aussi supprimés. Les lots qui y étaient affectés seront conservés, sans bioréacteur associé. Cette action est irréversible.")
         }
     }
 }

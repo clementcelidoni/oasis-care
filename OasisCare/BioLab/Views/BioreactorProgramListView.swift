@@ -8,6 +8,7 @@ struct BioreactorProgramListView: View {
 
     @State private var isShowingNewProgram = false
     @State private var newProgramName = ""
+    @State private var programPendingDeletion: BioreactorProgram?
 
     var body: some View {
         Group {
@@ -31,6 +32,13 @@ struct BioreactorProgramListView: View {
                             }
                         }
                     }
+                    .swipeActions(edge: .trailing) {
+                        Button(role: .destructive) {
+                            programPendingDeletion = program
+                        } label: {
+                            Label("Supprimer", systemImage: "trash")
+                        }
+                    }
                 }
                 .listStyle(.plain)
             }
@@ -52,6 +60,19 @@ struct BioreactorProgramListView: View {
                 newProgramName = ""
             }
             Button("Annuler", role: .cancel) { newProgramName = "" }
+        }
+        .confirmationDialog(
+            "Supprimer \(programPendingDeletion?.name ?? "ce programme") ?",
+            isPresented: Binding(get: { programPendingDeletion != nil }, set: { if !$0 { programPendingDeletion = nil } }),
+            titleVisibility: .visible
+        ) {
+            Button("Supprimer", role: .destructive) {
+                if let programPendingDeletion { DeletionService.delete(programPendingDeletion, in: modelContext) }
+                programPendingDeletion = nil
+            }
+            Button("Annuler", role: .cancel) { programPendingDeletion = nil }
+        } message: {
+            Text("Toutes les versions de ce programme seront supprimées. Les cycles déjà exécutés sont conservés mais perdront la référence à la version utilisée. Cette action est irréversible.")
         }
     }
 }

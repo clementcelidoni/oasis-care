@@ -14,10 +14,25 @@ struct MediumRecipeVersionFormView: View {
     @State private var targetPHText = "5.8"
     @State private var notes = ""
     @State private var components: [MediumComponentAmount] = []
+    @State private var parentVersion: MediumRecipeVersion?
+    @State private var changeReason = ""
 
     var body: some View {
         NavigationStack {
             Form {
+                if !recipe.versions.isEmpty {
+                    Section("Généalogie") {
+                        Picker("Basée sur", selection: $parentVersion) {
+                            Text("Aucune (nouveau départ)").tag(MediumRecipeVersion?.none)
+                            ForEach(recipe.versions.sorted { $0.versionNumber > $1.versionNumber }) { version in
+                                Text("Version \(version.versionNumber)").tag(Optional(version))
+                            }
+                        }
+                        TextField("Pourquoi cette nouvelle version ? (optionnel)", text: $changeReason, axis: .vertical)
+                            .lineLimit(2...4)
+                    }
+                }
+
                 Section("pH") {
                     HStack {
                         Text("pH cible")
@@ -55,13 +70,19 @@ struct MediumRecipeVersionFormView: View {
                         .disabled(Double(targetPHText.replacingOccurrences(of: ",", with: ".")) == nil)
                 }
             }
+            .onAppear {
+                if parentVersion == nil { parentVersion = recipe.latestVersion }
+            }
         }
     }
 
     private func createVersion() {
         let targetPH = Double(targetPHText.replacingOccurrences(of: ",", with: ".")) ?? 5.8
         let validComponents = components.filter { !$0.name.trimmingCharacters(in: .whitespaces).isEmpty }
-        _ = MediumRecipeService.createNewVersion(for: recipe, targetPH: targetPH, components: validComponents, notes: notes, context: modelContext)
+        _ = MediumRecipeService.createNewVersion(
+            for: recipe, targetPH: targetPH, components: validComponents, notes: notes,
+            parentVersion: parentVersion, changeReason: changeReason, context: modelContext
+        )
         dismiss()
     }
 }

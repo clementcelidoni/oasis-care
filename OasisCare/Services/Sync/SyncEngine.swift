@@ -491,12 +491,19 @@ final class SyncEngine: ObservableObject {
             )
             version.id = row.id
             version.measuredPH = row.measuredPH
+            version.changeReason = row.changeReason
             version.createdAt = row.createdAt
             version.syncStatus = .synced
             version.updatedAt = row.updatedAt
             context.insert(version)
             recipe.versions.append(version)
             versionsByID[row.id] = version
+        }
+        // Same two-pass shape as CultureBatch.parentBatch — a parent
+        // version may not exist locally yet on the first pass.
+        for row in remoteVersions {
+            guard let parentId = row.parentVersionId else { continue }
+            versionsByID[row.id]?.parentVersion = versionsByID[parentId]
         }
         // Deferred until here: CultureBatch's own restore ran before
         // recipe versions existed to link to.
@@ -1683,6 +1690,8 @@ final class SyncEngine: ObservableObject {
         var targetPH: Double
         var measuredPH: Double?
         var components: [MediumComponentAmount]
+        var changeReason: String
+        var parentVersionId: UUID?
         var notes: String
         var createdAt: Date
         var updatedAt: Date?
@@ -1694,6 +1703,8 @@ final class SyncEngine: ObservableObject {
             case targetPH = "target_ph"
             case measuredPH = "measured_ph"
             case components
+            case changeReason = "change_reason"
+            case parentVersionId = "parent_version_id"
             case notes
             case createdAt = "created_at"
             case updatedAt = "updated_at"
@@ -3833,6 +3844,8 @@ final class SyncEngine: ObservableObject {
         var targetPH: Double
         var measuredPH: Double?
         var components: [MediumComponentAmount]
+        var changeReason: String
+        var parentVersionId: UUID?
         var notes: String
         var createdAt: Date
         var updatedAt: Date
@@ -3845,6 +3858,8 @@ final class SyncEngine: ObservableObject {
             case targetPH = "target_ph"
             case measuredPH = "measured_ph"
             case components
+            case changeReason = "change_reason"
+            case parentVersionId = "parent_version_id"
             case notes
             case createdAt = "created_at"
             case updatedAt = "updated_at"
@@ -3854,19 +3869,30 @@ final class SyncEngine: ObservableObject {
     /// Versions are never edited after creation (see the model's own
     /// doc comment), so "pending" here only ever means "brand new,
     /// never pushed" — never a retroactive change to one already synced.
+    /// `parentVersion` can be another version pushed in this exact same
+    /// batch (e.g. creating V2 then immediately V3 from it offline) —
+    /// same conditional-omission/self-healing shape as
+    /// Plant.originBatchId: only sent once the parent is confirmed
+    /// `.synced`, otherwise this version stays `.pendingUpdate` so a
+    /// later sync call retries it.
     private func pushMediumRecipeVersions(workspaceID: UUID, context: ModelContext) async throws {
         let pending = try context.fetch(FetchDescriptor<MediumRecipeVersion>()).filter { $0.syncStatus != .synced }
         guard !pending.isEmpty else { return }
         let dtos = pending.compactMap { version -> MediumRecipeVersionDTO? in
             guard let recipeId = version.recipe?.id else { return nil }
+            let parentResolved = version.parentVersion == nil || version.parentVersion?.syncStatus == .synced
             return MediumRecipeVersionDTO(
                 id: version.id, workspaceId: workspaceID, recipeId: recipeId, versionNumber: version.versionNumber,
                 targetPH: version.targetPH, measuredPH: version.measuredPH, components: version.components,
+                changeReason: version.changeReason, parentVersionId: parentResolved ? version.parentVersion?.id : nil,
                 notes: version.notes, createdAt: version.createdAt, updatedAt: version.updatedAt ?? .now
             )
         }
         try await AuthService.client.from("medium_recipe_versions").upsert(dtos).execute()
-        for version in pending { version.syncStatus = .synced }
+        for version in pending {
+            let parentResolved = version.parentVersion == nil || version.parentVersion?.syncStatus == .synced
+            version.syncStatus = parentResolved ? .synced : .pendingUpdate
+        }
     }
 
     private struct MediumBatchDTO: Encodable {

@@ -13,6 +13,8 @@ struct CultureBatchDetailView: View {
     @State private var isShowingAcclimatizationForm = false
     @State private var isShowingQR = false
     @State private var isShowingNFC = false
+    @State private var acclimatizationPendingDeletion: AcclimatizationBatch?
+    @State private var inspectionPendingDeletion: BioreactorInspection?
 
     private var lineageRoot: CultureLineageService.LineageNode {
         CultureLineageService.tree(for: batch)
@@ -108,6 +110,13 @@ struct CultureBatchDetailView: View {
                             }
                         }
                         .buttonStyle(.plain)
+                        .swipeActions(edge: .trailing) {
+                            Button(role: .destructive) {
+                                inspectionPendingDeletion = inspection
+                            } label: {
+                                Label("Supprimer", systemImage: "trash")
+                            }
+                        }
                     }
                 }
                 Button("Ajouter une inspection") { inspectionSheet = .add }
@@ -130,6 +139,13 @@ struct CultureBatchDetailView: View {
                                 Text(accBatch.status.label)
                                     .font(.caption)
                                     .foregroundStyle(.secondary)
+                            }
+                        }
+                        .swipeActions(edge: .trailing) {
+                            Button(role: .destructive) {
+                                acclimatizationPendingDeletion = accBatch
+                            } label: {
+                                Label("Supprimer", systemImage: "trash")
                             }
                         }
                     }
@@ -186,6 +202,32 @@ struct CultureBatchDetailView: View {
                 try? modelContext.save()
             }
             Button("Annuler", role: .cancel) {}
+        }
+        .confirmationDialog(
+            "Supprimer cette acclimatation ?",
+            isPresented: Binding(get: { acclimatizationPendingDeletion != nil }, set: { if !$0 { acclimatizationPendingDeletion = nil } }),
+            titleVisibility: .visible
+        ) {
+            Button("Supprimer", role: .destructive) {
+                if let acclimatizationPendingDeletion { DeletionService.delete(acclimatizationPendingDeletion, in: modelContext) }
+                acclimatizationPendingDeletion = nil
+            }
+            Button("Annuler", role: .cancel) { acclimatizationPendingDeletion = nil }
+        } message: {
+            Text("Cette action est irréversible.")
+        }
+        .confirmationDialog(
+            "Supprimer cette inspection ?",
+            isPresented: Binding(get: { inspectionPendingDeletion != nil }, set: { if !$0 { inspectionPendingDeletion = nil } }),
+            titleVisibility: .visible
+        ) {
+            Button("Supprimer", role: .destructive) {
+                if let inspectionPendingDeletion { DeletionService.delete(inspectionPendingDeletion, in: modelContext) }
+                inspectionPendingDeletion = nil
+            }
+            Button("Annuler", role: .cancel) { inspectionPendingDeletion = nil }
+        } message: {
+            Text("Les photos associées à cette inspection seront aussi supprimées. Cette action est irréversible.")
         }
     }
 
