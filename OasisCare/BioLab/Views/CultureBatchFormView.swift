@@ -12,14 +12,23 @@ struct CultureBatchFormView: View {
     @Environment(\.dismiss) private var dismiss
 
     @Query(filter: #Predicate<Plant> { !$0.isArchived }, sort: \Plant.customName) private var plants: [Plant]
+    @Query private var allRecipeVersions: [MediumRecipeVersion]
+    @Query private var allExperiments: [BioLabExperiment]
 
     @State private var speciesName = ""
+    @State private var cultivar = ""
+    @State private var explantType = ""
+    @State private var cultureSystem: CultureSystem?
     @State private var batchCode = ""
     @State private var motherPlant: Plant?
     @State private var initialCountText = "1"
     @State private var cultureStage: CultureStage = .initiation
     @State private var notes = ""
     @State private var matchedSpeciesProfile: SpeciesProfile?
+
+    @State private var showingRecommendationSheet = false
+    @State private var selectedRecommendation: MediaRecommendation?
+    @State private var selectedRecommendationPH = ""
 
     var body: some View {
         NavigationStack {
@@ -35,6 +44,14 @@ struct CultureBatchFormView: View {
                         Label("Profil trouvé : \(payload.commonName ?? matchedSpeciesProfile.scientificName)", systemImage: "checkmark.circle.fill")
                             .foregroundStyle(.green)
                             .font(.caption)
+                    }
+                    TextField("Cultivar (optionnel)", text: $cultivar)
+                    TextField("Type d'explant (optionnel)", text: $explantType)
+                    Picker("Système de culture (optionnel)", selection: $cultureSystem) {
+                        Text("Non précisé").tag(CultureSystem?.none)
+                        ForEach(CultureSystem.allCases) { system in
+                            Text(system.label).tag(Optional(system))
+                        }
                     }
                     Picker("Plante mère (optionnel)", selection: $motherPlant) {
                         Text("Aucune").tag(Plant?.none)
@@ -63,6 +80,31 @@ struct CultureBatchFormView: View {
                     Text("Le code est généré automatiquement à partir de l'espèce — modifiable librement.")
                 }
 
+                Section("Milieu de culture") {
+                    if let selectedRecommendation {
+                        LabeledContent("Milieu proposé", value: selectedRecommendation.basalMediumName)
+                        HStack {
+                            Text("pH cible")
+                            Spacer()
+                            TextField("", text: $selectedRecommendationPH)
+                                .keyboardType(.decimalPad)
+                                .multilineTextAlignment(.trailing)
+                                .frame(width: 60)
+                        }
+                        Button("Retirer cette proposition", role: .destructive) { self.selectedRecommendation = nil }
+                    } else {
+                        Button {
+                            showingRecommendationSheet = true
+                        } label: {
+                            Label("Proposer un milieu avec Oasis AI", systemImage: "sparkles")
+                        }
+                        .disabled(speciesName.trimmingCharacters(in: .whitespaces).isEmpty)
+                        Text("Une recette sera créée à partir de la proposition retenue, ou choisissez-en une existante après création du lot.")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                    }
+                }
+
                 Section("Notes") {
                     TextField("Notes (optionnel)", text: $notes, axis: .vertical)
                         .lineLimit(2...5)
@@ -79,7 +121,21 @@ struct CultureBatchFormView: View {
                         .disabled(speciesName.trimmingCharacters(in: .whitespaces).isEmpty || batchCode.trimmingCharacters(in: .whitespaces).isEmpty)
                 }
             }
+            .sheet(isPresented: $showingRecommendationSheet) {
+                MediaRecommendationSheet(request: buildRecommendationRequest()) { recommendation in
+                    selectedRecommendation = recommendation
+                    selectedRecommendationPH = recommendation.targetPH.map { String(format: "%.2f", $0) } ?? ""
+                }
+            }
         }
+    }
+
+    private func buildRecommendationRequest() -> MediaRecommendationRequest {
+        SmartMediaService.buildRequest(
+            speciesName: speciesName, cultivar: cultivar.isEmpty ? nil : cultivar, explantType: explantType.isEmpty ? nil : explantType,
+            cultureStage: cultureStage, cultureSystem: cultureSystem, priorVersions: allRecipeVersions,
+            priorExperiments: allExperiments, priorBatches: existingBatches
+        )
     }
 
     private var suggestedCode: String {
@@ -110,7 +166,26 @@ struct CultureBatchFormView: View {
             speciesProfile: matchedSpeciesProfile,
             notes: notes
         )
+        batch.cultivar = cultivar.isEmpty ? nil : cultivar
+        batch.explantType = explantType.isEmpty ? nil : explantType
+        batch.cultureSystem = cultureSystem
         modelContext.insert(batch)
+
+        // §9 "Utiliser cette recette" — only materializes into a real
+        // recipe when a real, user-confirmed pH is present; a
+        // recommendation with a blank/invalid pH field is silently not
+        // applied rather than saved with an invented value.
+        if let selectedRecommendation, let targetPH = Double(selectedRecommendationPH) {
+            let recipe = MediumRecipe(name: "\(speciesName) — \(selectedRecommendation.basalMediumName)", speciesName: speciesName)
+            modelContext.insert(recipe)
+            let version = MediumRecipeVersion(
+                recipe: recipe, versionNumber: 1, targetPH: targetPH,
+                components: selectedRecommendation.ingredients.map { $0.toMediumComponentAmount() }
+            )
+            modelContext.insert(version)
+            batch.mediumRecipeVersion = version
+        }
+
         try? modelContext.save()
         dismiss()
     }
