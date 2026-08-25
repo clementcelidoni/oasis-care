@@ -26,6 +26,20 @@ enum DeletionService {
         case gardenArea = "garden_areas"
         case irrigationPipe = "irrigation_pipes"
         case labInventoryItem = "lab_inventory_items"
+        case bioreactor = "bioreactors"
+        case cultureBatch = "culture_batches"
+        case mediumRecipe = "medium_recipes"
+        case mediumRecipeVersion = "medium_recipe_versions"
+        case mediumBatch = "medium_batches"
+        case bioreactorProgram = "bioreactor_programs"
+        case bioreactorProgramVersion = "bioreactor_program_versions"
+        case bioreactorInspection = "bioreactor_inspections"
+        case bioLabExperiment = "bio_lab_experiments"
+        case experimentGroup = "experiment_groups"
+        case acclimatizationBatch = "acclimatization_batches"
+        case labCompound = "lab_compounds"
+        case stockSolution = "stock_solutions"
+        case inventoryLot = "inventory_lots"
     }
 
     static func delete(_ garden: Garden, in context: ModelContext) {
@@ -119,6 +133,83 @@ enum DeletionService {
     static func delete(_ item: LabInventoryItem, in context: ModelContext) {
         recordPendingDeletion(id: item.id, type: .labInventoryItem, in: context)
         context.delete(item)
+    }
+
+    /// Phase 7 enhancement §Q — permanent deletion everywhere in BioLab,
+    /// same mechanism as the rest of the app (no archive/trash: see the
+    /// Phase 7 enhancement report for why). Whether a delete option
+    /// should even be offered for a given record (e.g. a recipe version
+    /// already used by a real batch) is a UI-level judgment call made by
+    /// the calling view, not a rule enforced here — this service only
+    /// performs the deletion once the caller has decided to.
+    static func delete(_ bioreactor: Bioreactor, in context: ModelContext) {
+        recordPendingDeletion(id: bioreactor.id, type: .bioreactor, in: context)
+        context.delete(bioreactor)
+    }
+
+    static func delete(_ batch: CultureBatch, in context: ModelContext) {
+        recordPendingDeletion(id: batch.id, type: .cultureBatch, in: context)
+        context.delete(batch)
+    }
+
+    static func delete(_ recipe: MediumRecipe, in context: ModelContext) {
+        recordPendingDeletion(id: recipe.id, type: .mediumRecipe, in: context)
+        context.delete(recipe)
+    }
+
+    static func delete(_ version: MediumRecipeVersion, in context: ModelContext) {
+        recordPendingDeletion(id: version.id, type: .mediumRecipeVersion, in: context)
+        context.delete(version)
+    }
+
+    static func delete(_ batch: MediumBatch, in context: ModelContext) {
+        recordPendingDeletion(id: batch.id, type: .mediumBatch, in: context)
+        context.delete(batch)
+    }
+
+    static func delete(_ program: BioreactorProgram, in context: ModelContext) {
+        recordPendingDeletion(id: program.id, type: .bioreactorProgram, in: context)
+        context.delete(program)
+    }
+
+    static func delete(_ version: BioreactorProgramVersion, in context: ModelContext) {
+        recordPendingDeletion(id: version.id, type: .bioreactorProgramVersion, in: context)
+        context.delete(version)
+    }
+
+    static func delete(_ inspection: BioreactorInspection, in context: ModelContext) {
+        recordPendingDeletion(id: inspection.id, type: .bioreactorInspection, in: context)
+        context.delete(inspection)
+    }
+
+    static func delete(_ experiment: BioLabExperiment, in context: ModelContext) {
+        recordPendingDeletion(id: experiment.id, type: .bioLabExperiment, in: context)
+        context.delete(experiment)
+    }
+
+    static func delete(_ group: ExperimentGroup, in context: ModelContext) {
+        recordPendingDeletion(id: group.id, type: .experimentGroup, in: context)
+        context.delete(group)
+    }
+
+    static func delete(_ batch: AcclimatizationBatch, in context: ModelContext) {
+        recordPendingDeletion(id: batch.id, type: .acclimatizationBatch, in: context)
+        context.delete(batch)
+    }
+
+    static func delete(_ compound: LabCompound, in context: ModelContext) {
+        recordPendingDeletion(id: compound.id, type: .labCompound, in: context)
+        context.delete(compound)
+    }
+
+    static func delete(_ solution: StockSolution, in context: ModelContext) {
+        recordPendingDeletion(id: solution.id, type: .stockSolution, in: context)
+        context.delete(solution)
+    }
+
+    static func delete(_ lot: InventoryLot, in context: ModelContext) {
+        recordPendingDeletion(id: lot.id, type: .inventoryLot, in: context)
+        context.delete(lot)
     }
 
     private static func recordPendingDeletion(id: UUID, type: EntityType, in context: ModelContext) {

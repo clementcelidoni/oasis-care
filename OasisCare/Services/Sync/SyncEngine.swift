@@ -59,6 +59,12 @@ final class SyncEngine: ObservableObject {
             // medium_recipe_version_id is a real foreign key — pushing
             // it first means that key always already exists remotely
             // by the time a batch referencing it is upserted.
+            // Enhancement — Smart Media foundation. No dependency on
+            // anything upstream; LabCompound pushes first since
+            // StockSolution/InventoryLot reference it.
+            try await pushLabCompounds(workspaceID: workspaceID, context: context)
+            try await pushStockSolutions(workspaceID: workspaceID, context: context)
+            try await pushInventoryLots(workspaceID: workspaceID, context: context)
             try await pushMediumRecipes(workspaceID: workspaceID, context: context)
             try await pushMediumRecipeVersions(workspaceID: workspaceID, context: context)
             // Programs/versions moved up here (Phase 7K) so
@@ -174,6 +180,9 @@ final class SyncEngine: ObservableObject {
         let experimentGroups = (try? context.fetch(FetchDescriptor<ExperimentGroup>()))?.filter { $0.syncStatus != .synced }.count ?? 0
         let acclimatizationBatches = (try? context.fetch(FetchDescriptor<AcclimatizationBatch>()))?.filter { $0.syncStatus != .synced }.count ?? 0
         let labInventoryItems = (try? context.fetch(FetchDescriptor<LabInventoryItem>()))?.filter { $0.syncStatus != .synced }.count ?? 0
+        let labCompounds = (try? context.fetch(FetchDescriptor<LabCompound>()))?.filter { $0.syncStatus != .synced }.count ?? 0
+        let stockSolutions = (try? context.fetch(FetchDescriptor<StockSolution>()))?.filter { $0.syncStatus != .synced }.count ?? 0
+        let inventoryLots = (try? context.fetch(FetchDescriptor<InventoryLot>()))?.filter { $0.syncStatus != .synced }.count ?? 0
         return gardens + zones + plants + schedules + events + photos + analyses + preferences + irrigationZones
             + irrigationEvents + smartTags + connectedDevices + sensors + sensorReadings + commandLogs
             + automationRules + automationExecutions + greenhouses + ponds + measurements + inspections + checkups
@@ -182,7 +191,7 @@ final class SyncEngine: ObservableObject {
             + mediumRecipes + mediumVersions + mediumBatches + bioreactors + maintenanceEvents
             + bioreactorPrograms + bioreactorProgramVersions + cycleExecutions + biolabAlerts + deviceBindings
             + bioreactorInspections + inspectionPhotos + bioLabExperiments + experimentGroups
-            + acclimatizationBatches + labInventoryItems
+            + acclimatizationBatches + labInventoryItems + labCompounds + stockSolutions + inventoryLots
     }
 
     private static let photoBucket = "plant-photos"
@@ -349,6 +358,9 @@ final class SyncEngine: ObservableObject {
             batch.expectedEndAt = row.expectedEndAt
             batch.currentCount = row.currentCount
             batch.notes = row.notes
+            batch.cultivar = row.cultivar
+            batch.explantType = row.explantType
+            batch.cultureSystem = row.cultureSystem
             batch.createdAt = row.createdAt
             batch.syncStatus = .synced
             batch.updatedAt = row.updatedAt
@@ -402,6 +414,60 @@ final class SyncEngine: ObservableObject {
             context.insert(item)
         }
 
+        // Enhancement — Smart Media foundation. No dependency on
+        // anything else, so restored before the recipe chain that will
+        // reference these compounds via a plain UUID stored inside
+        // MediumComponentAmount (not a live relationship, so no
+        // resolution needed there) and via the two real relationships
+        // below (StockSolution/InventoryLot.compound).
+        let remoteLabCompounds: [LabCompoundRow] = try await AuthService.client.from("lab_compounds").select().execute().value
+        var labCompoundsByID: [UUID: LabCompound] = [:]
+        for row in remoteLabCompounds {
+            let compound = LabCompound(
+                name: row.name, shortName: row.shortName, category: row.category, molecularWeight: row.molecularWeight,
+                defaultUnit: row.defaultUnit, supplier: row.supplier, catalogNumber: row.catalogNumber, notes: row.notes
+            )
+            compound.id = row.id
+            compound.isHidden = row.isHidden
+            compound.createdAt = row.createdAt
+            compound.syncStatus = .synced
+            compound.updatedAt = row.updatedAt
+            context.insert(compound)
+            labCompoundsByID[row.id] = compound
+        }
+
+        let remoteStockSolutions: [StockSolutionRow] = try await AuthService.client.from("stock_solutions").select().execute().value
+        for row in remoteStockSolutions {
+            let solution = StockSolution(
+                compound: row.compoundId.flatMap { labCompoundsByID[$0] }, name: row.name, concentration: row.concentration,
+                concentrationUnit: row.concentrationUnit, preparedVolumeLiters: row.preparedVolumeLiters,
+                storageLocation: row.storageLocation, expiresAt: row.expiresAt, lotNumber: row.lotNumber, notes: row.notes
+            )
+            solution.id = row.id
+            solution.remainingVolumeLiters = row.remainingVolumeLiters
+            solution.preparedAt = row.preparedAt
+            solution.createdAt = row.createdAt
+            solution.syncStatus = .synced
+            solution.updatedAt = row.updatedAt
+            context.insert(solution)
+        }
+
+        let remoteInventoryLots: [InventoryLotRow] = try await AuthService.client.from("inventory_lots").select().execute().value
+        for row in remoteInventoryLots {
+            let lot = InventoryLot(
+                compound: row.compoundId.flatMap { labCompoundsByID[$0] }, lotNumber: row.lotNumber,
+                quantityReceived: row.quantityReceived, unit: row.unit, supplier: row.supplier,
+                expiresAt: row.expiresAt, costTotal: row.costTotal, notes: row.notes
+            )
+            lot.id = row.id
+            lot.quantityRemaining = row.quantityRemaining
+            lot.receivedAt = row.receivedAt
+            lot.createdAt = row.createdAt
+            lot.syncStatus = .synced
+            lot.updatedAt = row.updatedAt
+            context.insert(lot)
+        }
+
         // Phase 7C.
         let remoteRecipes: [MediumRecipeRow] = try await AuthService.client.from("medium_recipes").select().execute().value
         var recipesByID: [UUID: MediumRecipe] = [:]
@@ -447,6 +513,10 @@ final class SyncEngine: ObservableObject {
             )
             mediumBatch.id = row.id
             mediumBatch.preparedAt = row.preparedAt
+            mediumBatch.targetVolumeLiters = row.targetVolumeLiters
+            mediumBatch.preparedBy = row.preparedBy
+            mediumBatch.measuredPH = row.measuredPH
+            mediumBatch.compoundLots = row.compoundLots
             mediumBatch.createdAt = row.createdAt
             mediumBatch.syncStatus = .synced
             mediumBatch.updatedAt = row.updatedAt
@@ -1507,6 +1577,9 @@ final class SyncEngine: ObservableObject {
         var id: UUID
         var batchCode: String
         var speciesName: String
+        var cultivar: String?
+        var explantType: String?
+        var cultureSystem: CultureSystem?
         var cultureStage: CultureStage
         var status: CultureBatchStatus
         var startedAt: Date
@@ -1525,6 +1598,9 @@ final class SyncEngine: ObservableObject {
             case id
             case batchCode = "batch_code"
             case speciesName = "species_name"
+            case cultivar
+            case explantType = "explant_type"
+            case cultureSystem = "culture_system"
             case cultureStage = "culture_stage"
             case status
             case startedAt = "started_at"
@@ -1629,7 +1705,11 @@ final class SyncEngine: ObservableObject {
         var code: String
         var recipeVersionId: UUID?
         var volumeLiters: Double
+        var targetVolumeLiters: Double?
         var preparedAt: Date
+        var preparedBy: String?
+        var measuredPH: Double?
+        var compoundLots: [MediumBatchIngredient]
         var notes: String
         var createdAt: Date
         var updatedAt: Date?
@@ -1639,7 +1719,11 @@ final class SyncEngine: ObservableObject {
             case code
             case recipeVersionId = "recipe_version_id"
             case volumeLiters = "volume_liters"
+            case targetVolumeLiters = "target_volume_liters"
             case preparedAt = "prepared_at"
+            case preparedBy = "prepared_by"
+            case measuredPH = "measured_ph"
+            case compoundLots = "compound_lots"
             case notes
             case createdAt = "created_at"
             case updatedAt = "updated_at"
@@ -1699,6 +1783,100 @@ final class SyncEngine: ObservableObject {
             case unit, supplier
             case lotNumber = "lot_number"
             case expiryDate = "expiry_date"
+            case notes
+            case createdAt = "created_at"
+            case updatedAt = "updated_at"
+        }
+    }
+
+    private struct LabCompoundRow: Decodable {
+        var id: UUID
+        var name: String
+        var shortName: String
+        var category: LabCompoundCategory
+        var molecularWeight: Double?
+        var defaultUnit: ConcentrationUnit
+        var supplier: String?
+        var catalogNumber: String?
+        var notes: String
+        var isHidden: Bool
+        var createdAt: Date
+        var updatedAt: Date?
+
+        enum CodingKeys: String, CodingKey {
+            case id, name
+            case shortName = "short_name"
+            case category
+            case molecularWeight = "molecular_weight"
+            case defaultUnit = "default_unit"
+            case supplier
+            case catalogNumber = "catalog_number"
+            case notes
+            case isHidden = "is_hidden"
+            case createdAt = "created_at"
+            case updatedAt = "updated_at"
+        }
+    }
+
+    private struct StockSolutionRow: Decodable {
+        var id: UUID
+        var compoundId: UUID?
+        var name: String
+        var concentration: Double
+        var concentrationUnit: ConcentrationUnit
+        var preparedVolumeLiters: Double
+        var remainingVolumeLiters: Double
+        var preparedAt: Date
+        var expiresAt: Date?
+        var storageLocation: String
+        var lotNumber: String?
+        var notes: String
+        var createdAt: Date
+        var updatedAt: Date?
+
+        enum CodingKeys: String, CodingKey {
+            case id
+            case compoundId = "compound_id"
+            case name, concentration
+            case concentrationUnit = "concentration_unit"
+            case preparedVolumeLiters = "prepared_volume_liters"
+            case remainingVolumeLiters = "remaining_volume_liters"
+            case preparedAt = "prepared_at"
+            case expiresAt = "expires_at"
+            case storageLocation = "storage_location"
+            case lotNumber = "lot_number"
+            case notes
+            case createdAt = "created_at"
+            case updatedAt = "updated_at"
+        }
+    }
+
+    private struct InventoryLotRow: Decodable {
+        var id: UUID
+        var compoundId: UUID?
+        var lotNumber: String
+        var quantityReceived: Double
+        var quantityRemaining: Double
+        var unit: AmountUnit
+        var receivedAt: Date
+        var expiresAt: Date?
+        var supplier: String?
+        var costTotal: Double?
+        var notes: String
+        var createdAt: Date
+        var updatedAt: Date?
+
+        enum CodingKeys: String, CodingKey {
+            case id
+            case compoundId = "compound_id"
+            case lotNumber = "lot_number"
+            case quantityReceived = "quantity_received"
+            case quantityRemaining = "quantity_remaining"
+            case unit
+            case receivedAt = "received_at"
+            case expiresAt = "expires_at"
+            case supplier
+            case costTotal = "cost_total"
             case notes
             case createdAt = "created_at"
             case updatedAt = "updated_at"
@@ -3474,6 +3652,9 @@ final class SyncEngine: ObservableObject {
         var workspaceId: UUID
         var batchCode: String
         var speciesName: String
+        var cultivar: String?
+        var explantType: String?
+        var cultureSystem: CultureSystem?
         var cultureStage: CultureStage
         var status: CultureBatchStatus
         var startedAt: Date
@@ -3493,6 +3674,9 @@ final class SyncEngine: ObservableObject {
             case workspaceId = "workspace_id"
             case batchCode = "batch_code"
             case speciesName = "species_name"
+            case cultivar
+            case explantType = "explant_type"
+            case cultureSystem = "culture_system"
             case cultureStage = "culture_stage"
             case status
             case startedAt = "started_at"
@@ -3515,6 +3699,7 @@ final class SyncEngine: ObservableObject {
         let dtos = pending.map { batch in
             CultureBatchDTO(
                 id: batch.id, workspaceId: workspaceID, batchCode: batch.batchCode, speciesName: batch.speciesName,
+                cultivar: batch.cultivar, explantType: batch.explantType, cultureSystem: batch.cultureSystem,
                 cultureStage: batch.cultureStage, status: batch.status, startedAt: batch.startedAt,
                 expectedEndAt: batch.expectedEndAt, initialExplantCount: batch.initialExplantCount,
                 currentCount: batch.currentCount, notes: batch.notes, createdAt: batch.createdAt,
@@ -3690,7 +3875,11 @@ final class SyncEngine: ObservableObject {
         var code: String
         var recipeVersionId: UUID?
         var volumeLiters: Double
+        var targetVolumeLiters: Double?
         var preparedAt: Date
+        var preparedBy: String?
+        var measuredPH: Double?
+        var compoundLots: [MediumBatchIngredient]
         var notes: String
         var createdAt: Date
         var updatedAt: Date
@@ -3701,7 +3890,11 @@ final class SyncEngine: ObservableObject {
             case code
             case recipeVersionId = "recipe_version_id"
             case volumeLiters = "volume_liters"
+            case targetVolumeLiters = "target_volume_liters"
             case preparedAt = "prepared_at"
+            case preparedBy = "prepared_by"
+            case measuredPH = "measured_ph"
+            case compoundLots = "compound_lots"
             case notes
             case createdAt = "created_at"
             case updatedAt = "updated_at"
@@ -3714,7 +3907,8 @@ final class SyncEngine: ObservableObject {
         let dtos = pending.map { batch in
             MediumBatchDTO(
                 id: batch.id, workspaceId: workspaceID, code: batch.code, recipeVersionId: batch.recipeVersion?.id,
-                volumeLiters: batch.volumeLiters, preparedAt: batch.preparedAt, notes: batch.notes,
+                volumeLiters: batch.volumeLiters, targetVolumeLiters: batch.targetVolumeLiters, preparedAt: batch.preparedAt,
+                preparedBy: batch.preparedBy, measuredPH: batch.measuredPH, compoundLots: batch.compoundLots, notes: batch.notes,
                 createdAt: batch.createdAt, updatedAt: batch.updatedAt ?? .now
             )
         }
@@ -3818,6 +4012,157 @@ final class SyncEngine: ObservableObject {
         }
         try await AuthService.client.from("lab_inventory_items").upsert(dtos).execute()
         for item in pending { item.syncStatus = .synced }
+    }
+
+    private struct LabCompoundDTO: Encodable {
+        var id: UUID
+        var workspaceId: UUID
+        var name: String
+        var shortName: String
+        var category: LabCompoundCategory
+        var molecularWeight: Double?
+        var defaultUnit: ConcentrationUnit
+        var supplier: String?
+        var catalogNumber: String?
+        var notes: String
+        var isHidden: Bool
+        var createdAt: Date
+        var updatedAt: Date
+
+        enum CodingKeys: String, CodingKey {
+            case id
+            case workspaceId = "workspace_id"
+            case name
+            case shortName = "short_name"
+            case category
+            case molecularWeight = "molecular_weight"
+            case defaultUnit = "default_unit"
+            case supplier
+            case catalogNumber = "catalog_number"
+            case notes
+            case isHidden = "is_hidden"
+            case createdAt = "created_at"
+            case updatedAt = "updated_at"
+        }
+    }
+
+    /// No foreign keys — pushed first among the three new Smart Media
+    /// tables so StockSolution/InventoryLot's compoundId always already
+    /// exists remotely by the time they upsert.
+    private func pushLabCompounds(workspaceID: UUID, context: ModelContext) async throws {
+        let pending = try context.fetch(FetchDescriptor<LabCompound>()).filter { $0.syncStatus != .synced }
+        guard !pending.isEmpty else { return }
+        let dtos = pending.map { compound in
+            LabCompoundDTO(
+                id: compound.id, workspaceId: workspaceID, name: compound.name, shortName: compound.shortName,
+                category: compound.category, molecularWeight: compound.molecularWeight, defaultUnit: compound.defaultUnit,
+                supplier: compound.supplier, catalogNumber: compound.catalogNumber, notes: compound.notes,
+                isHidden: compound.isHidden, createdAt: compound.createdAt, updatedAt: compound.updatedAt ?? .now
+            )
+        }
+        try await AuthService.client.from("lab_compounds").upsert(dtos).execute()
+        for compound in pending { compound.syncStatus = .synced }
+    }
+
+    private struct StockSolutionDTO: Encodable {
+        var id: UUID
+        var workspaceId: UUID
+        var compoundId: UUID?
+        var name: String
+        var concentration: Double
+        var concentrationUnit: ConcentrationUnit
+        var preparedVolumeLiters: Double
+        var remainingVolumeLiters: Double
+        var preparedAt: Date
+        var expiresAt: Date?
+        var storageLocation: String
+        var lotNumber: String?
+        var notes: String
+        var createdAt: Date
+        var updatedAt: Date
+
+        enum CodingKeys: String, CodingKey {
+            case id
+            case workspaceId = "workspace_id"
+            case compoundId = "compound_id"
+            case name, concentration
+            case concentrationUnit = "concentration_unit"
+            case preparedVolumeLiters = "prepared_volume_liters"
+            case remainingVolumeLiters = "remaining_volume_liters"
+            case preparedAt = "prepared_at"
+            case expiresAt = "expires_at"
+            case storageLocation = "storage_location"
+            case lotNumber = "lot_number"
+            case notes
+            case createdAt = "created_at"
+            case updatedAt = "updated_at"
+        }
+    }
+
+    private func pushStockSolutions(workspaceID: UUID, context: ModelContext) async throws {
+        let pending = try context.fetch(FetchDescriptor<StockSolution>()).filter { $0.syncStatus != .synced }
+        guard !pending.isEmpty else { return }
+        let dtos = pending.map { solution in
+            StockSolutionDTO(
+                id: solution.id, workspaceId: workspaceID, compoundId: solution.compound?.id, name: solution.name,
+                concentration: solution.concentration, concentrationUnit: solution.concentrationUnit,
+                preparedVolumeLiters: solution.preparedVolumeLiters, remainingVolumeLiters: solution.remainingVolumeLiters,
+                preparedAt: solution.preparedAt, expiresAt: solution.expiresAt, storageLocation: solution.storageLocation,
+                lotNumber: solution.lotNumber, notes: solution.notes, createdAt: solution.createdAt,
+                updatedAt: solution.updatedAt ?? .now
+            )
+        }
+        try await AuthService.client.from("stock_solutions").upsert(dtos).execute()
+        for solution in pending { solution.syncStatus = .synced }
+    }
+
+    private struct InventoryLotDTO: Encodable {
+        var id: UUID
+        var workspaceId: UUID
+        var compoundId: UUID?
+        var lotNumber: String
+        var quantityReceived: Double
+        var quantityRemaining: Double
+        var unit: AmountUnit
+        var receivedAt: Date
+        var expiresAt: Date?
+        var supplier: String?
+        var costTotal: Double?
+        var notes: String
+        var createdAt: Date
+        var updatedAt: Date
+
+        enum CodingKeys: String, CodingKey {
+            case id
+            case workspaceId = "workspace_id"
+            case compoundId = "compound_id"
+            case lotNumber = "lot_number"
+            case quantityReceived = "quantity_received"
+            case quantityRemaining = "quantity_remaining"
+            case unit
+            case receivedAt = "received_at"
+            case expiresAt = "expires_at"
+            case supplier
+            case costTotal = "cost_total"
+            case notes
+            case createdAt = "created_at"
+            case updatedAt = "updated_at"
+        }
+    }
+
+    private func pushInventoryLots(workspaceID: UUID, context: ModelContext) async throws {
+        let pending = try context.fetch(FetchDescriptor<InventoryLot>()).filter { $0.syncStatus != .synced }
+        guard !pending.isEmpty else { return }
+        let dtos = pending.map { lot in
+            InventoryLotDTO(
+                id: lot.id, workspaceId: workspaceID, compoundId: lot.compound?.id, lotNumber: lot.lotNumber,
+                quantityReceived: lot.quantityReceived, quantityRemaining: lot.quantityRemaining, unit: lot.unit,
+                receivedAt: lot.receivedAt, expiresAt: lot.expiresAt, supplier: lot.supplier, costTotal: lot.costTotal,
+                notes: lot.notes, createdAt: lot.createdAt, updatedAt: lot.updatedAt ?? .now
+            )
+        }
+        try await AuthService.client.from("inventory_lots").upsert(dtos).execute()
+        for lot in pending { lot.syncStatus = .synced }
     }
 
     private struct BioreactorDTO: Encodable {
