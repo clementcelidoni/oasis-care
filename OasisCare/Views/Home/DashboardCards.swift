@@ -880,7 +880,9 @@ struct ConnectedHomeCard: View {
 
     var body: some View {
         NavigationLink {
-            MaisonConnecteeView()
+            FeatureGate(entitlement: .connectedGarden, featureName: "Maison connectée") {
+                MaisonConnecteeView()
+            }
         } label: {
             VStack(alignment: .leading, spacing: 8) {
                 Label("Maison connectée", systemImage: "house.and.flag.fill")

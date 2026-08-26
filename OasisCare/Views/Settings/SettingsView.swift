@@ -78,7 +78,9 @@ struct SettingsView: View {
                     DashboardCustomizationView()
                 }
                 NavigationLink("Maison connectée") {
-                    MaisonConnecteeView()
+                    FeatureGate(entitlement: .connectedGarden, featureName: "Maison connectée") {
+                        MaisonConnecteeView()
+                    }
                 }
                 NavigationLink("Modes intelligents") {
                     SmartModesView()

@@ -161,13 +161,13 @@ struct PlantListView: View {
                 Button("Annuler", role: .cancel) {}
             }
             .sheet(item: $addPlantSheet) { sheet in
-                switch sheet {
-                case .scanner:
-                    ScannerView(onSaved: { addPlantSheet = nil })
-                case .search:
-                    PlantNameSearchView(onSaved: { addPlantSheet = nil })
-                case .manual:
-                    PlantFormView(plant: nil)
+                let limits = PlanService.shared.configuration(for: EntitlementService.shared.snapshot.plan).usageLimits
+                if UsageLimitService.canAddPlant(currentCount: plants.count, limits: limits).isWithinLimit {
+                    addPlantSheetContent(sheet)
+                } else {
+                    FeatureGate(entitlement: .unlimitedPlants, featureName: "Plantes illimitées") {
+                        addPlantSheetContent(sheet)
+                    }
                 }
             }
             .sheet(isPresented: $isBulkAddEventPresented) {
@@ -237,6 +237,18 @@ struct PlantListView: View {
         } else {
             editMode = .inactive
             selectedPlantIDs.removeAll()
+        }
+    }
+
+    @ViewBuilder
+    private func addPlantSheetContent(_ sheet: AddPlantSheet) -> some View {
+        switch sheet {
+        case .scanner:
+            ScannerView(onSaved: { addPlantSheet = nil })
+        case .search:
+            PlantNameSearchView(onSaved: { addPlantSheet = nil })
+        case .manual:
+            PlantFormView(plant: nil)
         }
     }
 }

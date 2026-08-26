@@ -29,6 +29,8 @@ struct ScannerView: View {
     @State private var isScanningNFC = false
     @State private var nfcScanResult: SmartTagScanResult?
     @State private var nfcErrorMessage: String?
+    @State private var isQRNFCLockedSheetPresented = false
+    @ObservedObject private var entitlementService = EntitlementService.shared
     @Environment(\.modelContext) private var modelContext
 
     var body: some View {
@@ -92,6 +94,9 @@ struct ScannerView: View {
             .fullScreenCover(isPresented: $isQRScannerPresented) {
                 QRScannerSheet()
             }
+            .sheet(isPresented: $isQRNFCLockedSheetPresented) {
+                LockedFeatureView(featureName: "Scanner QR / NFC")
+            }
             .sheet(item: $nfcScanResult) { result in
                 if case .plant(let plant) = result {
                     QuickActionsAfterScanSheet(plant: plant)
@@ -106,7 +111,11 @@ struct ScannerView: View {
         VStack(spacing: 8) {
             HStack(spacing: 12) {
                 Button {
-                    isQRScannerPresented = true
+                    if entitlementService.has(.qrNfc) {
+                        isQRScannerPresented = true
+                    } else {
+                        isQRNFCLockedSheetPresented = true
+                    }
                 } label: {
                     Label("Scanner QR", systemImage: "qrcode.viewfinder")
                         .frame(maxWidth: .infinity)
@@ -115,7 +124,11 @@ struct ScannerView: View {
                 .accessibilityIdentifier("scanQRButton")
 
                 Button {
-                    Task { await scanNFC() }
+                    if entitlementService.has(.qrNfc) {
+                        Task { await scanNFC() }
+                    } else {
+                        isQRNFCLockedSheetPresented = true
+                    }
                 } label: {
                     if isScanningNFC {
                         ProgressView()

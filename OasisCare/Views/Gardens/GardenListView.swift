@@ -51,7 +51,14 @@ struct GardenListView: View {
                 GardenDetailView(garden: garden)
             }
             .sheet(isPresented: $isPresentingAddGarden) {
-                GardenFormView(garden: nil)
+                let limits = PlanService.shared.configuration(for: EntitlementService.shared.snapshot.plan).usageLimits
+                if UsageLimitService.canAddGarden(currentCount: gardens.count, limits: limits).isWithinLimit {
+                    GardenFormView(garden: nil)
+                } else {
+                    FeatureGate(entitlement: .multipleGardens, featureName: "Plusieurs jardins") {
+                        GardenFormView(garden: nil)
+                    }
+                }
             }
             .confirmationDialog(
                 "Supprimer \(gardenPendingDeletion?.name ?? "ce jardin") ?",

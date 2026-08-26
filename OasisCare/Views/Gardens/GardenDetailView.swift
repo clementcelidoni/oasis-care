@@ -157,9 +157,13 @@ struct GardenDetailView: View {
             case .editIrrigationZone(let zone):
                 IrrigationZoneFormView(garden: garden, zone: zone)
             case .addGreenhouse:
-                GreenhouseFormView(garden: garden, greenhouse: nil)
+                FeatureGate(entitlement: .greenhouseAdvanced, featureName: "Serre") {
+                    GreenhouseFormView(garden: garden, greenhouse: nil)
+                }
             case .addPond:
-                PondFormView(garden: garden, pond: nil)
+                FeatureGate(entitlement: .pondAdvanced, featureName: "Bassin") {
+                    PondFormView(garden: garden, pond: nil)
+                }
             case .addSensor:
                 SensorFormSheet(garden: garden)
             case .sensorDetail(let sensor):
@@ -207,7 +211,9 @@ struct GardenDetailView: View {
     private var mapContent: some View {
         switch mapMode {
         case .oasisPlan:
-            OasisPlanView(engine: mapEngine)
+            FeatureGate(entitlement: .digitalTwin, featureName: "Digital Twin") {
+                OasisPlanView(engine: mapEngine)
+            }
         case .standard, .satellite, .hybrid:
             GardenMapView(garden: garden, mode: mapMode)
         }

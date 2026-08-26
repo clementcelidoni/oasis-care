@@ -159,7 +159,9 @@ struct HomeView: View {
 
                             if preferences.showBioLab {
                                 NavigationLink {
-                                    BioLabDashboardView()
+                                    FeatureGate(entitlement: .biolab, featureName: "Oasis BioLab") {
+                                        BioLabDashboardView()
+                                    }
                                 } label: {
                                     BioLabEntryCard(summary: BioLabDashboardService.summary(batches: cultureBatches, bioreactors: bioreactors))
                                 }

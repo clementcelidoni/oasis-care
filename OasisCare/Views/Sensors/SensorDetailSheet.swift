@@ -48,7 +48,9 @@ struct SensorDetailSheet: View {
 
                 if sortedReadings.count > 1 {
                     Section("Historique") {
-                        SensorHistoryChartView(sensor: sensor)
+                        FeatureGate(entitlement: .sensorHistory, featureName: "Historique du capteur") {
+                            SensorHistoryChartView(sensor: sensor)
+                        }
                     }
                 }
 

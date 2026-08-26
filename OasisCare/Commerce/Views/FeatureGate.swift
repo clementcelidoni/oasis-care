@@ -15,26 +15,39 @@ struct FeatureGate<Content: View>: View {
         if entitlementService.has(entitlement) {
             content()
         } else {
-            LockedFeatureView(featureName: featureName)
+            LockedFeatureView(featureName: featureName, offer: Self.offer(for: entitlement))
         }
+    }
+
+    /// BioLab-only entitlements (biolab, bioreactors, smartMedia...)
+    /// aren't granted by Premium alone (PlanConfigurationStore) — sending
+    /// their locked screen to the plain Premium paywall would let a user
+    /// buy Premium and come back still locked out, with no clear next
+    /// step. Route to whichever real offer actually grants it.
+    private static func offer(for entitlement: Entitlement) -> PaywallOffer {
+        PlanService.shared.configuration(for: .premium).entitlements.contains(entitlement) ? .premium : .biolab
     }
 }
 
 struct LockedFeatureView: View {
     var featureName: String
+    var offer: PaywallOffer = .premium
     @State private var isShowingPaywall = false
 
     var body: some View {
         ContentUnavailableView {
             Label(featureName, systemImage: "lock.fill")
         } description: {
-            Text("Disponible avec Oasis Care Premium.")
+            Text(offer == .biolab ? "Disponible avec Oasis Care BioLab." : "Disponible avec Oasis Care Premium.")
         } actions: {
-            Button("Découvrir Premium") { isShowingPaywall = true }
+            Button(offer == .biolab ? "Découvrir BioLab" : "Découvrir Premium") { isShowingPaywall = true }
                 .buttonStyle(.borderedProminent)
         }
+        .onAppear {
+            PurchaseAnalyticsService.track(.featureLockedViewed, detail: featureName)
+        }
         .sheet(isPresented: $isShowingPaywall) {
-            PaywallView(offer: .premium)
+            PaywallView(offer: offer)
         }
     }
 }
