@@ -70,7 +70,9 @@ final class StoreKitService: ObservableObject {
                 // what App Store Connect actually has configured — the
                 // paywall would silently show fewer options, which is
                 // very hard to notice without this line.
-                OasisLog.storeKit.error("Loaded \(products.count, privacy: .public)/\(ProductIdentifiers.all.count, privacy: .public) products — check App Store Connect identifiers")
+                // `self.` is required: OSLog's interpolation is an
+                // escaping autoclosure, so an implicit capture is an error.
+                OasisLog.storeKit.error("Loaded \(self.products.count, privacy: .public)/\(ProductIdentifiers.all.count, privacy: .public) products — check App Store Connect identifiers")
             }
         } catch {
             // §"NE PAS inventer" extends to errors: never fabricate a
