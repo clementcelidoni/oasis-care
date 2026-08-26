@@ -187,3 +187,26 @@ begin
   end if;
 end;
 $$;
+
+-- Phase 12 §12N "ANALYTICS RESPECTUEUX DE LA VIE PRIVÉE" — "Ne jamais
+-- envoyer nom de plante personnel, notes, contenu photo ou données
+-- BioLab privées dans les événements génériques." `detail` is
+-- deliberately just a small, non-identifying string (a plan name, a
+-- product id) — never free text a user typed. No read policy at all:
+-- this table is write-only from the client's own perspective (insert
+-- your own event, never read anyone's, including your own — there's no
+-- in-app analytics dashboard to build here).
+create table public.analytics_events (
+  id uuid primary key default gen_random_uuid(),
+  user_id uuid references auth.users (id) on delete set null,
+  workspace_id uuid references public.workspaces (id) on delete set null,
+  event_name text not null,
+  detail text,
+  occurred_at timestamptz not null default now()
+);
+
+create index analytics_events_event_name_idx on public.analytics_events (event_name);
+
+alter table public.analytics_events enable row level security;
+create policy "Authenticated users can record their own analytics events" on public.analytics_events
+  for insert with check (auth.uid() is not null and (user_id is null or user_id = auth.uid()));

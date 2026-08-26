@@ -18,7 +18,7 @@ enum SubscriptionSyncService {
     }
 
     static func sync(_ verification: VerificationResult<Transaction>) async {
-        guard case .authenticated = AuthState.shared.status else { return }
+        guard case .authenticated = await AuthState.shared.status else { return }
         struct RequestBody: Encodable {
             var signedTransaction: String
         }

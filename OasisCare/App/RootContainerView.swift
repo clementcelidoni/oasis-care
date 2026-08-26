@@ -43,6 +43,7 @@ struct RootContainerView: View {
             guard case .authenticated = newStatus else { return }
             Task { await syncEngine.syncIfPossible(context: modelContext) }
             deepLinkRouter.retryPendingTokenIfNeeded(context: modelContext)
+            Task { await CommercialConfigService.refresh() }
         }
         .onChange(of: scenePhase) { _, newPhase in
             guard newPhase == .active else { return }

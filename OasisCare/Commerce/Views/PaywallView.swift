@@ -140,6 +140,7 @@ struct PaywallView: View {
                 }
             }
             .task {
+                PurchaseAnalyticsService.track(.paywallViewed, detail: offer == .biolab ? "biolab" : "premium")
                 if storeKit.products.isEmpty { await storeKit.loadProducts() }
                 if selectedProductID == nil { selectedProductID = yearlyProduct?.id ?? monthlyProduct?.id }
             }
@@ -183,15 +184,18 @@ struct PaywallView: View {
         errorMessage = nil
         isPurchasing = true
         defer { isPurchasing = false }
+        PurchaseAnalyticsService.track(.purchaseStarted, detail: selectedProductID)
         let result = await storeKit.purchase(product)
         switch result {
         case .success(.success):
+            PurchaseAnalyticsService.track(.purchaseCompleted, detail: selectedProductID)
             dismiss()
         case .success(.pending):
             errorMessage = "Achat en attente d'approbation (contrôle parental ou autre validation)."
         case .success(.cancelled):
             break
         case .failure(let error):
+            PurchaseAnalyticsService.track(.purchaseFailed, detail: selectedProductID)
             errorMessage = error.errorDescription
         }
     }
@@ -200,10 +204,12 @@ struct PaywallView: View {
         errorMessage = nil
         isRestoring = true
         defer { isRestoring = false }
+        PurchaseAnalyticsService.track(.restoreStarted)
         let result = await storeKit.restorePurchases()
         if case .failure(let error) = result {
             errorMessage = error.errorDescription
         } else {
+            PurchaseAnalyticsService.track(.restoreCompleted)
             dismiss()
         }
     }
