@@ -23,6 +23,14 @@ struct SubscriptionSettingsView: View {
                 if let expirationDate = snapshot.expirationDate {
                     LabeledContent("Renouvellement / expiration", value: expirationDate.formatted(date: .abbreviated, time: .omitted))
                 }
+            } footer: {
+                // Honesty: an access granted server-side has no Apple
+                // subscription behind it, so it must not be presented as
+                // one — there is nothing to renew, and nothing to manage
+                // in the Apple settings.
+                if snapshot.source == .server {
+                    Text("Accès offert, sans abonnement Apple. Rien ne vous est facturé et il n'y a rien à renouveler.")
+                }
             }
 
             Section("Fonctions incluses") {
@@ -35,7 +43,9 @@ struct SubscriptionSettingsView: View {
                 if snapshot.plan == .free {
                     Button("Découvrir Premium") { isShowingPaywall = .premium }
                     Button("Découvrir BioLab") { isShowingPaywall = .biolab }
-                } else {
+                } else if snapshot.source != .server {
+                    // Hidden for a granted access: Apple's sheet would
+                    // open on an empty subscription list and read as a bug.
                     Button("Gérer mon abonnement") { isShowingManageSubscriptions = true }
                 }
                 Button("Restaurer mes achats") {

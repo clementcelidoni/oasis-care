@@ -154,7 +154,7 @@ final class StoreKitService: ObservableObject {
         let plan = ProductIdentifiers.plan(for: ownedProductIDs)
         let status = await subscriptionStatus(for: ownedProductIDs, plan: plan)
 
-        let snapshot: EntitlementSnapshot
+        var snapshot: EntitlementSnapshot
         if plan == .free {
             snapshot = .free
         } else {
@@ -168,6 +168,15 @@ final class StoreKitService: ObservableObject {
             )
         }
 
+        // Fold in any server-side grant BEFORE diffing. A complimentary
+        // account has nothing in StoreKit, so the block above resolves it
+        // to Free — diffing at that point would fire a false "you lost
+        // access" toast on every single launch, then silently re-grant.
+        if let serverResponse = await ServerEntitlementService.fetch(),
+           let upgraded = ServerEntitlementService.merged(with: serverResponse, current: snapshot) {
+            snapshot = upgraded
+        }
+
         // §"RÈGLE ABSOLUE" — a downgrade (subscription expired, refunded,
         // revoked) must never silently take a feature away with no
         // explanation. Diffed against whatever was cached before this
@@ -175,7 +184,7 @@ final class StoreKitService: ObservableObject {
         // launch or an upgrade (see DowngradePolicy's own doc comment).
         let previousSnapshot = EntitlementService.shared.snapshot
         EntitlementService.shared.update(snapshot)
-        OasisLog.subscription.notice("Entitlements refreshed: plan=\(snapshot.plan.rawValue, privacy: .public) status=\(snapshot.subscriptionStatus.rawValue, privacy: .public)")
+        OasisLog.subscription.notice("Entitlements refreshed: plan=\(snapshot.plan.rawValue, privacy: .public) source=\(snapshot.source.rawValue, privacy: .public)")
         let lost = DowngradePolicy.lostEntitlements(previous: previousSnapshot, current: snapshot)
         if let notice = DowngradePolicy.notice(for: lost) {
             OasisLog.subscription.notice("Downgrade detected, lost \(lost.count, privacy: .public) entitlement(s)")

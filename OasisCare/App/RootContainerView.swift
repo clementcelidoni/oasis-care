@@ -49,6 +49,10 @@ struct RootContainerView: View {
             Task { await syncEngine.syncIfPossible(context: modelContext) }
             deepLinkRouter.retryPendingTokenIfNeeded(context: modelContext)
             Task { await CommercialConfigService.refresh() }
+            // Picks up an entitlement granted server-side rather than
+            // bought through StoreKit (complimentary account, support
+            // gesture). Only ever upgrades — see ServerEntitlementService.
+            Task { await ServerEntitlementService.refreshAndApply() }
         }
         .onChange(of: scenePhase) { _, newPhase in
             guard newPhase == .active else { return }
