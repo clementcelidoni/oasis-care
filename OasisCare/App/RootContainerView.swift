@@ -33,6 +33,11 @@ struct RootContainerView: View {
         }
         .task {
             authState.start()
+            // Independent of auth status: a guest's Apple ID can still
+            // hold a real subscription (StoreKit doesn't require this
+            // app's own account), consistent with guest mode otherwise
+            // keeping full local functionality.
+            StoreKitService.shared.start()
         }
         .onChange(of: authState.status) { _, newStatus in
             guard case .authenticated = newStatus else { return }
