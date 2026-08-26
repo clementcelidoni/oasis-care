@@ -29,6 +29,30 @@ struct FeatureGate<Content: View>: View {
     }
 }
 
+/// LockedFeatureView presented as a sheet in its own right — used where
+/// a limit is checked imperatively before opening a sheet (a count limit,
+/// or a button that starts a hardware session) rather than by wrapping a
+/// destination view. Adds the explicit "Fermer" a bare
+/// ContentUnavailableView has no room for, so the only way out of the
+/// sheet isn't an undiscoverable swipe.
+struct LockedFeatureSheet: View {
+    var featureName: String
+    var offer: PaywallOffer = .premium
+
+    @Environment(\.dismiss) private var dismiss
+
+    var body: some View {
+        NavigationStack {
+            LockedFeatureView(featureName: featureName, offer: offer)
+                .toolbar {
+                    ToolbarItem(placement: .cancellationAction) {
+                        Button("Fermer") { dismiss() }
+                    }
+                }
+        }
+    }
+}
+
 struct LockedFeatureView: View {
     var featureName: String
     var offer: PaywallOffer = .premium

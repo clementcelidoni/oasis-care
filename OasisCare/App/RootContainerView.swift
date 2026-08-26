@@ -13,6 +13,7 @@ struct RootContainerView: View {
     @ObservedObject private var syncEngine = SyncEngine.shared
     @ObservedObject private var deepLinkRouter = DeepLinkRouter.shared
     @AppStorage("hasSeenWelcome") private var hasSeenWelcome = false
+    @AppStorage("hasCompletedOnboarding") private var hasCompletedOnboarding = false
 
     var body: some View {
         Group {
@@ -24,9 +25,13 @@ struct RootContainerView: View {
             case .guest:
                 if hasSeenWelcome {
                     RootTabView()
-                } else {
+                } else if hasCompletedOnboarding {
                     WelcomeView {
                         hasSeenWelcome = true
+                    }
+                } else {
+                    OnboardingView {
+                        hasCompletedOnboarding = true
                     }
                 }
             }

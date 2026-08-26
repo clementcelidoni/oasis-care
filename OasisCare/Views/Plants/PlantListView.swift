@@ -22,6 +22,7 @@ struct PlantListView: View {
     @State private var searchText = ""
     @State private var selectedType: PlantType?
     @State private var isAddPlantChooserPresented = false
+    @State private var isPlantLimitLockedSheetPresented = false
     @State private var addPlantSheet: AddPlantSheet?
     @State private var editMode: EditMode
     @State private var selectedPlantIDs = Set<UUID>()
@@ -142,7 +143,7 @@ struct PlantListView: View {
                     ToolbarItem(placement: .topBarTrailing) {
                         if !editMode.isEditing {
                             Button {
-                                isAddPlantChooserPresented = true
+                                requestAddPlant()
                             } label: {
                                 Label("Ajouter", systemImage: "plus")
                             }
@@ -161,14 +162,10 @@ struct PlantListView: View {
                 Button("Annuler", role: .cancel) {}
             }
             .sheet(item: $addPlantSheet) { sheet in
-                let limits = PlanService.shared.configuration(for: EntitlementService.shared.snapshot.plan).usageLimits
-                if UsageLimitService.canAddPlant(currentCount: plants.count, limits: limits).isWithinLimit {
-                    addPlantSheetContent(sheet)
-                } else {
-                    FeatureGate(entitlement: .unlimitedPlants, featureName: "Plantes illimitées") {
-                        addPlantSheetContent(sheet)
-                    }
-                }
+                addPlantSheetContent(sheet)
+            }
+            .sheet(isPresented: $isPlantLimitLockedSheetPresented) {
+                LockedFeatureSheet(featureName: "Végétaux illimités")
             }
             .sheet(isPresented: $isBulkAddEventPresented) {
                 AddCareEventSheet(plants: selectedPlants)
@@ -237,6 +234,20 @@ struct PlantListView: View {
         } else {
             editMode = .inactive
             selectedPlantIDs.removeAll()
+        }
+    }
+
+    /// Phase 12 §12G — see GardenListView.requestAddGarden for why the
+    /// count check lives in the button action rather than around the
+    /// sheet's content. `plants` (not `filteredPlants`) is the right
+    /// count: the limit is on the whole collection, not the current
+    /// garden/type filter.
+    private func requestAddPlant() {
+        let limits = PlanService.shared.configuration(for: EntitlementService.shared.snapshot.plan).usageLimits
+        if UsageLimitService.canAddPlant(currentCount: plants.count, limits: limits).isWithinLimit {
+            isAddPlantChooserPresented = true
+        } else {
+            isPlantLimitLockedSheetPresented = true
         }
     }
 

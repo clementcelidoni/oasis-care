@@ -229,7 +229,7 @@ struct PlantDetailView: View {
             Button("Annuler", role: .cancel) {}
         }
         .sheet(isPresented: $isPhotoLimitLockedSheetPresented) {
-            LockedFeatureView(featureName: "Photos supplémentaires")
+            LockedFeatureSheet(featureName: "Photos supplémentaires")
         }
         .photosPicker(isPresented: $isPhotosPickerPresented, selection: $selectedPhotoItem, matching: .images)
         .fullScreenCover(isPresented: $isCameraPresented) {

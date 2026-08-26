@@ -95,7 +95,7 @@ struct ScannerView: View {
                 QRScannerSheet()
             }
             .sheet(isPresented: $isQRNFCLockedSheetPresented) {
-                LockedFeatureView(featureName: "Scanner QR / NFC")
+                LockedFeatureSheet(featureName: "Scanner QR / NFC")
             }
             .sheet(item: $nfcScanResult) { result in
                 if case .plant(let plant) = result {
