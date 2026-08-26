@@ -65,9 +65,17 @@ final class StoreKitService: ObservableObject {
         defer { isLoadingProducts = false }
         do {
             products = try await Product.products(for: ProductIdentifiers.all)
+            if products.count != ProductIdentifiers.all.count {
+                // Almost always a mismatch between ProductIdentifiers and
+                // what App Store Connect actually has configured — the
+                // paywall would silently show fewer options, which is
+                // very hard to notice without this line.
+                OasisLog.storeKit.error("Loaded \(products.count, privacy: .public)/\(ProductIdentifiers.all.count, privacy: .public) products — check App Store Connect identifiers")
+            }
         } catch {
             // §"NE PAS inventer" extends to errors: never fabricate a
             // product/price when the real catalog can't be reached.
+            OasisLog.storeKit.error("Product load failed: \(error.localizedDescription, privacy: .public)")
             loadError = "Impossible de charger les offres pour le moment. Vérifiez votre connexion et réessayez."
         }
     }
@@ -83,10 +91,15 @@ final class StoreKitService: ObservableObject {
             switch result {
             case .success(let verification):
                 guard case .verified(let transaction) = verification else {
+                    // A failed StoreKit signature check is the one
+                    // purchase outcome worth shouting about: it means
+                    // either a genuine tampering attempt or a real bug.
+                    OasisLog.storeKit.error("Purchase verification FAILED for \(product.id, privacy: .public)")
                     return .failure(.verificationFailed)
                 }
                 await transaction.finish()
                 await refreshEntitlements()
+                OasisLog.storeKit.notice("Purchase completed: \(product.id, privacy: .public)")
                 return .success(.success)
             case .userCancelled:
                 return .success(.cancelled)
@@ -160,7 +173,10 @@ final class StoreKitService: ObservableObject {
         // launch or an upgrade (see DowngradePolicy's own doc comment).
         let previousSnapshot = EntitlementService.shared.snapshot
         EntitlementService.shared.update(snapshot)
-        if let notice = DowngradePolicy.notice(for: DowngradePolicy.lostEntitlements(previous: previousSnapshot, current: snapshot)) {
+        OasisLog.subscription.notice("Entitlements refreshed: plan=\(snapshot.plan.rawValue, privacy: .public) status=\(snapshot.subscriptionStatus.rawValue, privacy: .public)")
+        let lost = DowngradePolicy.lostEntitlements(previous: previousSnapshot, current: snapshot)
+        if let notice = DowngradePolicy.notice(for: lost) {
+            OasisLog.subscription.notice("Downgrade detected, lost \(lost.count, privacy: .public) entitlement(s)")
             ToastCenter.shared.show(title: notice)
         }
     }

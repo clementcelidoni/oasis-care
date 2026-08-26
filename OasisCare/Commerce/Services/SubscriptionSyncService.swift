@@ -30,7 +30,11 @@ enum SubscriptionSyncService {
             // Best-effort — the client's own StoreKit-derived entitlement
             // already applies regardless of whether this reaches the
             // backend; a later app launch or Apple's own webhook will
-            // eventually reconcile it.
+            // eventually reconcile it. Logged rather than swallowed
+            // silently: if this fails for everyone, the backend's whole
+            // subscription record quietly drifts, and nothing else in
+            // the app would ever reveal that.
+            OasisLog.subscription.error("Backend sync failed: \(error.localizedDescription, privacy: .public)")
         }
     }
 }

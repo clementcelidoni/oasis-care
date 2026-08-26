@@ -114,5 +114,10 @@ schemes:
         - OasisCareTests
     run:
       config: Debug
+      # Phase 12 §12V — lets subscriptions be tested locally without
+      # App Store Connect. Test-only: the prices inside are placeholders
+      # so Xcode will load the file at all, never a pricing decision
+      # (see STOREKIT_TESTING.md).
+      storeKitConfiguration: OasisCare.storekit
     archive:
       config: Release
