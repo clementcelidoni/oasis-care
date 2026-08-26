@@ -29,7 +29,12 @@ struct RootTabView: View {
             }
             .task {
                 #if DEBUG
-                DemoData.seedIfNeeded(context: modelContext)
+                // Skippable so UI tests start from an empty store: the
+                // demo garden alone is exactly the Free-tier limit of 1,
+                // which would (correctly) lock "add a garden".
+                if !UITestSupport.skipsDemoData {
+                    DemoData.seedIfNeeded(context: modelContext)
+                }
                 #endif
                 // .onChange below only fires on a value that changes AFTER
                 // this view is observing it — a cold launch via Universal

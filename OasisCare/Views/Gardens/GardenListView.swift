@@ -6,6 +6,7 @@ struct GardenListView: View {
 
     @Query(sort: \Garden.name) private var gardens: [Garden]
     @State private var isPresentingAddGarden = false
+    @State private var isGardenLimitLockedSheetPresented = false
     @State private var gardenPendingDeletion: Garden?
 
     var body: some View {
@@ -40,7 +41,7 @@ struct GardenListView: View {
             .toolbar {
                 ToolbarItem(placement: .topBarTrailing) {
                     Button {
-                        isPresentingAddGarden = true
+                        requestAddGarden()
                     } label: {
                         Label("Ajouter", systemImage: "plus")
                     }
@@ -52,6 +53,9 @@ struct GardenListView: View {
             }
             .sheet(isPresented: $isPresentingAddGarden) {
                 GardenFormView(garden: nil)
+            }
+            .sheet(isPresented: $isGardenLimitLockedSheetPresented) {
+                LockedFeatureSheet(featureName: "Plusieurs jardins")
             }
             .confirmationDialog(
                 "Supprimer \(gardenPendingDeletion?.name ?? "ce jardin") ?",
@@ -73,6 +77,20 @@ struct GardenListView: View {
             } message: {
                 Text("Les zones de ce jardin seront aussi supprimées. Les végétaux qu'il contient seront conservés, sans jardin associé. Cette action est irréversible.")
             }
+        }
+    }
+
+    /// Phase 12 §12G. Checked here rather than by wrapping the sheet's
+    /// content in a FeatureGate: the "1 jardin" Free limit is a count,
+    /// not a boolean entitlement, and doing it in the button action
+    /// keeps the creation sheet itself untouched — same shape as the
+    /// QR/NFC and per-plant-photo checks.
+    private func requestAddGarden() {
+        let limits = PlanService.shared.configuration(for: EntitlementService.shared.snapshot.plan).usageLimits
+        if UsageLimitService.canAddGarden(currentCount: gardens.count, limits: limits).isWithinLimit {
+            isPresentingAddGarden = true
+        } else {
+            isGardenLimitLockedSheetPresented = true
         }
     }
 }

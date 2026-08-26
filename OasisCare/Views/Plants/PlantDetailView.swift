@@ -87,6 +87,7 @@ struct PlantDetailView: View {
     @State private var historyFilter: HistoryFilterBucket?
     @State private var selectedPhotoItem: PhotosPickerItem?
     @State private var isPhotoSourceDialogPresented = false
+    @State private var isPhotoLimitLockedSheetPresented = false
     @State private var isPhotosPickerPresented = false
     @State private var isCameraPresented = false
     @State private var selectedPhoto: PlantPhoto?
@@ -227,6 +228,9 @@ struct PlantDetailView: View {
             Button("Choisir dans la photothèque") { isPhotosPickerPresented = true }
             Button("Annuler", role: .cancel) {}
         }
+        .sheet(isPresented: $isPhotoLimitLockedSheetPresented) {
+            LockedFeatureSheet(featureName: "Photos supplémentaires")
+        }
         .photosPicker(isPresented: $isPhotosPickerPresented, selection: $selectedPhotoItem, matching: .images)
         .fullScreenCover(isPresented: $isCameraPresented) {
             CameraCaptureView(isPresented: $isCameraPresented) { data in
@@ -243,7 +247,7 @@ struct PlantDetailView: View {
         VStack(alignment: .leading, spacing: 8) {
             HStack(spacing: 12) {
                 Button {
-                    isPhotoSourceDialogPresented = true
+                    requestAddPhoto()
                 } label: {
                     headerImage
                 }
@@ -320,6 +324,19 @@ struct PlantDetailView: View {
         ToastCenter.shared.show(title: "✓ \(type.displayName) — \(plant.customName)", subtitle: subtitle)
     }
 
+    /// Shared by all three "add a photo" entry points (header, quick
+    /// action, evolution "+") since they all funnel into the same
+    /// CareScheduleEngine.addPhoto call — one count check here covers
+    /// all three rather than duplicating it at each button.
+    private func requestAddPhoto() {
+        let limits = PlanService.shared.configuration(for: EntitlementService.shared.snapshot.plan).usageLimits
+        if UsageLimitService.canAddPhoto(currentCountForPlant: plant.photos.count, limits: limits).isWithinLimit {
+            isPhotoSourceDialogPresented = true
+        } else {
+            isPhotoLimitLockedSheetPresented = true
+        }
+    }
+
     @ViewBuilder
     private var headerImage: some View {
         if let photoData = plant.photoData, let uiImage = UIImage(data: photoData) {
@@ -348,7 +365,7 @@ struct PlantDetailView: View {
                 confirmQuickAction(.fertilizing)
             }
             Button {
-                isPhotoSourceDialogPresented = true
+                requestAddPhoto()
             } label: {
                 ActionButtonLabel(title: "Photo", icon: "camera.fill", tint: .purple)
             }
@@ -390,7 +407,7 @@ struct PlantDetailView: View {
                     .font(.headline)
                 Spacer()
                 Button {
-                    isPhotoSourceDialogPresented = true
+                    requestAddPhoto()
                 } label: {
                     Image(systemName: "plus.circle.fill")
                 }

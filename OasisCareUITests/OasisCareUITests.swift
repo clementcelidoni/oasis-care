@@ -11,6 +11,17 @@ final class OasisCareUITests: XCTestCase {
 
     func testGardenZonePlantWateringFertilizingGoldenPath() throws {
         let app = XCUIApplication()
+        // Phase 12 added a 6-page onboarding ahead of Welcome. This test
+        // is about the Phase 1 golden path, not onboarding (which has its
+        // own test below), so skip it rather than make the critical-path
+        // test depend on six extra taps: iOS folds `-key value` launch
+        // arguments into UserDefaults' NSArgumentDomain, which takes
+        // precedence over the persistent domain @AppStorage reads.
+        //
+        // Demo data is skipped too: it seeds one garden, which is exactly
+        // the Free-tier limit, so "add a garden" would correctly show the
+        // paywall instead of the form. See UITestSupport.
+        app.launchArguments += ["-hasCompletedOnboarding", "YES", "-uiTestSkipDemoData", "YES"]
         app.launch()
 
         let suffix = UUID().uuidString.prefix(6)
@@ -32,7 +43,12 @@ final class OasisCareUITests: XCTestCase {
             app.buttons["addGardenButton"].tap()
 
             let nameField = app.textFields["Nom du jardin"]
-            XCTAssertTrue(nameField.waitForExistence(timeout: 10))
+            if !nameField.waitForExistence(timeout: 10) {
+                print("=== DEBUG: accessibility tree after tapping addGardenButton ===")
+                print(app.debugDescription)
+                print("=== END DEBUG (addGardenButton) ===")
+            }
+            XCTAssertTrue(nameField.exists, "La feuille de création de jardin ne s'est pas ouverte")
             nameField.tap()
             nameField.typeText(gardenName)
 
@@ -154,5 +170,54 @@ final class OasisCareUITests: XCTestCase {
             let libraryOption = app.buttons["Choisir dans la photothèque"]
             XCTAssertTrue(libraryOption.waitForExistence(timeout: 10))
         }
+    }
+
+    /// Phase 12 §12I. Walks the 5 product-tour screens and the "Que
+    /// souhaitez-vous gérer ?" step, then asserts it lands on the
+    /// existing Welcome screen with guest mode still offered — spec's
+    /// "NE PAS FORCER L'ABONNEMENT IMMÉDIATEMENT" and "Conserver si
+    /// possible `Continuer gratuitement` et le mode invité existant".
+    func testOnboardingCompletesAndStillOffersGuestMode() throws {
+        let app = XCUIApplication()
+        // Tests share a simulator and run alphabetically, so the golden
+        // path above has already tapped "Continuer sans compte" and
+        // persisted hasSeenWelcome — which would skip straight past
+        // onboarding. Clear both flags rather than shadowing them with
+        // launch arguments: shadowing overrides reads only, so the view
+        // could never record that onboarding finished. See UITestSupport.
+        app.launchArguments += ["-uiTestResetOnboarding", "YES", "-uiTestSkipDemoData", "YES"]
+        app.launch()
+
+        let primaryButton = app.buttons["onboardingPrimaryButton"]
+        XCTAssertTrue(primaryButton.waitForExistence(timeout: 15), "L'onboarding ne s'est pas affiché")
+
+        // Intro + 4 feature screens, then the preferences screen.
+        for step in 0..<5 {
+            XCTAssertEqual(primaryButton.label, "Suivant", "Étape \(step) devrait encore proposer Suivant")
+            primaryButton.tap()
+        }
+
+        let becameContinue = XCTNSPredicateExpectation(
+            predicate: NSPredicate(format: "label == %@", "Continuer"),
+            object: primaryButton
+        )
+        XCTAssertEqual(
+            XCTWaiter().wait(for: [becameContinue], timeout: 10),
+            .completed,
+            "Dernier écran attendu, label vu : \(primaryButton.label)"
+        )
+
+        XCTAssertTrue(app.switches["Culture in vitro / BioLab"].waitForExistence(timeout: 10))
+
+        // Never a paywall or a price at the end of onboarding.
+        XCTAssertFalse(app.buttons["Découvrir Premium"].exists)
+        XCTAssertFalse(app.buttons["Découvrir BioLab"].exists)
+
+        primaryButton.tap()
+
+        XCTAssertTrue(
+            app.buttons["continueAsGuestButton"].waitForExistence(timeout: 10),
+            "L'onboarding doit mener à Welcome en conservant le mode invité"
+        )
     }
 }

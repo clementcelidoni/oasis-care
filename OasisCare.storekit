@@ -1,0 +1,115 @@
+{
+  "appPolicies" : {
+    "eula" : "",
+    "policies" : [ ]
+  },
+  "identifier" : "5A3C1E90",
+  "nonRenewingSubscriptions" : [ ],
+  "products" : [ ],
+  "settings" : {
+    "_askToBuyEnabled" : false,
+    "_billingIssuesEnabled" : false,
+    "_disableDialogs" : false,
+    "_failTransactionsEnabled" : false,
+    "_locale" : "fr_FR",
+    "_storefront" : "FRA",
+    "_storeKitErrors" : [ ]
+  },
+  "subscriptionGroups" : [
+    {
+      "id" : "21451001",
+      "localizations" : [ ],
+      "name" : "Oasis Care",
+      "subscriptions" : [
+        {
+          "adHocOffers" : [ ],
+          "codeOffers" : [ ],
+          "displayPrice" : "4.99",
+          "familyShareable" : false,
+          "groupNumber" : 2,
+          "internalID" : "21451011",
+          "introductoryOffer" : null,
+          "localizations" : [
+            {
+              "description" : "Votre jardin, plus intelligent.",
+              "displayName" : "Oasis Care Premium — Mensuel",
+              "locale" : "fr_FR"
+            }
+          ],
+          "productID" : "com.oasiscare.premium.monthly",
+          "recurringSubscriptionPeriod" : "P1M",
+          "referenceName" : "Premium Mensuel",
+          "subscriptionGroupID" : "21451001",
+          "type" : "RecurringSubscription"
+        },
+        {
+          "adHocOffers" : [ ],
+          "codeOffers" : [ ],
+          "displayPrice" : "49.99",
+          "familyShareable" : false,
+          "groupNumber" : 2,
+          "internalID" : "21451012",
+          "introductoryOffer" : null,
+          "localizations" : [
+            {
+              "description" : "Votre jardin, plus intelligent.",
+              "displayName" : "Oasis Care Premium — Annuel",
+              "locale" : "fr_FR"
+            }
+          ],
+          "productID" : "com.oasiscare.premium.yearly",
+          "recurringSubscriptionPeriod" : "P1Y",
+          "referenceName" : "Premium Annuel",
+          "subscriptionGroupID" : "21451001",
+          "type" : "RecurringSubscription"
+        },
+        {
+          "adHocOffers" : [ ],
+          "codeOffers" : [ ],
+          "displayPrice" : "12.99",
+          "familyShareable" : false,
+          "groupNumber" : 1,
+          "internalID" : "21451021",
+          "introductoryOffer" : null,
+          "localizations" : [
+            {
+              "description" : "Tout Premium, plus le laboratoire.",
+              "displayName" : "Oasis Care BioLab — Mensuel",
+              "locale" : "fr_FR"
+            }
+          ],
+          "productID" : "com.oasiscare.biolab.monthly",
+          "recurringSubscriptionPeriod" : "P1M",
+          "referenceName" : "BioLab Mensuel",
+          "subscriptionGroupID" : "21451001",
+          "type" : "RecurringSubscription"
+        },
+        {
+          "adHocOffers" : [ ],
+          "codeOffers" : [ ],
+          "displayPrice" : "129.99",
+          "familyShareable" : false,
+          "groupNumber" : 1,
+          "internalID" : "21451022",
+          "introductoryOffer" : null,
+          "localizations" : [
+            {
+              "description" : "Tout Premium, plus le laboratoire.",
+              "displayName" : "Oasis Care BioLab — Annuel",
+              "locale" : "fr_FR"
+            }
+          ],
+          "productID" : "com.oasiscare.biolab.yearly",
+          "recurringSubscriptionPeriod" : "P1Y",
+          "referenceName" : "BioLab Annuel",
+          "subscriptionGroupID" : "21451001",
+          "type" : "RecurringSubscription"
+        }
+      ]
+    }
+  ],
+  "version" : {
+    "major" : 4,
+    "minor" : 0
+  }
+}

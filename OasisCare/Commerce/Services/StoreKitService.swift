@@ -1,0 +1,219 @@
+import Foundation
+import StoreKit
+
+/// Phase 12 §"12B — STOREKIT 2." "Utiliser les APIs Apple modernes
+/// StoreKit 2... AUCUNE logique de prix hardcodée. Afficher TOUJOURS le
+/// prix fourni par StoreKit/App Store." The one place this app talks to
+/// StoreKit — every price shown anywhere reads `Product.displayPrice`
+/// from here, never a literal string.
+///
+/// Trust model: `Transaction.currentEntitlements` is Apple's own
+/// on-device, cryptographically verified source of truth for "what
+/// does this Apple ID currently own" — this class treats that as
+/// authoritative and independent of network/server availability (§12C).
+/// `SubscriptionSyncService` separately best-effort reconciles the
+/// backend's own record from the SAME verified transactions; the
+/// server is never this class's source of truth for what to grant
+/// locally.
+@MainActor
+final class StoreKitService: ObservableObject {
+    static let shared = StoreKitService()
+
+    enum PurchaseOutcome {
+        case success
+        case pending
+        case cancelled
+    }
+
+    enum PurchaseError: LocalizedError {
+        case verificationFailed
+        case unknown
+
+        var errorDescription: String? {
+            switch self {
+            case .verificationFailed: return "L'achat n'a pas pu être vérifié. Contactez le support si le problème persiste."
+            case .unknown: return "L'achat n'a pas pu être finalisé. Réessayez plus tard."
+            }
+        }
+    }
+
+    @Published private(set) var products: [Product] = []
+    @Published private(set) var isLoadingProducts = false
+    @Published private(set) var loadError: String?
+
+    private var transactionListenerTask: Task<Void, Never>?
+
+    private init() {}
+
+    /// Called once at app launch (see OasisCareApp).
+    func start() {
+        guard transactionListenerTask == nil else { return }
+        transactionListenerTask = Task { [weak self] in
+            for await update in Transaction.updates {
+                await self?.handle(update)
+            }
+        }
+        Task {
+            await loadProducts()
+            await refreshEntitlements()
+        }
+    }
+
+    func loadProducts() async {
+        isLoadingProducts = true
+        loadError = nil
+        defer { isLoadingProducts = false }
+        do {
+            products = try await Product.products(for: ProductIdentifiers.all)
+            if products.count != ProductIdentifiers.all.count {
+                // Almost always a mismatch between ProductIdentifiers and
+                // what App Store Connect actually has configured — the
+                // paywall would silently show fewer options, which is
+                // very hard to notice without this line.
+                // `self.` is required: OSLog's interpolation is an
+                // escaping autoclosure, so an implicit capture is an error.
+                OasisLog.storeKit.error("Loaded \(self.products.count, privacy: .public)/\(ProductIdentifiers.all.count, privacy: .public) products — check App Store Connect identifiers")
+            }
+        } catch {
+            // §"NE PAS inventer" extends to errors: never fabricate a
+            // product/price when the real catalog can't be reached.
+            OasisLog.storeKit.error("Product load failed: \(error.localizedDescription, privacy: .public)")
+            loadError = "Impossible de charger les offres pour le moment. Vérifiez votre connexion et réessayez."
+        }
+    }
+
+    func product(withID id: String) -> Product? {
+        products.first { $0.id == id }
+    }
+
+    @discardableResult
+    func purchase(_ product: Product) async -> Result<PurchaseOutcome, PurchaseError> {
+        do {
+            let result = try await product.purchase()
+            switch result {
+            case .success(let verification):
+                guard case .verified(let transaction) = verification else {
+                    // A failed StoreKit signature check is the one
+                    // purchase outcome worth shouting about: it means
+                    // either a genuine tampering attempt or a real bug.
+                    OasisLog.storeKit.error("Purchase verification FAILED for \(product.id, privacy: .public)")
+                    return .failure(.verificationFailed)
+                }
+                await transaction.finish()
+                await refreshEntitlements()
+                OasisLog.storeKit.notice("Purchase completed: \(product.id, privacy: .public)")
+                return .success(.success)
+            case .userCancelled:
+                return .success(.cancelled)
+            case .pending:
+                return .success(.pending)
+            @unknown default:
+                return .failure(.unknown)
+            }
+        } catch {
+            return .failure(.unknown)
+        }
+    }
+
+    /// §12F "Restaurer mes achats — Bouton obligatoire et fonctionnel."
+    @discardableResult
+    func restorePurchases() async -> Result<Void, PurchaseError> {
+        do {
+            try await AppStore.sync()
+            await refreshEntitlements()
+            return .success(())
+        } catch {
+            return .failure(.unknown)
+        }
+    }
+
+    /// Rebuilds the local `EntitlementSnapshot` purely from Apple's own
+    /// verified transactions — the only function in this app allowed to
+    /// call `EntitlementService.update` with `source: .storeKit`.
+    func refreshEntitlements() async {
+        var ownedProductIDs: Set<String> = []
+        var latestExpiration: Date?
+        var oneVerifiedResult: VerificationResult<Transaction>?
+        for await result in Transaction.currentEntitlements {
+            guard case .verified(let transaction) = result else { continue }
+            ownedProductIDs.insert(transaction.productID)
+            oneVerifiedResult = result
+            if let expirationDate = transaction.expirationDate {
+                latestExpiration = [latestExpiration, expirationDate].compactMap { $0 }.max()
+            }
+        }
+        // Best-effort backend sync (§ SubscriptionSyncService) using
+        // any one currently-verified transaction — Apple's own
+        // originalTransactionId ties the whole subscription group
+        // together server-side, so any single owned transaction is
+        // enough to reconcile the full set.
+        if let oneVerifiedResult {
+            await SubscriptionSyncService.sync(oneVerifiedResult)
+        }
+
+        let plan = ProductIdentifiers.plan(for: ownedProductIDs)
+        let status = await subscriptionStatus(for: ownedProductIDs, plan: plan)
+
+        var snapshot: EntitlementSnapshot
+        if plan == .free {
+            snapshot = .free
+        } else {
+            snapshot = EntitlementSnapshot(
+                plan: plan,
+                activeEntitlements: PlanService.shared.configuration(for: plan).entitlements,
+                expirationDate: latestExpiration,
+                subscriptionStatus: status,
+                lastVerifiedAt: .now,
+                source: .storeKit
+            )
+        }
+
+        // Fold in any server-side grant BEFORE diffing. A complimentary
+        // account has nothing in StoreKit, so the block above resolves it
+        // to Free — diffing at that point would fire a false "you lost
+        // access" toast on every single launch, then silently re-grant.
+        if let serverResponse = await ServerEntitlementService.fetch(),
+           let upgraded = ServerEntitlementService.merged(with: serverResponse, current: snapshot) {
+            snapshot = upgraded
+        }
+
+        // §"RÈGLE ABSOLUE" — a downgrade (subscription expired, refunded,
+        // revoked) must never silently take a feature away with no
+        // explanation. Diffed against whatever was cached before this
+        // refresh, so this only fires on a real loss, never on first
+        // launch or an upgrade (see DowngradePolicy's own doc comment).
+        let previousSnapshot = EntitlementService.shared.snapshot
+        EntitlementService.shared.update(snapshot)
+        OasisLog.subscription.notice("Entitlements refreshed: plan=\(snapshot.plan.rawValue, privacy: .public) source=\(snapshot.source.rawValue, privacy: .public)")
+        let lost = DowngradePolicy.lostEntitlements(previous: previousSnapshot, current: snapshot)
+        if let notice = DowngradePolicy.notice(for: lost) {
+            OasisLog.subscription.notice("Downgrade detected, lost \(lost.count, privacy: .public) entitlement(s)")
+            ToastCenter.shared.show(title: notice)
+        }
+    }
+
+    /// §"Statuts — gérer proprement les états réellement
+    /// fournis/supportés par les APIs Apple." Reads the real
+    /// `Product.SubscriptionInfo.RenewalState` for whichever owned
+    /// product's subscription group is relevant, rather than inferring
+    /// a status from dates ourselves.
+    private func subscriptionStatus(for ownedProductIDs: Set<String>, plan: OasisPlan) async -> SubscriptionStatus {
+        guard plan != .free, let anyOwnedID = ownedProductIDs.first, let product = product(withID: anyOwnedID),
+              let subscription = product.subscription else { return .none }
+        guard let statuses = try? await subscription.status, let current = statuses.first else { return .none }
+        switch current.state {
+        case .subscribed: return .subscribed
+        case .expired: return .expired
+        case .inBillingRetryPeriod: return .inBillingRetryPeriod
+        case .inGracePeriod: return .inGracePeriod
+        case .revoked: return .revoked
+        default: return .none
+        }
+    }
+
+    private func handle(_ verification: VerificationResult<Transaction>) async {
+        guard case .verified(let transaction) = verification else { return }
+        await transaction.finish()
+        await refreshEntitlements()
+    }
+}

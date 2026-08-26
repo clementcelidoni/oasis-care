@@ -13,6 +13,7 @@ struct RootContainerView: View {
     @ObservedObject private var syncEngine = SyncEngine.shared
     @ObservedObject private var deepLinkRouter = DeepLinkRouter.shared
     @AppStorage("hasSeenWelcome") private var hasSeenWelcome = false
+    @AppStorage("hasCompletedOnboarding") private var hasCompletedOnboarding = false
 
     var body: some View {
         Group {
@@ -24,20 +25,34 @@ struct RootContainerView: View {
             case .guest:
                 if hasSeenWelcome {
                     RootTabView()
-                } else {
+                } else if hasCompletedOnboarding {
                     WelcomeView {
                         hasSeenWelcome = true
+                    }
+                } else {
+                    OnboardingView {
+                        hasCompletedOnboarding = true
                     }
                 }
             }
         }
         .task {
             authState.start()
+            // Independent of auth status: a guest's Apple ID can still
+            // hold a real subscription (StoreKit doesn't require this
+            // app's own account), consistent with guest mode otherwise
+            // keeping full local functionality.
+            StoreKitService.shared.start()
         }
         .onChange(of: authState.status) { _, newStatus in
             guard case .authenticated = newStatus else { return }
             Task { await syncEngine.syncIfPossible(context: modelContext) }
             deepLinkRouter.retryPendingTokenIfNeeded(context: modelContext)
+            Task { await CommercialConfigService.refresh() }
+            // Picks up an entitlement granted server-side rather than
+            // bought through StoreKit (complimentary account, support
+            // gesture). Only ever upgrades — see ServerEntitlementService.
+            Task { await ServerEntitlementService.refreshAndApply() }
         }
         .onChange(of: scenePhase) { _, newPhase in
             guard newPhase == .active else { return }

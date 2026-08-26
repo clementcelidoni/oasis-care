@@ -29,17 +29,23 @@ struct ScannerView: View {
     @State private var isScanningNFC = false
     @State private var nfcScanResult: SmartTagScanResult?
     @State private var nfcErrorMessage: String?
+    @State private var isQRNFCLockedSheetPresented = false
+    @ObservedObject private var entitlementService = EntitlementService.shared
     @Environment(\.modelContext) private var modelContext
 
     var body: some View {
         NavigationStack {
             VStack(spacing: 0) {
                 // Spec §49: QR/NFC scanning is local-only (SmartTagService
-                // resolves purely from on-device data) and, per this same
-                // screen's own sign-in prompt below, guests keep full
-                // access to everything except AI photo identification —
-                // so unlike `content`, this row is never gated behind
-                // authState.
+                // resolves purely from on-device data), so unlike
+                // `content` this row is never gated behind authState — a
+                // guest can still use it without an account.
+                //
+                // Phase 12 does add a separate, commercial gate: QR/NFC
+                // is a Premium entitlement in §12A's launch matrix, so
+                // the two buttons check `.qrNfc` before acting. That is
+                // an entitlement check, not a sign-in check — the two are
+                // deliberately independent here.
                 scanButtonsSection
                     .padding()
 
@@ -47,7 +53,11 @@ struct ScannerView: View {
 
                 Group {
                     if case .authenticated = authState.status {
-                        content
+                        VStack(spacing: 0) {
+                            AIQuotaBanner(feature: .plantIdentification)
+                                .padding(.top, 8)
+                            content
+                        }
                     } else {
                         signInPrompt
                     }
@@ -92,6 +102,9 @@ struct ScannerView: View {
             .fullScreenCover(isPresented: $isQRScannerPresented) {
                 QRScannerSheet()
             }
+            .sheet(isPresented: $isQRNFCLockedSheetPresented) {
+                LockedFeatureSheet(featureName: "Scanner QR / NFC")
+            }
             .sheet(item: $nfcScanResult) { result in
                 if case .plant(let plant) = result {
                     QuickActionsAfterScanSheet(plant: plant)
@@ -106,7 +119,11 @@ struct ScannerView: View {
         VStack(spacing: 8) {
             HStack(spacing: 12) {
                 Button {
-                    isQRScannerPresented = true
+                    if entitlementService.has(.qrNfc) {
+                        isQRScannerPresented = true
+                    } else {
+                        isQRNFCLockedSheetPresented = true
+                    }
                 } label: {
                     Label("Scanner QR", systemImage: "qrcode.viewfinder")
                         .frame(maxWidth: .infinity)
@@ -115,7 +132,11 @@ struct ScannerView: View {
                 .accessibilityIdentifier("scanQRButton")
 
                 Button {
-                    Task { await scanNFC() }
+                    if entitlementService.has(.qrNfc) {
+                        Task { await scanNFC() }
+                    } else {
+                        isQRNFCLockedSheetPresented = true
+                    }
                 } label: {
                     if isScanningNFC {
                         ProgressView()

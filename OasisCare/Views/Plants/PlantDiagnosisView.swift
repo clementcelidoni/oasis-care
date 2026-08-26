@@ -26,7 +26,11 @@ struct PlantDiagnosisView: View {
                 if let diagnosis {
                     resultView(diagnosis)
                 } else {
-                    captureView
+                    VStack(spacing: 0) {
+                        AIQuotaBanner(feature: .photoDiagnosis)
+                            .padding(.top, 8)
+                        captureView
+                    }
                 }
             }
             .navigationTitle("Analyser un problème")
