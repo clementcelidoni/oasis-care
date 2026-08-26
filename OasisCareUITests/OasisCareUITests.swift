@@ -17,7 +17,11 @@ final class OasisCareUITests: XCTestCase {
         // test depend on six extra taps: iOS folds `-key value` launch
         // arguments into UserDefaults' NSArgumentDomain, which takes
         // precedence over the persistent domain @AppStorage reads.
-        app.launchArguments += ["-hasCompletedOnboarding", "YES"]
+        //
+        // Demo data is skipped too: it seeds one garden, which is exactly
+        // the Free-tier limit, so "add a garden" would correctly show the
+        // paywall instead of the form. See UITestSupport.
+        app.launchArguments += ["-hasCompletedOnboarding", "YES", "-uiTestSkipDemoData", "YES"]
         app.launch()
 
         let suffix = UUID().uuidString.prefix(6)
@@ -175,6 +179,13 @@ final class OasisCareUITests: XCTestCase {
     /// possible `Continuer gratuitement` et le mode invité existant".
     func testOnboardingCompletesAndStillOffersGuestMode() throws {
         let app = XCUIApplication()
+        // Tests share a simulator and run alphabetically, so the golden
+        // path above has already tapped "Continuer sans compte" and
+        // persisted hasSeenWelcome — which would skip straight past
+        // onboarding. Clear both flags rather than shadowing them with
+        // launch arguments: shadowing overrides reads only, so the view
+        // could never record that onboarding finished. See UITestSupport.
+        app.launchArguments += ["-uiTestResetOnboarding", "YES", "-uiTestSkipDemoData", "YES"]
         app.launch()
 
         let primaryButton = app.buttons["onboardingPrimaryButton"]
