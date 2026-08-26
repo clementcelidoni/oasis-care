@@ -118,12 +118,22 @@ final class StoreKitService: ObservableObject {
     func refreshEntitlements() async {
         var ownedProductIDs: Set<String> = []
         var latestExpiration: Date?
+        var oneVerifiedResult: VerificationResult<Transaction>?
         for await result in Transaction.currentEntitlements {
             guard case .verified(let transaction) = result else { continue }
             ownedProductIDs.insert(transaction.productID)
+            oneVerifiedResult = result
             if let expirationDate = transaction.expirationDate {
                 latestExpiration = [latestExpiration, expirationDate].compactMap { $0 }.max()
             }
+        }
+        // Best-effort backend sync (§ SubscriptionSyncService) using
+        // any one currently-verified transaction — Apple's own
+        // originalTransactionId ties the whole subscription group
+        // together server-side, so any single owned transaction is
+        // enough to reconcile the full set.
+        if let oneVerifiedResult {
+            await SubscriptionSyncService.sync(oneVerifiedResult)
         }
 
         let plan = ProductIdentifiers.plan(for: ownedProductIDs)

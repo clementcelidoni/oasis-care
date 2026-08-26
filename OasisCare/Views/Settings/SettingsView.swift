@@ -68,6 +68,12 @@ struct SettingsView: View {
             }
 
             Section {
+                NavigationLink("Mon abonnement") {
+                    SubscriptionSettingsView()
+                }
+            }
+
+            Section {
                 NavigationLink("Personnaliser l'accueil") {
                     DashboardCustomizationView()
                 }
@@ -76,6 +82,12 @@ struct SettingsView: View {
                 }
                 NavigationLink("Modes intelligents") {
                     SmartModesView()
+                }
+            }
+
+            Section {
+                NavigationLink("Aide & Support") {
+                    SupportView()
                 }
             }
 

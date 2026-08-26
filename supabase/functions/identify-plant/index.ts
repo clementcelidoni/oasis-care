@@ -55,6 +55,15 @@ Deno.serve(async (req: Request) => {
     return jsonResponse({ error: "Identification indisponible pour le moment (configuration manquante)." }, 500);
   }
 
+  // Phase 12 §12H "QUOTAS IA — CRITIQUE POUR LA RENTABILITÉ." See
+  // checkAndIncrementUsage's own doc comment for the shared pattern —
+  // duplicated per Edge Function (no _shared/ folder in this project).
+  const admin = createClient(supabaseUrl, serviceRoleKey);
+  const quota = await checkAndIncrementUsage(admin, userData.user.id, "plantIdentification");
+  if (!quota.allowed) {
+    return jsonResponse({ error: "Quota d'identifications atteint pour ce mois. Passez à une offre supérieure pour continuer." }, 429);
+  }
+
   let body: IdentifyRequestBody;
   try {
     body = await req.json();
@@ -154,6 +163,50 @@ function toIdentificationResult(result: PlantNetResult) {
     score: typeof result.score === "number" ? result.score : 0,
     provider: "plantnet",
   };
+}
+
+// Phase 12 §12H — mirrors PlanConfigurationStore.swift's
+// aiRequestsPerMonth per plan; see ai-usage-status/index.ts's own
+// comment on why this small static list is duplicated rather than
+// treated as a fourth source of truth to keep in sync via a table.
+const AI_REQUESTS_PER_MONTH: Record<string, number> = { free: 10, premium: 200, biolab: 400 };
+
+/// Atomically checks and increments this user's usage_counters row for
+/// one AI feature this month, via the increment_usage_counter Postgres
+/// function (0041_phase12_commercialisation.sql) — a plain
+/// read-then-upsert here would race under concurrent requests from the
+/// same user.
+// deno-lint-ignore no-explicit-any
+async function checkAndIncrementUsage(admin: any, userId: string, feature: string): Promise<{ allowed: boolean; used: number }> {
+  const { data: entitlementRow } = await admin.from("subscription_entitlements").select("plan, workspace_id").eq("user_id", userId).limit(1).maybeSingle();
+  const plan = entitlementRow?.plan ?? "free";
+  const limit = AI_REQUESTS_PER_MONTH[plan] ?? AI_REQUESTS_PER_MONTH.free;
+
+  let workspaceId = entitlementRow?.workspace_id;
+  if (!workspaceId) {
+    const { data: memberRow } = await admin.from("workspace_members").select("workspace_id").eq("user_id", userId).limit(1).maybeSingle();
+    workspaceId = memberRow?.workspace_id;
+  }
+  if (!workspaceId) return { allowed: false, used: 0 };
+
+  const period = currentPeriod();
+  const { data, error } = await admin.rpc("increment_usage_counter", {
+    p_user_id: userId, p_workspace_id: workspaceId, p_feature: feature, p_period: period, p_limit: limit,
+  });
+  if (error || !data || data.length === 0) {
+    console.error("increment_usage_counter failed", error);
+    // Fail open rather than blocking a real user over a transient
+    // database error — the monthly limit is a profitability guard, not
+    // a hard security boundary, so an occasional missed count is a far
+    // smaller problem than refusing a paying customer's legitimate use.
+    return { allowed: true, used: 0 };
+  }
+  return { allowed: data[0].allowed, used: data[0].used };
+}
+
+function currentPeriod(): string {
+  const now = new Date();
+  return `${now.getUTCFullYear()}-${String(now.getUTCMonth() + 1).padStart(2, "0")}`;
 }
 
 function jsonResponse(body: unknown, status = 200): Response {
