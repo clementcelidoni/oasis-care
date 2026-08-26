@@ -30,9 +30,10 @@ import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 import { compactVerify, importX509 } from "https://esm.sh/jose@5";
 import * as x509 from "https://esm.sh/@peculiar/x509@1.12.1";
 
-// See apple-subscription-webhook/index.ts for the same constant and its
-// own "replace before relying on this" warning — keep both files' copies
-// identical if you update one.
+// Same constant as apple-subscription-webhook/index.ts, which carries
+// the full provenance note. Verified 2026-08-26 byte-for-byte against
+// apple.com/certificateauthority/AppleRootCA-G3.cer; SHA-256
+// 63:34:3A:BF:…:91:79. Keep both files' copies identical.
 const APPLE_ROOT_CA_G3_PEM = `-----BEGIN CERTIFICATE-----
 MIICQzCCAcmgAwIBAgIILcX8iNLFS5UwCgYIKoZIzj0EAwMwZzEbMBkGA1UEAwwS
 QXBwbGUgUm9vdCBDQSAtIEczMSYwJAYDVQQLDB1BcHBsZSBDZXJ0aWZpY2F0aW9u

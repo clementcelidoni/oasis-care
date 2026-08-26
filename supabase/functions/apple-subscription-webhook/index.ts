@@ -54,16 +54,21 @@ import * as x509 from "https://esm.sh/@peculiar/x509@1.12.1";
 // provides — trusting a root shipped inside the message being verified
 // would defeat the purpose entirely.
 //
-// ⚠️ REPLACE BEFORE RELYING ON THIS: this PEM was reconstructed from
-// memory, not copied byte-for-byte from an authoritative source in this
-// session (no network fetch was available to confirm it). Download the
-// real "Apple Root CA - G3" certificate directly from Apple's own PKI
-// page (apple.com/certificateauthority) and paste it here verbatim
-// before this function handles a real notification. A wrong certificate
-// here fails SAFE (every verification is rejected, notifications are
-// simply never processed) rather than dangerously — self-check this by
-// confirming real Sandbox notifications verify successfully (§12V)
-// before assuming this is correct.
+// VERIFIED 2026-08-26 against the authoritative source: downloaded from
+// https://www.apple.com/certificateauthority/AppleRootCA-G3.cer (DER,
+// 583 bytes), converted with openssl, and diffed byte-for-byte against
+// the value below — identical.
+//   subject/issuer: CN=Apple Root CA - G3, OU=Apple Certification
+//                   Authority, O=Apple Inc., C=US   (self-signed root)
+//   validity:       2014-04-30 → 2039-04-30
+//   SHA-256:        63:34:3A:BF:B8:9A:6A:03:EB:B5:7E:9B:3F:5F:A7:BE:
+//                   7C:4F:5C:75:6F:30:17:B3:A8:C4:88:C3:65:3E:91:79
+//
+// If this value is ever edited, re-check that fingerprint. A wrong
+// certificate here fails SAFE (every verification is rejected, so
+// notifications are simply never processed) rather than dangerously —
+// but "silently never processed" is its own painful bug to chase, so
+// still confirm a real Sandbox notification verifies (§12V).
 const APPLE_ROOT_CA_G3_PEM = `-----BEGIN CERTIFICATE-----
 MIICQzCCAcmgAwIBAgIILcX8iNLFS5UwCgYIKoZIzj0EAwMwZzEbMBkGA1UEAwwS
 QXBwbGUgUm9vdCBDQSAtIEczMSYwJAYDVQQLDB1BcHBsZSBDZXJ0aWZpY2F0aW9u
