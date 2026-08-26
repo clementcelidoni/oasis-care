@@ -22,3 +22,6 @@ xcuserdata/
 # CocoaPods / Carthage (unused today, ignored defensively)
 Pods/
 Carthage/Build/
+
+# Supabase CLI local state (project ref cache, no secrets — but not repo content)
+supabase/.temp/
