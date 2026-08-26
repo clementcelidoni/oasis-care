@@ -154,7 +154,15 @@ struct SettingsView: View {
             }
             Button("Annuler", role: .cancel) {}
         } message: {
-            Text("Cela supprimera définitivement : vos jardins, vos végétaux, vos historiques, vos photos cloud et vos paramètres cloud. Cette action est irréversible.")
+            // §12L: deleting the Oasis Care account can never cancel an
+            // Apple subscription (only Apple/the user can do that) — a
+            // subscribed user who isn't warned would keep being billed
+            // with no account left to use it with.
+            if EntitlementService.shared.snapshot.plan != .free {
+                Text("Cela supprimera définitivement : vos jardins, vos végétaux, vos historiques, vos photos cloud et vos paramètres cloud. Cette action est irréversible.\n\nImportant : cela n'annule pas votre abonnement Apple, qui continuera à être facturé. Pour l'annuler, allez dans Réglages > [votre nom] > Abonnements sur votre iPhone.")
+            } else {
+                Text("Cela supprimera définitivement : vos jardins, vos végétaux, vos historiques, vos photos cloud et vos paramètres cloud. Cette action est irréversible.")
+            }
         }
     }
 

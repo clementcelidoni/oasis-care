@@ -152,7 +152,17 @@ final class StoreKitService: ObservableObject {
                 source: .storeKit
             )
         }
+
+        // §"RÈGLE ABSOLUE" — a downgrade (subscription expired, refunded,
+        // revoked) must never silently take a feature away with no
+        // explanation. Diffed against whatever was cached before this
+        // refresh, so this only fires on a real loss, never on first
+        // launch or an upgrade (see DowngradePolicy's own doc comment).
+        let previousSnapshot = EntitlementService.shared.snapshot
         EntitlementService.shared.update(snapshot)
+        if let notice = DowngradePolicy.notice(for: DowngradePolicy.lostEntitlements(previous: previousSnapshot, current: snapshot)) {
+            ToastCenter.shared.show(title: notice)
+        }
     }
 
     /// §"Statuts — gérer proprement les états réellement

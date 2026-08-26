@@ -26,8 +26,8 @@ struct SubscriptionSettingsView: View {
             }
 
             Section("Fonctions incluses") {
-                ForEach(Array(configuration.entitlements).sorted { $0.rawValue < $1.rawValue }) { entitlement in
-                    Text(entitlement.rawValue)
+                ForEach(Array(configuration.entitlements).sorted { $0.displayName < $1.displayName }) { entitlement in
+                    Text(entitlement.displayName)
                 }
             }
 

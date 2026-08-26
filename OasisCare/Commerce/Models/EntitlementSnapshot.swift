@@ -22,8 +22,15 @@ struct EntitlementSnapshot: Codable, Equatable {
     var lastVerifiedAt: Date
     var source: EntitlementSource
 
+    // Free's own real entitlement set (plantManagement, cloudSync,
+    // aiIdentification...) — NOT an empty set. `has(_:)` is documented
+    // as the one canonical check point for every feature, so a Free
+    // user's snapshot must actually carry what PlanConfigurationStore
+    // says Free includes, or the first feature gated with
+    // `has(.aiIdentification)`/`.dataExport`/etc. would wrongly lock out
+    // every free user.
     static let free = EntitlementSnapshot(
-        plan: .free, activeEntitlements: [], expirationDate: nil,
+        plan: .free, activeEntitlements: PlanConfigurationStore.defaults[.free]!.entitlements, expirationDate: nil,
         subscriptionStatus: .none, lastVerifiedAt: .now, source: .free
     )
 }
