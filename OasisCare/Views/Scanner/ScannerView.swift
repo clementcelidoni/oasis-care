@@ -49,7 +49,11 @@ struct ScannerView: View {
 
                 Group {
                     if case .authenticated = authState.status {
-                        content
+                        VStack(spacing: 0) {
+                            AIQuotaBanner(feature: .plantIdentification)
+                                .padding(.top, 8)
+                            content
+                        }
                     } else {
                         signInPrompt
                     }

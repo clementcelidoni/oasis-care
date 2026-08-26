@@ -22,6 +22,8 @@ struct PlantAssistantView: View {
     var body: some View {
         NavigationStack {
             VStack(spacing: 0) {
+                AIQuotaBanner(feature: .assistantMessage)
+                    .padding(.top, 8)
                 ScrollViewReader { proxy in
                     ScrollView {
                         VStack(alignment: .leading, spacing: 16) {
