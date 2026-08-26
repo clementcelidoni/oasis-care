@@ -37,11 +37,15 @@ struct ScannerView: View {
         NavigationStack {
             VStack(spacing: 0) {
                 // Spec §49: QR/NFC scanning is local-only (SmartTagService
-                // resolves purely from on-device data) and, per this same
-                // screen's own sign-in prompt below, guests keep full
-                // access to everything except AI photo identification —
-                // so unlike `content`, this row is never gated behind
-                // authState.
+                // resolves purely from on-device data), so unlike
+                // `content` this row is never gated behind authState — a
+                // guest can still use it without an account.
+                //
+                // Phase 12 does add a separate, commercial gate: QR/NFC
+                // is a Premium entitlement in §12A's launch matrix, so
+                // the two buttons check `.qrNfc` before acting. That is
+                // an entitlement check, not a sign-in check — the two are
+                // deliberately independent here.
                 scanButtonsSection
                     .padding()
 
