@@ -40,6 +40,10 @@ struct AIQuotaBanner: View {
             }
         }
         .task {
+            // A guest has no server-side counter to read, so skip the
+            // round-trip entirely rather than firing a call that can
+            // only come back 401.
+            guard case .authenticated = AuthState.shared.status else { return }
             status = try? await AIQuotaService.status(for: feature)
         }
     }
