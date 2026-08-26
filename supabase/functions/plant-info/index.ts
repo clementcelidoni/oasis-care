@@ -247,10 +247,10 @@ Deno.serve(async (req: Request) => {
 
   try {
     if (body.mode === "suggest") {
-      return await handleSuggest(openaiKey, body.query ?? "");
+      return await handleSuggest(openaiKey, admin, userData.user.id, body.query ?? "");
     }
     if (body.mode === "complete") {
-      return await handleComplete(openaiKey, admin, body.scientificName ?? "");
+      return await handleComplete(openaiKey, admin, userData.user.id, body.scientificName ?? "");
     }
     return jsonResponse({ error: "Mode inconnu (attendu: suggest ou complete)." }, 400);
   } catch (error) {
@@ -261,10 +261,18 @@ Deno.serve(async (req: Request) => {
   }
 });
 
-async function handleSuggest(apiKey: string, query: string): Promise<Response> {
+// deno-lint-ignore no-explicit-any
+async function handleSuggest(apiKey: string, admin: any, userId: string, query: string): Promise<Response> {
   const trimmed = query.trim();
   if (trimmed.length < 2) {
     return jsonResponse({ suggestions: [] });
+  }
+  // Shares the profileGeneration counter with handleComplete: both are
+  // the same user-facing feature (finding/completing a species), and
+  // spec only asks to "distinguer éventuellement" the categories.
+  const quota = await checkAndIncrementUsage(admin, userId, "profileGeneration");
+  if (!quota.allowed) {
+    return jsonResponse({ error: "Quota de recherches d'espèce atteint pour ce mois. Passez à une offre supérieure pour continuer." }, 429);
   }
   const result = await callOpenAIStructured(
     apiKey,
@@ -281,6 +289,7 @@ async function handleSuggest(apiKey: string, query: string): Promise<Response> {
 async function handleComplete(
   apiKey: string,
   admin: ReturnType<typeof createClient>,
+  userId: string,
   scientificName: string,
 ): Promise<Response> {
   const trimmed = scientificName.trim();
@@ -297,6 +306,14 @@ async function handleComplete(
 
   if (cached && isFresh(cached.generated_at as string)) {
     return jsonResponse({ profile: cached.profile_json, cached: true });
+  }
+
+  // Phase 12 §12H. Deliberately AFTER the cache check: a cross-user
+  // cache hit costs no OpenAI call, so charging the user's monthly
+  // quota for it would bill them for spend that never happened.
+  const quota = await checkAndIncrementUsage(admin, userId, "profileGeneration");
+  if (!quota.allowed) {
+    return jsonResponse({ error: "Quota de fiches d'espèce atteint pour ce mois. Passez à une offre supérieure pour continuer." }, 429);
   }
 
   const profile = await callOpenAIStructured(
@@ -406,4 +423,48 @@ function jsonResponse(body: unknown, status = 200): Response {
     status,
     headers: { "Content-Type": "application/json" },
   });
+}
+
+// Phase 12 §12H. Per-AI-category monthly quota (spec: "À 100 % :
+// bloquer uniquement la fonctionnalité IA concernée ... pas le reste de
+// l'app"), so running out of one category never disables the others.
+// Keep these numbers in sync with PlanConfigurationStore.swift.
+const AI_REQUESTS_PER_MONTH: Record<string, number> = { free: 10, premium: 200, biolab: 400 };
+
+/// Atomically checks and increments this user's usage_counters row for
+/// one AI feature this month, via the increment_usage_counter Postgres
+/// function (0041_phase12_commercialisation.sql) — a plain
+/// read-then-upsert here would race under concurrent requests from the
+/// same user.
+// deno-lint-ignore no-explicit-any
+async function checkAndIncrementUsage(admin: any, userId: string, feature: string): Promise<{ allowed: boolean; used: number }> {
+  const { data: entitlementRow } = await admin.from("subscription_entitlements").select("plan, workspace_id").eq("user_id", userId).limit(1).maybeSingle();
+  const plan = entitlementRow?.plan ?? "free";
+  const limit = AI_REQUESTS_PER_MONTH[plan] ?? AI_REQUESTS_PER_MONTH.free;
+
+  let workspaceId = entitlementRow?.workspace_id;
+  if (!workspaceId) {
+    const { data: memberRow } = await admin.from("workspace_members").select("workspace_id").eq("user_id", userId).limit(1).maybeSingle();
+    workspaceId = memberRow?.workspace_id;
+  }
+  if (!workspaceId) return { allowed: false, used: 0 };
+
+  const period = currentPeriod();
+  const { data, error } = await admin.rpc("increment_usage_counter", {
+    p_user_id: userId, p_workspace_id: workspaceId, p_feature: feature, p_period: period, p_limit: limit,
+  });
+  if (error || !data || data.length === 0) {
+    console.error("increment_usage_counter failed", error);
+    // Fail open rather than blocking a real user over a transient
+    // database error — the monthly limit is a profitability guard, not
+    // a hard security boundary, so an occasional missed count is a far
+    // smaller problem than refusing a paying customer's legitimate use.
+    return { allowed: true, used: 0 };
+  }
+  return { allowed: data[0].allowed, used: data[0].used };
+}
+
+function currentPeriod(): string {
+  const now = new Date();
+  return `${now.getUTCFullYear()}-${String(now.getUTCMonth() + 1).padStart(2, "0")}`;
 }
