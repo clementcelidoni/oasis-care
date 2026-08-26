@@ -32,6 +32,9 @@ struct DiagnosticExportView: View {
             "Offre : \(entitlementService.snapshot.plan.displayName)",
             "Statut d'abonnement (technique) : \(entitlementService.snapshot.subscriptionStatus.rawValue)",
             "Source de l'abonnement : \(entitlementService.snapshot.source.rawValue)",
+            // §12Z — without this, a Sandbox/TestFlight purchase and a
+            // real one look identical in a support ticket.
+            "Environnement d'achat : \(CommercializationState.current.label)",
         ]
         return lines.joined(separator: "\n")
     }
