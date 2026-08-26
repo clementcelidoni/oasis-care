@@ -11,6 +11,8 @@ struct SubscriptionSettingsView: View {
     @State private var isShowingPaywall: PaywallOffer?
     @State private var isRestoring = false
     @State private var restoreMessage: String?
+    @State private var quotaStatuses: [AIFeature: AIQuotaService.Status] = [:]
+    @State private var isLoadingQuotas = true
 
     private var snapshot: EntitlementSnapshot { entitlementService.snapshot }
     private var configuration: PlanConfiguration { planService.configuration(for: snapshot.plan) }
@@ -31,6 +33,29 @@ struct SubscriptionSettingsView: View {
                 if snapshot.source == .server {
                     Text("Accès offert, sans abonnement Apple. Rien ne vous est facturé et il n'y a rien à renouveler.")
                 }
+            }
+
+            // The 80% banner alone left no way to see consumption below
+            // the threshold — you only learned your usage when you were
+            // nearly out of it.
+            Section {
+                if isLoadingQuotas {
+                    HStack { ProgressView(); Text("Chargement…").foregroundStyle(.secondary) }
+                } else if quotaStatuses.isEmpty {
+                    Text("Consommation indisponible pour le moment.")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                } else {
+                    ForEach(AIFeature.allCases.filter { quotaStatuses[$0] != nil }) { feature in
+                        if let status = quotaStatuses[feature] {
+                            quotaRow(feature: feature, status: status)
+                        }
+                    }
+                }
+            } header: {
+                Text("Consommation IA ce mois-ci")
+            } footer: {
+                Text("Chaque catégorie a son propre quota : épuiser l'une n'empêche pas d'utiliser les autres. Les compteurs repartent de zéro au début de chaque mois.")
             }
 
             Section("Fonctions incluses") {
@@ -62,10 +87,31 @@ struct SubscriptionSettingsView: View {
         }
         .navigationTitle("Mon abonnement")
         .navigationBarTitleDisplayMode(.inline)
+        .task {
+            defer { isLoadingQuotas = false }
+            quotaStatuses = await AIQuotaService.allStatuses()
+        }
         .manageSubscriptionsSheet(isPresented: $isShowingManageSubscriptions)
         .sheet(item: $isShowingPaywall) { offer in
             PaywallView(offer: offer)
         }
+    }
+
+    private func quotaRow(feature: AIFeature, status: AIQuotaService.Status) -> some View {
+        VStack(alignment: .leading, spacing: 5) {
+            HStack {
+                Text(feature.displayName).font(.subheadline)
+                Spacer()
+                Text("\(status.used) / \(status.limit)")
+                    .font(.subheadline.monospacedDigit())
+                    .foregroundStyle(status.isAtLimit ? Color.red : (status.isNearLimit ? Color.orange : Color.secondary))
+            }
+            ProgressView(value: min(status.usageFraction, 1))
+                .tint(status.isAtLimit ? .red : (status.isNearLimit ? .orange : .accentColor))
+        }
+        .padding(.vertical, 2)
+        .accessibilityElement(children: .combine)
+        .accessibilityLabel("\(feature.displayName) : \(status.used) sur \(status.limit) utilisées ce mois-ci")
     }
 
     private func restore() async {

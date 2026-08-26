@@ -169,9 +169,13 @@ Deno.serve(async (req: Request) => {
   // this project has no supabase/functions/_shared/ folder, every
   // function stays individually copy-paste deployable.
   const admin = createClient(supabaseUrl, serviceRoleKey);
-  const quota = await checkAndIncrementUsage(admin, userData.user.id, "biolabRecommendation");
+  // smartMediaResearch, not biolabRecommendation: this function IS the
+  // Smart Media recommendation engine (Phase 7 V2), which is the spec's
+  // own name for this category. Grouping it with the BioLab inspection
+  // analyses would have left smartMediaResearch permanently at zero.
+  const quota = await checkAndIncrementUsage(admin, userData.user.id, "smartMediaResearch");
   if (!quota.allowed) {
-    return jsonResponse({ error: "Quota de recommandations BioLab atteint pour ce mois. Passez à une offre supérieure pour continuer." }, 429);
+    return jsonResponse({ error: "Quota Smart Media atteint pour ce mois. Passez à une offre supérieure pour continuer." }, 429);
   }
 
   const openaiKey = Deno.env.get("OPENAI_API_KEY");
