@@ -1,0 +1,97 @@
+@import "tailwindcss";
+
+/*
+ * Oasis Care Pro — identité visuelle.
+ *
+ * §UX : « Ne pas produire une interface générique d'ERP gris avec 50
+ * tableaux partout. » L'identité reste moderne, haut de gamme, végétale,
+ * claire et très visuelle.
+ *
+ * Les neutres sont volontairement teintés de vert : un gris parfaitement
+ * neutre à côté d'un accent végétal a toujours l'air d'un gris par
+ * défaut, pas d'un gris choisi.
+ */
+:root {
+  --canvas: #f7f8f6;
+  --surface: #ffffff;
+  --surface-raised: #fbfcfa;
+
+  --ink: #10201a;
+  --ink-soft: #46584f;
+  --ink-faint: #7c8b83;
+
+  --line: #e2e8e3;
+  --line-strong: #cbd6cf;
+
+  /* Accent : un vert forêt profond, pas le vert « validation ». */
+  --accent: #15654a;
+  --accent-hover: #10503a;
+  --accent-wash: #e8f2ed;
+  --accent-ink: #ffffff;
+
+  /* Couleurs sémantiques, distinctes de l'accent (§ information design). */
+  --positive: #1b7f5a;
+  --warning: #8a5a0e;
+  --warning-wash: #f7efdd;
+  --critical: #a03b31;
+  --critical-wash: #f9e7e4;
+  --info: #245f7e;
+  --info-wash: #e3eef4;
+}
+
+@theme inline {
+  --color-canvas: var(--canvas);
+  --color-surface: var(--surface);
+  --color-surface-raised: var(--surface-raised);
+
+  --color-ink: var(--ink);
+  --color-ink-soft: var(--ink-soft);
+  --color-ink-faint: var(--ink-faint);
+
+  --color-line: var(--line);
+  --color-line-strong: var(--line-strong);
+
+  --color-accent: var(--accent);
+  --color-accent-hover: var(--accent-hover);
+  --color-accent-wash: var(--accent-wash);
+  --color-accent-ink: var(--accent-ink);
+
+  --color-positive: var(--positive);
+  --color-warning: var(--warning);
+  --color-warning-wash: var(--warning-wash);
+  --color-critical: var(--critical);
+  --color-critical-wash: var(--critical-wash);
+  --color-info: var(--info);
+  --color-info-wash: var(--info-wash);
+
+  --font-sans: var(--font-geist-sans);
+  --font-mono: var(--font-geist-mono);
+}
+
+body {
+  background: var(--canvas);
+  color: var(--ink);
+  font-family: var(--font-geist-sans), ui-sans-serif, system-ui, sans-serif;
+  -webkit-font-smoothing: antialiased;
+}
+
+/* Les chiffres alignés en colonne doivent l'être vraiment : un ERP
+   passe sa vie à afficher des montants les uns sous les autres. */
+.tabular {
+  font-variant-numeric: tabular-nums;
+}
+
+:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+  border-radius: 3px;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    transition-duration: 0.01ms !important;
+  }
+}
