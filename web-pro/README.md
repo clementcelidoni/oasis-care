@@ -1,36 +1,79 @@
-This is a [Next.js](https://nextjs.org) project bootstrapped with [`create-next-app`](https://nextjs.org/docs/app/api-reference/cli/create-next-app).
+# Oasis Care Pro — application web
 
-## Getting Started
+ERP / CRM pour paysagistes et pépiniéristes (Phase 11). Application
+Next.js 16 distincte de l'app iOS, qui lit **la même base Supabase** :
+mêmes comptes, mêmes jardins, mêmes données.
 
-First, run the development server:
+## Démarrer
 
 ```bash
-npm run dev
-# or
-yarn dev
-# or
-pnpm dev
-# or
-bun dev
+npm install --prefix web-pro
+cp web-pro/.env.example web-pro/.env.local   # puis renseigner les valeurs
+npm run dev --prefix web-pro
 ```
 
-Open [http://localhost:3000](http://localhost:3000) with your browser to see the result.
+Le site est alors sur **http://localhost:3000**.
 
-You can start editing the page by modifying `app/page.tsx`. The page auto-updates as you edit the file.
+> Ce n'est **pas** un site en ligne : c'est un serveur de développement qui
+> tourne sur votre machine. Il faut que la commande ci-dessus soit lancée,
+> et la fenêtre laissée ouverte, pour que l'adresse réponde.
 
-This project uses [`next/font`](https://nextjs.org/docs/app/building-your-application/optimizing/fonts) to automatically optimize and load [Geist](https://vercel.com/font), a new font family for Vercel.
+### ⚠️ Le port 3000 n'est pas négociable pour l'instant
 
-## Learn More
+La connexion passe par Supabase, qui n'accepte de rediriger que vers des
+adresses explicitement autorisées. `http://localhost:3000/**` fait partie
+de la liste ; un autre port **ne fonctionnera pas** et l'échec ressemble à
+un bug de connexion sans message clair.
 
-To learn more about Next.js, take a look at the following resources:
+Si le port 3000 est déjà pris par un autre projet, arrêtez-le — ou
+demandez l'ajout du nouveau port dans Supabase
+(*Authentication → URL Configuration → Redirect URLs*).
 
-- [Next.js Documentation](https://nextjs.org/docs) - learn about Next.js features and API.
-- [Learn Next.js](https://nextjs.org/learn) - an interactive Next.js tutorial.
+## Connexion
 
-You can check out [the Next.js GitHub repository](https://github.com/vercel/next.js) - your feedback and contributions are welcome!
+Mêmes méthodes que l'app iPhone, et **le même compte** : Apple, Google,
+ou lien magique par e-mail. Il n'y a pas de mot de passe — l'app iOS n'en
+a jamais créé.
 
-## Deploy on Vercel
+À la première connexion, si vous n'avez pas encore d'entreprise, l'app
+propose d'en créer une (`/bienvenue`).
 
-The easiest way to deploy your Next.js app is to use the [Vercel Platform](https://vercel.com/new?utm_medium=default-template&filter=next.js&utm_source=create-next-app&utm_campaign=create-next-app-readme) from the creators of Next.js.
+## Architecture
 
-Check out our [Next.js deployment documentation](https://nextjs.org/docs/app/building-your-application/deploying) for more details.
+| | |
+|---|---|
+| `app/(app)/` | Écrans authentifiés, avec la sidebar |
+| `app/login`, `app/auth/callback` | Connexion |
+| `app/bienvenue` | Création de l'entreprise, au premier lancement |
+| `lib/supabase/` | Clients Supabase (navigateur et serveur) |
+| `lib/auth/` | Organisation, rôles, permissions |
+| `lib/crm/` | Types et actions du CRM |
+| `proxy.ts` | Rafraîchissement de session |
+
+### Deux choses à savoir avant de coder ici
+
+**`proxy.ts`, pas `middleware.ts`.** La convention `middleware` est
+dépréciée depuis Next.js 16. Voir `AGENTS.md` : lire la doc locale dans
+`node_modules/next/dist/docs/` avant d'écrire du code, cette version
+diffère de ce que connaissent la plupart des exemples en ligne.
+
+**Le proxy n'est pas la sécurité.** Il rafraîchit la session et renvoie
+les visiteurs déconnectés, rien de plus — la documentation de Next
+déconseille explicitement d'en faire la couche d'autorisation. Ce qui
+protège réellement, c'est `getUser()` côté serveur et **RLS** en base.
+De même, `lib/auth/permissions.ts` sert à afficher ou masquer ; la
+vérification qui compte est `has_permission()` en PostgreSQL.
+
+## Base de données
+
+Migrations dans `../supabase/migrations/` :
+
+- `0043` — organisations, membres, 14 rôles, permissions, invitations, audit
+- `0044` — CRM : clients/prospects, contacts, sites, opportunités, activités
+
+Tests d'isolation dans `../supabase/tests/`. Ils s'exécutent sous RLS
+réelle et se terminent par un `ROLLBACK` : rien ne subsiste en base.
+
+**Piège connu** : `gardens.id` n'a pas de valeur par défaut. Cette table
+est alimentée par l'app iOS, qui génère ses propres UUID. Toute création
+de jardin depuis le web doit donc fournir l'`id` elle-même.
