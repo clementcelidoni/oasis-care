@@ -11,6 +11,10 @@
     "moduleResolution": "bundler",
     "resolveJsonModule": true,
     "isolatedModules": true,
+    // Les fichiers *.test.ts sont exécutés directement par `node --test`,
+    // qui exige l'extension dans les imports. `noEmit` étant actif, cette
+    // option est sans effet sur le bundle applicatif.
+    "allowImportingTsExtensions": true,
     "jsx": "react-jsx",
     "incremental": true,
     "plugins": [
