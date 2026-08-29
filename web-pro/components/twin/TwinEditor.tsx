@@ -13,9 +13,14 @@ import {
   MAP_MODE_LABELS,
   REVISION_STATE_LABELS,
   type TwinDocument, type TwinObject, type TwinArea, type ObjectType,
+  planScale,
   type AreaType, type MapMode, type RevisionState, type RevisionSummary,
+  type PlanImage,
 } from "@/lib/twin/types";
 import { saveTwin, saveRevision, listRevisions, loadRevision } from "@/lib/twin/actions";
+import { useTileLayer } from "./useTileLayer";
+import { PlanPanel } from "./PlanPanel";
+import { listPlanImages, updatePlanImage } from "@/lib/twin/planActions";
 
 type Tool =
   | { kind: "select" }
@@ -61,6 +66,11 @@ export function TwinEditor({
   const [saveState, setSaveState] = useState<SaveState>("idle");
   const [revisions, setRevisions] = useState<RevisionSummary[]>([]);
   const [showRevisions, setShowRevisions] = useState(false);
+  const [plans, setPlans] = useState<PlanImage[]>([]);
+  const [showPlans, setShowPlans] = useState(false);
+  const [calibratingId, setCalibratingId] = useState<string | null>(null);
+  const [calibrationPoints, setCalibrationPoints] = useState<Point[]>([]);
+  const planImages = useRef(new Map<string, HTMLImageElement>());
   const modifiedAt = useRef<string | null>(baseModifiedAt);
 
   const [camera, setCamera] = useState<Camera>({ centerX: 0, centerY: 0, pixelsPerMeter: 14 });
@@ -198,6 +208,85 @@ export function TwinEditor({
     [commit],
   );
 
+  // ---------- plans importés ----------
+  const reloadPlans = useCallback(async () => {
+    const list = await listPlanImages(initial.gardenId);
+    for (const plan of list) {
+      if (!plan.url || planImages.current.has(plan.id)) continue;
+      const image = new Image();
+      image.src = plan.url;
+      image.onload = () => setPlans((p) => [...p]); // redessine une fois chargée
+      planImages.current.set(plan.id, image);
+    }
+    setPlans(list);
+  }, [initial.gardenId]);
+
+  useEffect(() => {
+    void reloadPlans();
+  }, [reloadPlans]);
+
+  /**
+   * Termine le calibrage : deux points cliqués dans le monde, une
+   * distance réelle saisie.
+   *
+   * Les points sont reconvertis en PIXELS de l'image avant d'être
+   * stockés, parce que c'est ce qu'ils désignent vraiment — deux repères
+   * sur le document. La conversion utilise l'échelle actuelle, même
+   * fausse : le rapport entre les deux points, lui, est juste, et c'est
+   * tout ce dont le calcul a besoin.
+   */
+  const finishCalibration = useCallback(
+    async (points: Point[]) => {
+      const plan = plans.find((p) => p.id === calibratingId);
+      const image = calibratingId ? planImages.current.get(calibratingId) : null;
+      if (!plan || !image || points.length !== 2) return;
+
+      const answer = window.prompt(
+        "Quelle est la distance réelle entre ces deux points, en mètres ?",
+        "10",
+      );
+      const realDistance = Number((answer ?? "").replace(",", "."));
+      if (!Number.isFinite(realDistance) || realDistance <= 0) {
+        setCalibratingId(null);
+        setCalibrationPoints([]);
+        return;
+      }
+
+      const currentScale = planScale(plan.calibration) ?? 0.01;
+      const toImagePixels = (p: Point) => {
+        const dx = p.xMeters - plan.positionX;
+        const dy = p.yMeters - plan.positionY;
+        const cos = Math.cos(plan.rotationRadians);
+        const sin = Math.sin(plan.rotationRadians);
+        // Rotation inverse pour revenir dans le repère de l'image, puis
+        // division par l'échelle. y est inversé : l'image descend.
+        return {
+          x: (dx * cos + dy * sin) / currentScale,
+          y: -(-dx * sin + dy * cos) / currentScale,
+        };
+      };
+
+      const a = toImagePixels(points[0]);
+      const b = toImagePixels(points[1]);
+
+      await updatePlanImage({
+        id: plan.id,
+        gardenId: initial.gardenId,
+        calibration: {
+          ax: a.x, ay: a.y, bx: b.x, by: b.y,
+          realDistanceMeters: realDistance,
+        },
+      });
+      setCalibratingId(null);
+      setCalibrationPoints([]);
+      await reloadPlans();
+    },
+    // `reloadPlans` est défini juste après ; la référence est résolue au
+    // moment de l'appel, pas de la définition.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [plans, calibratingId, initial.gardenId],
+  );
+
   // ---------- taille du canvas ----------
   useEffect(() => {
     const element = wrapRef.current;
@@ -230,6 +319,19 @@ export function TwinEditor({
     });
   }, [view, doc]);
 
+  // Fond satellite. L'origine géographique vient du jardin : sans
+  // latitude/longitude, aucun géoréférencement n'est possible et on le
+  // dit plutôt que d'afficher un fond faux.
+  const geoOrigin = useMemo(
+    () =>
+      initial.latitude != null && initial.longitude != null
+        ? { latitude: initial.latitude, longitude: initial.longitude }
+        : null,
+    [initial.latitude, initial.longitude],
+  );
+  const showTiles = (mapMode === "satellite" || mapMode === "hybrid") && geoOrigin !== null;
+  const tileLayer = useTileLayer(showTiles, geoOrigin, camera, view);
+
   const allVertices = useMemo(
     () => [...doc.boundaryPoints, ...doc.areas.flatMap((a) => a.points)],
     [doc.boundaryPoints, doc.areas],
@@ -254,15 +356,55 @@ export function TwinEditor({
     ctx.fillStyle = mapMode === "oasisPlan" ? "#fbfcfa" : "#e8ece7";
     ctx.fillRect(0, 0, view.width, view.height);
 
-    if (mapMode !== "oasisPlan") {
+    if (showTiles) {
+      tileLayer.draw(ctx);
+      // En mode hybride, on voile légèrement la photo : sans cela les
+      // traits du plan se perdent dans le feuillage.
+      if (mapMode === "hybrid") {
+        ctx.fillStyle = "rgba(251,252,250,0.55)";
+        ctx.fillRect(0, 0, view.width, view.height);
+      }
+    } else if (mapMode !== "oasisPlan") {
       ctx.fillStyle = "#5d6b64";
       ctx.font = "13px system-ui, sans-serif";
       ctx.textAlign = "center";
       ctx.fillText(
-        `Fond « ${MAP_MODE_LABELS[mapMode]} » : aucun fournisseur de tuiles configuré.`,
+        geoOrigin === null
+          ? "Ce jardin n’a pas de coordonnées : impossible de caler une photo aérienne."
+          : "Fond indisponible à ce niveau de zoom.",
         view.width / 2, 28,
       );
       ctx.textAlign = "left";
+    }
+
+    // Plans importés, sous tout le reste : c'est un calque de fond,
+    // le dessin doit rester lisible par-dessus.
+    for (const plan of plans) {
+      if (!plan.isVisible) continue;
+      const image = planImages.current.get(plan.id);
+      if (!image || !image.complete || image.naturalWidth === 0) continue;
+
+      // Sans calibrage on ne connaît pas l'échelle. Plutôt que d'en
+      // inventer une — ce qui ferait mesurer un terrain sur un plan
+      // faux — on affiche 1 pixel = 1 cm, valeur ouvertement provisoire
+      // que le panneau signale comme non calibrée.
+      const metersPerPixel = planScale(plan.calibration) ?? 0.01;
+      const widthMeters = image.naturalWidth * metersPerPixel;
+      const heightMeters = image.naturalHeight * metersPerPixel;
+
+      const topLeft = toScreen({ xMeters: plan.positionX, yMeters: plan.positionY });
+      ctx.save();
+      ctx.globalAlpha = plan.opacity;
+      ctx.translate(topLeft.x, topLeft.y);
+      // Rotation inversée : l'écran a son y vers le bas, le monde vers
+      // le haut — voir worldToScreen.
+      ctx.rotate(-plan.rotationRadians);
+      ctx.drawImage(
+        image, 0, 0,
+        widthMeters * camera.pixelsPerMeter,
+        heightMeters * camera.pixelsPerMeter,
+      );
+      ctx.restore();
     }
 
     // Grille — seulement si elle reste lisible.
@@ -426,6 +568,27 @@ export function TwinEditor({
       }
     }
 
+    // Points de calibrage en cours de saisie.
+    if (calibratingId && calibrationPoints.length > 0) {
+      ctx.strokeStyle = "#a03b31";
+      ctx.fillStyle = "#a03b31";
+      ctx.lineWidth = 2;
+      if (calibrationPoints.length === 2) {
+        const a = toScreen(calibrationPoints[0]);
+        const b = toScreen(calibrationPoints[1]);
+        ctx.beginPath();
+        ctx.moveTo(a.x, a.y);
+        ctx.lineTo(b.x, b.y);
+        ctx.stroke();
+      }
+      for (const p of calibrationPoints) {
+        const s2 = toScreen(p);
+        ctx.beginPath();
+        ctx.arc(s2.x, s2.y, 5, 0, Math.PI * 2);
+        ctx.fill();
+      }
+    }
+
     // Échelle
     const targets = [1, 2, 5, 10, 20, 50, 100];
     const meters = targets.find((t) => t * camera.pixelsPerMeter > 60) ?? 100;
@@ -443,7 +606,20 @@ export function TwinEditor({
     ctx.fillStyle = "#46584f";
     ctx.font = "11px system-ui, sans-serif";
     ctx.fillText(`${meters} m`, 16, view.height - 28);
-  }, [doc, camera, view, selection, draft, cursor, snap, mapMode]);
+
+    // Attribution du fournisseur : obligatoire pour les fonds gratuits.
+    if (showTiles && tileLayer.attribution) {
+      ctx.font = "10px system-ui, sans-serif";
+      ctx.textAlign = "right";
+      const w = ctx.measureText(tileLayer.attribution).width;
+      ctx.fillStyle = "rgba(255,255,255,0.75)";
+      ctx.fillRect(view.width - w - 12, view.height - 20, w + 8, 14);
+      ctx.fillStyle = "#46584f";
+      ctx.fillText(tileLayer.attribution, view.width - 8, view.height - 10);
+      ctx.textAlign = "left";
+    }
+  }, [doc, camera, view, selection, draft, cursor, snap, mapMode, showTiles, tileLayer,
+      geoOrigin, plans, calibratingId, calibrationPoints]);
 
   // ---------- interaction ----------
   const pointerWorld = (event: React.PointerEvent | React.MouseEvent): Point => {
@@ -472,6 +648,14 @@ export function TwinEditor({
   function onPointerDown(event: React.PointerEvent) {
     canvasRef.current?.setPointerCapture(event.pointerId);
     const raw = pointerWorld(event);
+
+    // Calibrage : deux clics, puis la distance réelle.
+    if (calibratingId) {
+      const next = [...calibrationPoints, raw].slice(-2);
+      setCalibrationPoints(next);
+      if (next.length === 2) void finishCalibration(next);
+      return;
+    }
 
     // Bouton du milieu, ou espace : déplacement de la vue.
     if (event.button === 1 || event.altKey) {
@@ -713,8 +897,10 @@ export function TwinEditor({
         onUndo={undo} onRedo={redo}
         onFinish={finishDraft} drafting={draft.length > 0}
         saveState={saveState} gardenName={initial.gardenName}
-        onToggleRevisions={() => setShowRevisions((v) => !v)}
+        onToggleRevisions={() => { setShowRevisions((v) => !v); setShowPlans(false); }}
         revisionsOpen={showRevisions}
+        onTogglePlans={() => { setShowPlans((v) => !v); setShowRevisions(false); }}
+        plansOpen={showPlans}
       />
 
       {saveState === "conflict" && (
@@ -762,7 +948,24 @@ export function TwinEditor({
           )}
         </div>
 
-        {showRevisions ? (
+        {showPlans ? (
+          <PlanPanel
+            gardenId={initial.gardenId}
+            plans={plans}
+            onReload={reloadPlans}
+            calibratingId={calibratingId}
+            onStartCalibration={(id) => {
+              setCalibratingId(id);
+              setCalibrationPoints([]);
+              setTool({ kind: "select" });
+            }}
+            onCancelCalibration={() => {
+              setCalibratingId(null);
+              setCalibrationPoints([]);
+            }}
+            onClose={() => setShowPlans(false)}
+          />
+        ) : showRevisions ? (
           <Revisions
             revisions={revisions}
             onCapture={captureRevision}
@@ -792,7 +995,7 @@ export function TwinEditor({
 function Toolbar({
   tool, setTool, mapMode, setMapMode, snap, setSnap,
   onUndo, onRedo, onFinish, drafting, saveState, gardenName,
-  onToggleRevisions, revisionsOpen,
+  onToggleRevisions, revisionsOpen, onTogglePlans, plansOpen,
 }: {
   tool: Tool; setTool: (t: Tool) => void;
   mapMode: MapMode; setMapMode: (m: MapMode) => void;
@@ -800,6 +1003,7 @@ function Toolbar({
   onUndo: () => void; onRedo: () => void; onFinish: () => void;
   drafting: boolean; saveState: SaveState; gardenName: string;
   onToggleRevisions: () => void; revisionsOpen: boolean;
+  onTogglePlans: () => void; plansOpen: boolean;
 }) {
   const SAVE_LABEL: Record<SaveState, string> = {
     idle: "", saving: "Enregistrement…", saved: "Enregistré",
@@ -853,6 +1057,10 @@ function Toolbar({
 
       <span className="mx-1 h-5 w-px bg-line" />
 
+      <button onClick={onTogglePlans}
+        className={`rounded-md px-2.5 py-1.5 text-xs font-medium ${plansOpen ? "bg-accent-wash text-accent" : "text-ink-soft hover:bg-canvas"}`}>
+        Plan importé
+      </button>
       <button onClick={onToggleRevisions}
         className={`rounded-md px-2.5 py-1.5 text-xs font-medium ${revisionsOpen ? "bg-accent-wash text-accent" : "text-ink-soft hover:bg-canvas"}`}>
         Versions

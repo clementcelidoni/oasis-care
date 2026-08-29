@@ -27,7 +27,7 @@ export async function loadTwin(gardenId: string): Promise<TwinDocument | null> {
 
   const { data: garden } = await supabase
     .from("gardens")
-    .select("id, name")
+    .select("id, name, latitude, longitude")
     .eq("id", gardenId)
     .is("deleted_at", null)
     .maybeSingle();
@@ -59,6 +59,8 @@ export async function loadTwin(gardenId: string): Promise<TwinDocument | null> {
   return {
     gardenId: garden.id,
     gardenName: garden.name,
+    latitude: garden.latitude,
+    longitude: garden.longitude,
     boundary: boundary ? { id: boundary.id, points: boundary.points ?? [] } : null,
     areas: (areas ?? []).map((a) => ({
       id: a.id,
@@ -115,9 +117,13 @@ export async function twinLastModified(gardenId: string): Promise<string | null>
  * ids à chaque sauvegarde et ferait, côté iPhone, disparaître puis
  * réapparaître tout le jardin à chaque synchronisation.
  *
- * Les suppressions sont douces (`deleted_at`), comme le fait déjà le
- * Sync Engine iOS — un `delete` brutal empêcherait l'autre appareil de
- * jamais apprendre que l'objet a disparu.
+ * Les suppressions sont DOUCES (`deleted_at`) — contrairement au Sync
+ * Engine iOS, qui supprime en dur. Ce n'est pas un alignement mais un
+ * choix : une ligne réellement effacée est indiscernable d'une ligne qui
+ * n'a jamais existé, donc la suppression ne pourrait jamais remonter
+ * jusqu'au téléphone. C'est `pullDigitalTwin` côté Swift qui applique
+ * ces suppressions, et le restore filtre désormais `deleted_at` — sans
+ * quoi un appareil neuf ressusciterait tout ce qui a été supprimé ici.
  */
 export async function saveTwin(
   payload: SavePayload,

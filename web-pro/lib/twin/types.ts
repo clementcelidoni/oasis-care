@@ -157,6 +157,9 @@ export type TwinBoundary = {
 export type TwinDocument = {
   gardenId: string;
   gardenName: string;
+  /** Origine du repère local. Sans elle, aucun fond satellite possible. */
+  latitude: number | null;
+  longitude: number | null;
   boundary: TwinBoundary | null;
   areas: TwinArea[];
   objects: TwinObject[];
@@ -184,6 +187,51 @@ export type RevisionSummary = {
   objectCount: number;
   areaCount: number;
 };
+
+/**
+ * Plan importé sous le jumeau numérique.
+ *
+ * Le calibrage est stocké en PIXELS de l'image : deux repères sur le
+ * document scanné, plus la distance réelle qui les sépare. L'échelle
+ * (`metersPerPixel`) en découle — voir `planScale`. Stocker directement
+ * une échelle empêcherait de la recalculer si l'utilisateur corrige un
+ * de ses deux points.
+ */
+export type PlanCalibration = {
+  ax: number;
+  ay: number;
+  bx: number;
+  by: number;
+  realDistanceMeters: number;
+};
+
+export type PlanImage = {
+  id: string;
+  /** URL signée, valable une heure. Nulle si la signature a échoué. */
+  url: string | null;
+  positionX: number;
+  positionY: number;
+  rotationRadians: number;
+  opacity: number;
+  isVisible: boolean;
+  calibration: PlanCalibration | null;
+  originalFilename: string | null;
+};
+
+/**
+ * Mètres par pixel d'image. `null` tant que le plan n'est pas calibré —
+ * et dans ce cas il ne doit surtout pas être dessiné à une échelle
+ * inventée, sous peine de faire mesurer un terrain sur un plan faux.
+ */
+export function planScale(calibration: PlanCalibration | null): number | null {
+  if (!calibration) return null;
+  const pixels = Math.hypot(
+    calibration.bx - calibration.ax,
+    calibration.by - calibration.ay,
+  );
+  if (pixels <= 0 || calibration.realDistanceMeters <= 0) return null;
+  return calibration.realDistanceMeters / pixels;
+}
 
 export type MapMode = "oasisPlan" | "satellite" | "hybrid" | "standard";
 
