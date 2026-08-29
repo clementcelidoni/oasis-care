@@ -7,8 +7,12 @@ import Supabase
 /// network never blocks a user action — this only catches the cloud up in
 /// the background, afterward.
 ///
-/// Push-only for now: pulling another device's changes and resolving
-/// conflicts aren't built yet (single-device use is fully covered). The
+/// Essentiellement push : la synchronisation descendante générale
+/// (fusionner les modifications d'un autre appareil sur les 54 modèles)
+/// n'existe toujours pas. Depuis la Phase 11, `pullDigitalTwin` fait
+/// exception et redescend les entités du Digital Twin, parce
+/// qu'Oasis Care Pro Web écrit dans ces mêmes tables et qu'un plan
+/// modifié sur ordinateur doit se voir sur le téléphone. The
 /// "import my local data" flow the spec calls for on first account
 /// creation doesn't need separate code — every local record already
 /// defaults to `.pendingCreate`, so a guest's very first sync after
@@ -116,6 +120,11 @@ final class SyncEngine: ObservableObject {
             try await pushBioreactorCycleExecutions(workspaceID: workspaceID, context: context)
             try await pushBioLabAlerts(workspaceID: workspaceID, context: context)
             try await pushPendingDeletions(context: context)
+            // APRÈS les pushes, jamais avant : on envoie d'abord ce qui a
+            // été fait ici, puis on récupère ce qui a été fait ailleurs.
+            // L'inverse écraserait le travail local par une version
+            // serveur qui l'ignore encore.
+            try await pullDigitalTwin(context: context)
             try context.save()
             lastSyncError = nil
             lastSyncedAt = .now
@@ -237,17 +246,22 @@ final class SyncEngine: ObservableObject {
     /// there is ANY local garden or plant already (e.g. guest data from
     /// before this sign-in), this does nothing and sync stays push-only,
     /// same as before — merging two non-empty data sets is a harder
-    /// problem this phase doesn't attempt. `deleted_at` columns exist in
-    /// the schema but nothing currently sets them (deletions are hard
-    /// deletes — see pushPendingDeletions), so no extra filtering is
-    /// needed here: a row coming back from SELECT is, by construction,
-    /// not deleted.
+    /// problem this phase doesn't attempt. Voir `pullDigitalTwin`, qui
+    /// couvre depuis la Phase 11 le cas d'un appareil déjà rempli, pour
+    /// les seules entités que l'application web modifie.
+    ///
+    /// Les `select` filtrent `deleted_at`. Ce n'était pas le cas au
+    /// départ, et le commentaire d'origine expliquait que rien ne
+    /// posait jamais cette colonne — c'était vrai tant qu'iOS était
+    /// seul, puisqu'il supprime en dur. Oasis Care Pro Web supprime en
+    /// douceur, donc sans ce filtre un appareil neuf ressusciterait tout
+    /// ce qui a été supprimé depuis l'ordinateur.
     private func restoreFromCloudIfNeeded(context: ModelContext) async throws {
         let hasLocalGardens = ((try? context.fetchCount(FetchDescriptor<Garden>())) ?? 0) > 0
         let hasLocalPlants = ((try? context.fetchCount(FetchDescriptor<Plant>())) ?? 0) > 0
         guard !hasLocalGardens, !hasLocalPlants else { return }
 
-        let remoteGardens: [GardenRow] = try await AuthService.client.from("gardens").select().execute().value
+        let remoteGardens: [GardenRow] = try await AuthService.client.from("gardens").select().is("deleted_at", value: nil).execute().value
         guard !remoteGardens.isEmpty else { return }
 
         var gardensByID: [UUID: Garden] = [:]
@@ -916,7 +930,7 @@ final class SyncEngine: ObservableObject {
             context.insert(pond)
         }
 
-        let remoteBoundaries: [GardenBoundaryRow] = try await AuthService.client.from("garden_boundaries").select().execute().value
+        let remoteBoundaries: [GardenBoundaryRow] = try await AuthService.client.from("garden_boundaries").select().is("deleted_at", value: nil).execute().value
         for row in remoteBoundaries {
             let garden = row.gardenId.flatMap { gardensByID[$0] }
             let boundary = GardenBoundary(garden: garden, points: row.points)
@@ -927,7 +941,7 @@ final class SyncEngine: ObservableObject {
             garden?.boundary = boundary
         }
 
-        let remoteMapObjects: [GardenMapObjectRow] = try await AuthService.client.from("garden_map_objects").select().execute().value
+        let remoteMapObjects: [GardenMapObjectRow] = try await AuthService.client.from("garden_map_objects").select().is("deleted_at", value: nil).execute().value
         for row in remoteMapObjects {
             let garden = row.gardenId.flatMap { gardensByID[$0] }
             let object = GardenMapObject(
@@ -955,7 +969,7 @@ final class SyncEngine: ObservableObject {
             context.insert(object)
         }
 
-        let remoteAreas: [GardenAreaRow] = try await AuthService.client.from("garden_areas").select().execute().value
+        let remoteAreas: [GardenAreaRow] = try await AuthService.client.from("garden_areas").select().is("deleted_at", value: nil).execute().value
         for row in remoteAreas {
             let garden = row.gardenId.flatMap { gardensByID[$0] }
             let area = GardenArea(garden: garden, areaType: row.areaType, name: row.name, points: row.points)
@@ -969,7 +983,7 @@ final class SyncEngine: ObservableObject {
             context.insert(area)
         }
 
-        let remotePipes: [IrrigationPipeRow] = try await AuthService.client.from("irrigation_pipes").select().execute().value
+        let remotePipes: [IrrigationPipeRow] = try await AuthService.client.from("irrigation_pipes").select().is("deleted_at", value: nil).execute().value
         for row in remotePipes {
             let garden = row.gardenId.flatMap { gardensByID[$0] }
             let pipe = IrrigationPipe(garden: garden, lineType: row.lineType, diameterMM: row.diameterMM, material: row.material, points: row.points)
@@ -5074,6 +5088,187 @@ final class SyncEngine: ObservableObject {
     }
 
     // MARK: - Pending deletions
+
+    // ============================================================
+    // Téléchargement du Digital Twin (Phase 11)
+    // ============================================================
+
+    /// Récupère les modifications faites AILLEURS sur le Digital Twin —
+    /// en pratique depuis Oasis Care Pro Web, qui écrit dans ces mêmes
+    /// tables.
+    ///
+    /// Pourquoi ceci existe : jusqu'ici la synchronisation était en
+    /// écriture seule (voir la doc de cette classe), et
+    /// `restoreFromCloudIfNeeded` ne s'exécute que sur un appareil
+    /// vierge. Un jardin modifié sur le web ne redescendait donc jamais
+    /// sur un téléphone qui contenait déjà des données — signalé à
+    /// l'usage, pas en test.
+    ///
+    /// Périmètre volontairement restreint aux entités que le web
+    /// modifie réellement (jardins, limite, zones, objets). Un moteur de
+    /// fusion général sur les 54 modèles est un tout autre problème, et
+    /// c'est exactement le genre de chantier qui a déjà causé une perte
+    /// de données sur ce projet.
+    ///
+    /// RÈGLE DE FUSION — le local gagne s'il est en attente.
+    /// Une ligne distante n'est appliquée que si la copie locale est
+    /// `.synced`, c'est-à-dire sans modification non encore envoyée.
+    /// Autrement on écraserait du travail que l'utilisateur vient de
+    /// faire hors ligne et qui n'a pas encore pu partir. Dans ce cas on
+    /// ne touche à rien : le push du prochain cycle enverra la version
+    /// locale, et c'est elle qui fera foi.
+    private func pullDigitalTwin(context: ModelContext) async throws {
+        // 1. Jardins — un jardin créé sur le web doit apparaître ici.
+        let remoteGardens: [GardenRow] = try await AuthService.client
+            .from("gardens").select().is("deleted_at", value: nil).execute().value
+
+        var localGardens = Dictionary(
+            uniqueKeysWithValues: (try context.fetch(FetchDescriptor<Garden>())).map { ($0.id, $0) }
+        )
+
+        for row in remoteGardens {
+            if let existing = localGardens[row.id] {
+                guard existing.syncStatus == .synced else { continue }
+                existing.name = row.name
+                existing.address = row.address
+                existing.notes = row.notes
+                existing.latitude = row.latitude
+                existing.longitude = row.longitude
+                existing.locationName = row.locationName
+                existing.updatedAt = row.updatedAt
+            } else {
+                let garden = Garden(
+                    name: row.name, address: row.address, notes: row.notes,
+                    dateCreated: row.dateCreated
+                )
+                garden.id = row.id
+                garden.latitude = row.latitude
+                garden.longitude = row.longitude
+                garden.locationName = row.locationName
+                garden.weatherEnabled = row.weatherEnabled
+                garden.preferredMapMode = row.preferredMapMode ?? .oasisPlan
+                garden.syncStatus = .synced
+                garden.updatedAt = row.updatedAt
+                context.insert(garden)
+                localGardens[row.id] = garden
+            }
+        }
+
+        // 2. Limite de propriété.
+        let remoteBoundaries: [GardenBoundaryRow] = try await AuthService.client
+            .from("garden_boundaries").select().is("deleted_at", value: nil).execute().value
+        let localBoundaries = Dictionary(
+            uniqueKeysWithValues: (try context.fetch(FetchDescriptor<GardenBoundary>())).map { ($0.id, $0) }
+        )
+        for row in remoteBoundaries {
+            let garden = row.gardenId.flatMap { localGardens[$0] }
+            if let existing = localBoundaries[row.id] {
+                guard existing.syncStatus == .synced else { continue }
+                existing.points = row.points
+                existing.updatedAt = row.updatedAt
+            } else {
+                let boundary = GardenBoundary(garden: garden, points: row.points)
+                boundary.id = row.id
+                boundary.syncStatus = .synced
+                boundary.updatedAt = row.updatedAt
+                context.insert(boundary)
+                garden?.boundary = boundary
+            }
+        }
+
+        // 3. Zones.
+        let remoteAreas: [GardenAreaRow] = try await AuthService.client
+            .from("garden_areas").select().is("deleted_at", value: nil).execute().value
+        var localAreas = Dictionary(
+            uniqueKeysWithValues: (try context.fetch(FetchDescriptor<GardenArea>())).map { ($0.id, $0) }
+        )
+        var seenAreaIDs: Set<UUID> = []
+        for row in remoteAreas {
+            seenAreaIDs.insert(row.id)
+            if let existing = localAreas[row.id] {
+                guard existing.syncStatus == .synced else { continue }
+                existing.areaType = row.areaType
+                existing.name = row.name
+                existing.points = row.points
+                existing.updatedAt = row.updatedAt
+            } else {
+                let garden = row.gardenId.flatMap { localGardens[$0] }
+                let area = GardenArea(
+                    garden: garden, areaType: row.areaType, name: row.name, points: row.points
+                )
+                area.id = row.id
+                area.syncStatus = .synced
+                area.updatedAt = row.updatedAt
+                context.insert(area)
+                localAreas[row.id] = area
+            }
+        }
+
+        // 4. Objets du plan.
+        let remoteObjects: [GardenMapObjectRow] = try await AuthService.client
+            .from("garden_map_objects").select().is("deleted_at", value: nil).execute().value
+        var localObjects = Dictionary(
+            uniqueKeysWithValues: (try context.fetch(FetchDescriptor<GardenMapObject>())).map { ($0.id, $0) }
+        )
+        var seenObjectIDs: Set<UUID> = []
+        for row in remoteObjects {
+            seenObjectIDs.insert(row.id)
+            if let existing = localObjects[row.id] {
+                guard existing.syncStatus == .synced else { continue }
+                existing.objectType = row.objectType
+                existing.position = GardenCoordinate(
+                    xMeters: row.positionXMeters, yMeters: row.positionYMeters
+                )
+                existing.rotationRadians = row.rotationRadians
+                existing.widthMeters = row.widthMeters
+                existing.heightMeters = row.heightMeters
+                existing.zIndex = row.zIndex
+                existing.label = row.label
+                existing.canopyDiameterMeters = row.canopyDiameterMeters
+                existing.updatedAt = row.updatedAt
+            } else {
+                let garden = row.gardenId.flatMap { localGardens[$0] }
+                let object = GardenMapObject(
+                    garden: garden, objectType: row.objectType,
+                    position: GardenCoordinate(
+                        xMeters: row.positionXMeters, yMeters: row.positionYMeters
+                    )
+                )
+                object.id = row.id
+                object.rotationRadians = row.rotationRadians
+                object.widthMeters = row.widthMeters
+                object.heightMeters = row.heightMeters
+                object.zIndex = row.zIndex
+                object.label = row.label
+                object.linkedEntityId = row.linkedEntityId
+                object.linkedEntityKind = row.linkedEntityKind
+                object.canopyDiameterMeters = row.canopyDiameterMeters
+                object.estimatedAdultCanopyDiameterMeters = row.estimatedAdultCanopyDiameterMeters
+                object.syncStatus = .synced
+                object.updatedAt = row.updatedAt
+                context.insert(object)
+                localObjects[row.id] = object
+            }
+        }
+
+        // 5. Suppressions faites ailleurs.
+        //
+        // Le web supprime en douceur (`deleted_at`), pas en dur : une
+        // ligne effacée pour de bon ne peut pas être distinguée d'une
+        // ligne qui n'a jamais existé, donc la suppression ne pourrait
+        // pas se propager jusqu'ici. Une entité locale `.synced` absente
+        // du jeu distant a donc bien été supprimée ailleurs.
+        //
+        // Restreint aux entités `.synced` : une zone créée hors ligne et
+        // pas encore poussée est forcément absente du serveur, et la
+        // supprimer serait détruire le travail de l'utilisateur.
+        for (id, area) in localAreas where !seenAreaIDs.contains(id) && area.syncStatus == .synced {
+            context.delete(area)
+        }
+        for (id, object) in localObjects where !seenObjectIDs.contains(id) && object.syncStatus == .synced {
+            context.delete(object)
+        }
+    }
 
     private func pushPendingDeletions(context: ModelContext) async throws {
         let deletions = try context.fetch(FetchDescriptor<PendingDeletion>())
