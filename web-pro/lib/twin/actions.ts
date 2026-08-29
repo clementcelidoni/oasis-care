@@ -5,8 +5,8 @@ import { createClient } from "@/lib/supabase/server";
 import { getActiveOrganization } from "@/lib/auth/organization";
 import { gardenWorkspaceId, NO_GARDEN_WORKSPACE } from "./workspace";
 import type {
-  TwinDocument, TwinObject, TwinArea, RevisionState, RevisionSummary,
-  LinkablePlant,
+  TwinDocument, TwinObject, TwinArea, TwinPipe, TwinCable,
+  RevisionState, RevisionSummary, LinkablePlant,
 } from "./types";
 
 /**
@@ -36,7 +36,10 @@ export async function loadTwin(gardenId: string): Promise<TwinDocument | null> {
 
   if (!garden) return null;
 
-  const [{ data: boundary }, { data: areas }, { data: objects }] = await Promise.all([
+  const [
+    { data: boundary }, { data: areas }, { data: objects },
+    { data: pipes }, { data: cables },
+  ] = await Promise.all([
     supabase
       .from("garden_boundaries")
       .select("id, points")
@@ -51,11 +54,21 @@ export async function loadTwin(gardenId: string): Promise<TwinDocument | null> {
     supabase
       .from("garden_map_objects")
       .select(
-        "id, object_type, position_x_meters, position_y_meters, rotation_radians, width_meters, height_meters, z_index, label, canopy_diameter_meters, linked_entity_id, linked_entity_kind",
+        "id, object_type, position_x_meters, position_y_meters, rotation_radians, width_meters, height_meters, z_index, label, canopy_diameter_meters, linked_entity_id, linked_entity_kind, sprinkler_radius_meters, sprinkler_start_angle_degrees, sprinkler_end_angle_degrees, sprinkler_flow_rate_liters_per_hour",
       )
       .eq("garden_id", gardenId)
       .is("deleted_at", null)
       .order("z_index"),
+    supabase
+      .from("irrigation_pipes")
+      .select("id, points, diameter_mm, material, line_type, start_node_object_id, end_node_object_id")
+      .eq("garden_id", gardenId)
+      .is("deleted_at", null),
+    supabase
+      .from("garden_cables")
+      .select("id, points, cable_type, section_mm2, start_node_object_id, end_node_object_id")
+      .eq("garden_id", gardenId)
+      .is("deleted_at", null),
   ]);
 
   return {
@@ -82,6 +95,27 @@ export async function loadTwin(gardenId: string): Promise<TwinDocument | null> {
       canopyDiameterMeters: o.canopy_diameter_meters,
       linkedEntityId: o.linked_entity_id,
       linkedEntityKind: o.linked_entity_kind,
+      sprinklerRadiusMeters: o.sprinkler_radius_meters,
+      sprinklerStartAngleDegrees: o.sprinkler_start_angle_degrees,
+      sprinklerEndAngleDegrees: o.sprinkler_end_angle_degrees,
+      sprinklerFlowRateLitersPerHour: o.sprinkler_flow_rate_liters_per_hour,
+    })),
+    pipes: (pipes ?? []).map((p) => ({
+      id: p.id,
+      points: p.points ?? [],
+      diameterMM: p.diameter_mm,
+      material: p.material,
+      lineType: p.line_type,
+      startNodeObjectId: p.start_node_object_id,
+      endNodeObjectId: p.end_node_object_id,
+    })),
+    cables: (cables ?? []).map((c) => ({
+      id: c.id,
+      points: c.points ?? [],
+      cableType: c.cable_type,
+      sectionMM2: c.section_mm2,
+      startNodeObjectId: c.start_node_object_id,
+      endNodeObjectId: c.end_node_object_id,
     })),
   };
 }
@@ -127,8 +161,12 @@ type SavePayload = {
   boundary: { id: string; points: { xMeters: number; yMeters: number }[] } | null;
   areas: TwinArea[];
   objects: TwinObject[];
+  pipes: TwinPipe[];
+  cables: TwinCable[];
   deletedAreaIds: string[];
   deletedObjectIds: string[];
+  deletedPipeIds: string[];
+  deletedCableIds: string[];
   /**
    * Dernière modification connue au moment du chargement. Sert à la
    * détection de conflit — voir `saveTwin`.
@@ -237,11 +275,74 @@ export async function saveTwin(
         canopy_diameter_meters: o.canopyDiameterMeters,
         linked_entity_id: o.linkedEntityId,
         linked_entity_kind: o.linkedEntityKind,
+        sprinkler_radius_meters: o.sprinklerRadiusMeters,
+        sprinkler_start_angle_degrees: o.sprinklerStartAngleDegrees,
+        sprinkler_end_angle_degrees: o.sprinklerEndAngleDegrees,
+        sprinkler_flow_rate_liters_per_hour: o.sprinklerFlowRateLitersPerHour,
         updated_at: now,
         deleted_at: null,
       })),
       { onConflict: "id" },
     );
+    if (error) return { ok: false, error: error.message };
+  }
+
+  // Réseaux. `points` garde la forme que Swift encode depuis
+  // `[GardenCoordinate]` — `[{"xMeters":…,"yMeters":…}]` — comme pour
+  // les zones. La longueur n'est jamais écrite : elle se recalcule sur
+  // les points, des deux côtés (voir `IrrigationPipe.totalLengthMeters`).
+  if (payload.pipes.length > 0) {
+    const { error } = await supabase.from("irrigation_pipes").upsert(
+      payload.pipes.map((p) => ({
+        id: p.id,
+        workspace_id: workspaceId,
+        garden_id: payload.gardenId,
+        points: p.points,
+        diameter_mm: p.diameterMM,
+        material: p.material,
+        line_type: p.lineType,
+        start_node_object_id: p.startNodeObjectId,
+        end_node_object_id: p.endNodeObjectId,
+        updated_at: now,
+        deleted_at: null,
+      })),
+      { onConflict: "id" },
+    );
+    if (error) return { ok: false, error: error.message };
+  }
+
+  if (payload.cables.length > 0) {
+    const { error } = await supabase.from("garden_cables").upsert(
+      payload.cables.map((c) => ({
+        id: c.id,
+        workspace_id: workspaceId,
+        garden_id: payload.gardenId,
+        points: c.points,
+        cable_type: c.cableType,
+        section_mm2: c.sectionMM2,
+        start_node_object_id: c.startNodeObjectId,
+        end_node_object_id: c.endNodeObjectId,
+        updated_at: now,
+        deleted_at: null,
+      })),
+      { onConflict: "id" },
+    );
+    if (error) return { ok: false, error: error.message };
+  }
+
+  if (payload.deletedPipeIds.length > 0) {
+    const { error } = await supabase
+      .from("irrigation_pipes")
+      .update({ deleted_at: now, updated_at: now })
+      .in("id", payload.deletedPipeIds);
+    if (error) return { ok: false, error: error.message };
+  }
+
+  if (payload.deletedCableIds.length > 0) {
+    const { error } = await supabase
+      .from("garden_cables")
+      .update({ deleted_at: now, updated_at: now })
+      .in("id", payload.deletedCableIds);
     if (error) return { ok: false, error: error.message };
   }
 
@@ -305,7 +406,13 @@ export async function saveRevision(input: {
   gardenId: string;
   label: string;
   state: RevisionState;
-  snapshot: { boundary: unknown; areas: unknown[]; objects: unknown[] };
+  snapshot: {
+    boundary: unknown;
+    areas: unknown[];
+    objects: unknown[];
+    pipes: unknown[];
+    cables: unknown[];
+  };
 }): Promise<{ ok: boolean; error?: string }> {
   const workspaceId = await gardenWorkspaceId(input.gardenId);
   if (!workspaceId) return { ok: false, error: NO_GARDEN_WORKSPACE };

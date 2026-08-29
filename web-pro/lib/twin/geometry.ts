@@ -256,17 +256,59 @@ export function rotatedRectCorners(
   }));
 }
 
+/**
+ * Distance d'un point à un segment, en mètres.
+ *
+ * Le cas dégénéré — un segment de longueur nulle, deux clics au même
+ * endroit — retomberait sur une division par zéro ; on y renvoie la
+ * distance au point, qui est la bonne réponse.
+ */
+export function distanceToSegment(p: Point, a: Point, b: Point): number {
+  const dx = b.xMeters - a.xMeters;
+  const dy = b.yMeters - a.yMeters;
+  const lengthSquared = dx * dx + dy * dy;
+  if (lengthSquared === 0) return distance(p, a);
+
+  let t = ((p.xMeters - a.xMeters) * dx + (p.yMeters - a.yMeters) * dy) / lengthSquared;
+  t = Math.max(0, Math.min(1, t));
+  return distance(p, { xMeters: a.xMeters + t * dx, yMeters: a.yMeters + t * dy });
+}
+
+/**
+ * Distance d'un point à une polyligne OUVERTE — un tuyau, un câble.
+ * Ouverte : pas de segment de retour du dernier point au premier.
+ */
+export function distanceToPolyline(p: Point, points: Point[]): number {
+  if (points.length === 0) return Infinity;
+  if (points.length === 1) return distance(p, points[0]);
+  let best = Infinity;
+  for (let i = 1; i < points.length; i++) {
+    best = Math.min(best, distanceToSegment(p, points[i - 1], points[i]));
+  }
+  return best;
+}
+
 // ---------------------------------------------------------------
 // Formatage
 // ---------------------------------------------------------------
 
+/**
+ * En français la virgule sépare les décimales, pas le point. Ces
+ * chaînes sortent du plan pour aller dans un métré puis dans un devis
+ * remis à un client : « 36.4 m² » y passerait pour une faute.
+ *
+ * `Intl` supprime déjà les zéros inutiles et pose l'espace des milliers.
+ */
+const METERS = new Intl.NumberFormat("fr-FR", { maximumFractionDigits: 2 });
+const AREA = new Intl.NumberFormat("fr-FR", { maximumFractionDigits: 1 });
+
 export function formatMeters(value: number): string {
   if (!Number.isFinite(value)) return "—";
   if (Math.abs(value) < 1) return `${Math.round(value * 100)} cm`;
-  return `${value.toFixed(2).replace(/\.?0+$/, "")} m`;
+  return `${METERS.format(value)} m`;
 }
 
 export function formatArea(squareMeters: number): string {
   if (!Number.isFinite(squareMeters)) return "—";
-  return `${squareMeters.toFixed(1).replace(/\.0$/, "")} m²`;
+  return `${AREA.format(squareMeters)} m²`;
 }

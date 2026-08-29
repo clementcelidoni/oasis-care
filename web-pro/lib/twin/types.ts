@@ -1,4 +1,4 @@
-import type { Point } from "./geometry";
+import type { Point } from "./geometry.ts";
 
 /**
  * Types du Digital Twin.
@@ -153,6 +153,20 @@ export type TwinObject = {
   canopyDiameterMeters: number | null;
   linkedEntityId: string | null;
   linkedEntityKind: LinkKind | null;
+  /**
+   * §SPRINKLER — « afficher graphiquement : radius, startAngle,
+   * endAngle ». Portés par l'objet lui-même et non par une table à
+   * part : côté Swift, un arroseur EST un `GardenMapObject` de type
+   * `sprinkler`, même choix que le houppier pour les végétaux.
+   *
+   * Les angles sont en DEGRÉS, 0 = est, croissant dans le sens
+   * trigonométrique — la convention de `GardenCoordinate`, et non
+   * celle du canvas, dont l'axe y descend.
+   */
+  sprinklerRadiusMeters: number | null;
+  sprinklerStartAngleDegrees: number | null;
+  sprinklerEndAngleDegrees: number | null;
+  sprinklerFlowRateLitersPerHour: number | null;
 };
 
 /** Une plante réelle de CE jardin, proposée au rattachement. */
@@ -170,6 +184,86 @@ export type TwinArea = {
   points: Point[];
 };
 
+// ---------------------------------------------------------------
+// Réseaux — §"IRRIGATION DIGITAL TWIN" et §LIGHTING
+// ---------------------------------------------------------------
+
+/**
+ * « Un tuyau n'est PAS une simple ligne graphique. »
+ *
+ * Valeurs recopiées telles quelles depuis `PipeLineType.swift` et
+ * `PipeMaterial.swift` : l'iPhone lit la même table depuis la Phase 6D.
+ */
+export const PIPE_LINE_TYPES = ["mainSupply", "secondary", "dripLine"] as const;
+export type PipeLineType = (typeof PIPE_LINE_TYPES)[number];
+
+export const PIPE_MATERIALS = ["pe", "pvc", "other"] as const;
+export type PipeMaterial = (typeof PIPE_MATERIALS)[number];
+
+export const PIPE_LINE_TYPE_LABELS: Record<PipeLineType, string> = {
+  mainSupply: "Alimentation principale",
+  secondary: "Secondaire",
+  dripLine: "Goutte-à-goutte",
+};
+
+export const PIPE_MATERIAL_LABELS: Record<PipeMaterial, string> = {
+  pe: "PE",
+  pvc: "PVC",
+  other: "Autre",
+};
+
+/**
+ * Trait de chaque type de conduite. Le tireté reprend celui de
+ * `PipeLineType.dashPattern` côté Swift, pour que le même réseau se lise
+ * pareil sur les deux écrans — et parce qu'un trait plein, tireté ou
+ * pointillé reste lisible là où la seule couleur ne suffit pas.
+ */
+export const PIPE_STYLE: Record<PipeLineType, { color: string; width: number; dash: number[] }> = {
+  mainSupply: { color: "#2f6fb5", width: 3, dash: [] },
+  secondary: { color: "#2f93b5", width: 2, dash: [6, 3] },
+  dripLine: { color: "#2f9c92", width: 1.5, dash: [1, 3] },
+};
+
+export type TwinPipe = {
+  id: string;
+  points: Point[];
+  diameterMM: number;
+  material: PipeMaterial;
+  lineType: PipeLineType;
+  startNodeObjectId: string | null;
+  endNodeObjectId: string | null;
+};
+
+/**
+ * §LIGHTING. Nouveau côté web (table `garden_cables`, migration 0047) :
+ * l'iPhone n'a pas encore de modèle pour les câbles, contrairement aux
+ * tuyaux. Un câble tracé ici ne s'affichera donc pas encore sur le
+ * téléphone — la ligne est bien écrite, seulement pas encore lue.
+ */
+export const CABLE_TYPES = ["lowVoltage", "mains", "other"] as const;
+export type CableType = (typeof CABLE_TYPES)[number];
+
+export const CABLE_TYPE_LABELS: Record<CableType, string> = {
+  lowVoltage: "Très basse tension",
+  mains: "Secteur 230 V",
+  other: "Autre",
+};
+
+export const CABLE_STYLE: Record<CableType, { color: string; width: number; dash: number[] }> = {
+  lowVoltage: { color: "#b58a2f", width: 2, dash: [4, 3] },
+  mains: { color: "#a8532f", width: 2.5, dash: [] },
+  other: { color: "#8a7a5a", width: 1.5, dash: [2, 3] },
+};
+
+export type TwinCable = {
+  id: string;
+  points: Point[];
+  cableType: CableType;
+  sectionMM2: number | null;
+  startNodeObjectId: string | null;
+  endNodeObjectId: string | null;
+};
+
 export type TwinBoundary = {
   id: string;
   points: Point[];
@@ -184,7 +278,108 @@ export type TwinDocument = {
   boundary: TwinBoundary | null;
   areas: TwinArea[];
   objects: TwinObject[];
+  pipes: TwinPipe[];
+  cables: TwinCable[];
 };
+
+// ---------------------------------------------------------------
+// Calques — §"CALQUES", repris de GardenMapLayer.swift
+// ---------------------------------------------------------------
+
+/**
+ * Les calques que le web sait réellement éteindre et allumer.
+ *
+ * L'enum Swift en compte seize, mais la moitié gouverne des données que
+ * l'éditeur web n'affiche pas encore (santé, humidité, température,
+ * consommation, alertes, interventions, QR/NFC). Un interrupteur qui ne
+ * change rien à l'écran est pire que son absence : il fait douter de
+ * tous les autres. Les noms des calques communs sont ceux de Swift, à
+ * l'identique, pour que les deux produits parlent de la même chose.
+ *
+ * `areas` et `coverage` n'existent pas côté iOS : le premier parce que
+ * l'iPhone n'a pas d'outil de dessin de zones à masquer, le second parce
+ * que la couverture d'arrosage est une vue propre à cet éditeur.
+ */
+export const MAP_LAYERS = [
+  "vegetation", "canopies", "areas",
+  "irrigation", "coverage",
+  "sensorsLayer", "devices",
+  "constructions", "amenities", "biodiversity",
+] as const;
+export type MapLayer = (typeof MAP_LAYERS)[number];
+
+export const LAYER_LABELS: Record<MapLayer, string> = {
+  vegetation: "Végétaux",
+  canopies: "Houppiers",
+  areas: "Zones",
+  irrigation: "Irrigation",
+  coverage: "Couverture d'arrosage",
+  sensorsLayer: "Capteurs",
+  devices: "Éclairage et électricité",
+  constructions: "Constructions",
+  amenities: "Aménagements",
+  biodiversity: "Biodiversité",
+};
+
+/**
+ * Quels types d'objets chaque calque gouverne — copie de
+ * `GardenMapLayer.gatedObjectTypes`. Les calques absents d'ici agissent
+ * autrement (les houppiers changent le dessin, la couverture ajoute les
+ * arcs, les zones ne sont pas des objets).
+ */
+export const LAYER_OBJECT_TYPES: Partial<Record<MapLayer, ObjectType[]>> = {
+  vegetation: ["plant", "tree", "palm", "shrub"],
+  irrigation: ["waterSource", "valve", "pump", "filter", "sprinkler", "dripEmitter"],
+  sensorsLayer: ["sensor"],
+  devices: ["light", "electricalPoint"],
+  constructions: ["house", "wall", "fence", "stairs"],
+  amenities: ["terrace", "pool", "pond", "greenhouse", "path", "rock", "decorativeObject", "custom"],
+  biodiversity: ["birdhouse", "insectHotel", "wildlifeWaterPoint", "pollinatorZone", "wildlifeRefuge"],
+};
+
+/** Le calque qui gouverne un type d'objet, ou `null` s'il est toujours visible. */
+export function layerForObjectType(type: ObjectType): MapLayer | null {
+  for (const [layer, types] of Object.entries(LAYER_OBJECT_TYPES)) {
+    if (types?.includes(type)) return layer as MapLayer;
+  }
+  return null;
+}
+
+/**
+ * §"PROFILS DE CALQUES" — un clic au lieu de dix interrupteurs.
+ *
+ * Le profil « Santé » de l'app iPhone n'est pas repris : il repose sur
+ * l'état sanitaire des végétaux, que cet éditeur n'affiche pas encore.
+ */
+export const LAYER_PROFILES = {
+  normal: {
+    label: "Vue normale",
+    layers: ["vegetation", "canopies", "areas", "constructions", "amenities"],
+  },
+  watering: {
+    label: "Arrosage",
+    layers: ["vegetation", "areas", "irrigation", "coverage"],
+  },
+  technical: {
+    label: "Technique",
+    layers: ["irrigation", "devices", "sensorsLayer", "constructions"],
+  },
+  sensors: {
+    label: "Capteurs",
+    layers: ["sensorsLayer", "areas"],
+  },
+} as const satisfies Record<string, { label: string; layers: readonly MapLayer[] }>;
+
+export type LayerProfile = keyof typeof LAYER_PROFILES;
+
+/**
+ * Tout est allumé au départ, sauf la couverture d'arrosage : les arcs
+ * des arroseurs se recouvrent largement et masqueraient le plan qu'on
+ * vient d'ouvrir. C'est une vue de vérification, pas une vue de travail.
+ */
+export const DEFAULT_LAYERS: Record<MapLayer, boolean> = Object.fromEntries(
+  MAP_LAYERS.map((l) => [l, l !== "coverage"]),
+) as Record<MapLayer, boolean>;
 
 /**
  * §"VERSIONS DU PROJET". Ces libellés vivent ici et non dans

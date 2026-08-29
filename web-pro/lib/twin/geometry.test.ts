@@ -14,10 +14,13 @@ import {
   pointInRotatedRect,
   rotatedRectCorners,
   DEFAULT_SNAP,
+  distanceToSegment,
+  distanceToPolyline,
   type Camera,
   type Viewport,
 } from "./geometry.ts";
 
+const pt = (x: number, y: number) => ({ xMeters: x, yMeters: y });
 const camera: Camera = { centerX: 0, centerY: 0, pixelsPerMeter: 10 };
 const view: Viewport = { width: 800, height: 600 };
 
@@ -184,4 +187,41 @@ test("la rotation conserve les distances au centre", () => {
   for (let i = 0; i < 4; i++) {
     assert.ok(Math.abs(distance(centre, droits[i]) - distance(centre, tournes[i])) < 1e-9);
   }
+});
+
+// --- Distance à une polyligne (sélection des tuyaux et câbles) ---
+
+test("distanceToSegment : projection à l'intérieur du segment", () => {
+  const d = distanceToSegment(pt(5, 3), pt(0, 0), pt(10, 0));
+  assert.equal(d, 3);
+});
+
+test("distanceToSegment : au-delà d'une extrémité, on mesure jusqu'à elle", () => {
+  // Et non jusqu'à la droite infinie qui porte le segment.
+  const d = distanceToSegment(pt(20, 0), pt(0, 0), pt(10, 0));
+  assert.equal(d, 10);
+});
+
+test("distanceToSegment : un segment de longueur nulle ne divise pas par zéro", () => {
+  const d = distanceToSegment(pt(3, 4), pt(0, 0), pt(0, 0));
+  assert.equal(d, 5);
+});
+
+test("distanceToPolyline : retient le segment le plus proche", () => {
+  // Un L : (0,0) → (10,0) → (10,10). Le point (11,5) est à 1 m du
+  // second segment, bien plus loin du premier.
+  const d = distanceToPolyline(pt(11, 5), [pt(0, 0), pt(10, 0), pt(10, 10)]);
+  assert.equal(d, 1);
+});
+
+test("distanceToPolyline : une polyligne ne se referme pas", () => {
+  // Sur un polygone fermé, (5,5) serait proche du segment de retour.
+  // Ici il n'y en a pas : la réponse doit rester la distance au coude.
+  const d = distanceToPolyline(pt(0, 10), [pt(0, 0), pt(10, 0), pt(10, 10)]);
+  assert.equal(d, 10);
+});
+
+test("distanceToPolyline : sans point, la distance est infinie et non zéro", () => {
+  // Zéro ferait sélectionner un tuyau vide à chaque clic.
+  assert.equal(distanceToPolyline(pt(0, 0), []), Infinity);
 });

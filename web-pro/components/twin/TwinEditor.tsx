@@ -4,7 +4,7 @@ import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import {
   worldToScreen, screenToWorld, distance, perimeter, polygonArea,
   snapPoint, snapAngle, pointInPolygon, pointInRotatedRect, rotatedRectCorners,
-  boundsOf, centroid, formatMeters, formatArea, DEFAULT_SNAP,
+  boundsOf, centroid, formatMeters, formatArea, distanceToPolyline, DEFAULT_SNAP,
   type Point, type Camera, type SnapSettings,
 } from "@/lib/twin/geometry";
 import {
@@ -16,10 +16,16 @@ import {
   planScale,
   type AreaType, type MapMode, type RevisionState, type RevisionSummary,
   type PlanImage, type LinkablePlant,
+  PIPE_LINE_TYPES, PIPE_MATERIALS, PIPE_LINE_TYPE_LABELS, PIPE_MATERIAL_LABELS,
+  PIPE_STYLE, CABLE_TYPES, CABLE_TYPE_LABELS, CABLE_STYLE,
+  MAP_LAYERS, LAYER_LABELS, LAYER_PROFILES, DEFAULT_LAYERS, layerForObjectType,
+  type TwinPipe, type TwinCable, type PipeLineType, type PipeMaterial,
+  type CableType, type MapLayer, type LayerProfile,
 } from "@/lib/twin/types";
 import {
   saveTwin, saveRevision, listRevisions, loadRevision, listLinkablePlants,
 } from "@/lib/twin/actions";
+import { computeQuantities } from "@/lib/twin/quantities";
 import { useTileLayer } from "./useTileLayer";
 import { PlanPanel } from "./PlanPanel";
 import { listPlanImages, updatePlanImage } from "@/lib/twin/planActions";
@@ -28,9 +34,17 @@ type Tool =
   | { kind: "select" }
   | { kind: "boundary" }
   | { kind: "area"; areaType: AreaType }
-  | { kind: "object"; objectType: ObjectType };
+  | { kind: "object"; objectType: ObjectType }
+  | { kind: "pipe"; lineType: PipeLineType }
+  | { kind: "cable"; cableType: CableType };
 
-type Selection = { kind: "object" | "area"; id: string };
+/** Les outils qui se dessinent point par point plutôt qu'en un clic. */
+const DRAWING_TOOLS = new Set(["boundary", "area", "pipe", "cable"]);
+
+/** Ceux dont le tracé reste OUVERT — un tuyau ne revient pas à son départ. */
+const OPEN_TOOLS = new Set(["pipe", "cable"]);
+
+type Selection = { kind: "object" | "area" | "pipe" | "cable"; id: string };
 type SaveState = "idle" | "saving" | "saved" | "conflict" | "offline" | "error";
 
 /** Un état complet du document — l'unité de l'undo/redo. */
@@ -38,6 +52,8 @@ type Snapshot = {
   boundaryPoints: Point[];
   areas: TwinArea[];
   objects: TwinObject[];
+  pipes: TwinPipe[];
+  cables: TwinCable[];
 };
 
 const MAX_HISTORY = 60;
@@ -57,6 +73,8 @@ export function TwinEditor({
     boundaryPoints: initial.boundary?.points ?? [],
     areas: initial.areas,
     objects: initial.objects,
+    pipes: initial.pipes,
+    cables: initial.cables,
   }));
 
   const [tool, setTool] = useState<Tool>({ kind: "select" });
@@ -74,6 +92,9 @@ export function TwinEditor({
   const [calibrationPoints, setCalibrationPoints] = useState<Point[]>([]);
   const planImages = useRef(new Map<string, HTMLImageElement>());
   const [plants, setPlants] = useState<LinkablePlant[]>([]);
+  const [layers, setLayers] = useState<Record<MapLayer, boolean>>(DEFAULT_LAYERS);
+  const [showLayers, setShowLayers] = useState(false);
+  const [showQuantities, setShowQuantities] = useState(false);
   const modifiedAt = useRef<string | null>(baseModifiedAt);
 
   const [camera, setCamera] = useState<Camera>({ centerX: 0, centerY: 0, pixelsPerMeter: 14 });
@@ -81,7 +102,9 @@ export function TwinEditor({
 
   const history = useRef<Snapshot[]>([]);
   const future = useRef<Snapshot[]>([]);
-  const deleted = useRef<{ areas: string[]; objects: string[] }>({ areas: [], objects: [] });
+  const deleted = useRef<{ areas: string[]; objects: string[]; pipes: string[]; cables: string[] }>(
+    { areas: [], objects: [], pipes: [], cables: [] },
+  );
   const dirty = useRef(false);
   const drag = useRef<
     | { mode: "pan"; startX: number; startY: number; camX: number; camY: number }
@@ -134,12 +157,16 @@ export function TwinEditor({
         boundary: doc.boundaryPoints.length > 0 ? { id: boundaryId, points: doc.boundaryPoints } : null,
         areas: doc.areas,
         objects: doc.objects,
+        pipes: doc.pipes,
+        cables: doc.cables,
         deletedAreaIds: deleted.current.areas,
         deletedObjectIds: deleted.current.objects,
+        deletedPipeIds: deleted.current.pipes,
+        deletedCableIds: deleted.current.cables,
         baseModifiedAt: modifiedAt.current,
       });
       if (result.ok) {
-        deleted.current = { areas: [], objects: [] };
+        deleted.current = { areas: [], objects: [], pipes: [], cables: [] };
         modifiedAt.current = result.modifiedAt ?? modifiedAt.current;
         setSaveState("saved");
       } else if (result.conflict) {
@@ -184,6 +211,8 @@ export function TwinEditor({
           boundary: doc.boundaryPoints,
           areas: doc.areas,
           objects: doc.objects,
+          pipes: doc.pipes,
+          cables: doc.cables,
         },
       });
       await refreshRevisions();
@@ -197,13 +226,20 @@ export function TwinEditor({
       if (!revision) return;
       const snapshot = revision.snapshot as {
         boundary?: Point[]; areas?: TwinArea[]; objects?: TwinObject[];
+        pipes?: TwinPipe[]; cables?: TwinCable[];
       };
       // Passe par `commit` : restaurer une révision est annulable comme
       // n'importe quelle autre modification.
+      //
+      // Les réseaux manquent des révisions prises avant le Milestone 4 :
+      // `?? []` les restaure alors vides, ce qui est exact — à cette
+      // date-là le plan n'en avait effectivement aucun.
       commit({
         boundaryPoints: snapshot.boundary ?? [],
         areas: snapshot.areas ?? [],
         objects: snapshot.objects ?? [],
+        pipes: snapshot.pipes ?? [],
+        cables: snapshot.cables ?? [],
       });
       setSelection([]);
       setShowRevisions(false);
@@ -340,9 +376,22 @@ export function TwinEditor({
   const showTiles = (mapMode === "satellite" || mapMode === "hybrid") && geoOrigin !== null;
   const tileLayer = useTileLayer(showTiles, geoOrigin, camera, view);
 
+  /**
+   * Ce sur quoi le curseur s'accroche pendant un tracé.
+   *
+   * Les objets ponctuels en font partie depuis le Milestone 4 : brancher
+   * un tuyau sur une vanne demande de tomber exactement dessus, et viser
+   * un point à 30 cm près à la souris n'est pas un travail raisonnable.
+   */
   const allVertices = useMemo(
-    () => [...doc.boundaryPoints, ...doc.areas.flatMap((a) => a.points)],
-    [doc.boundaryPoints, doc.areas],
+    () => [
+      ...doc.boundaryPoints,
+      ...doc.areas.flatMap((a) => a.points),
+      ...doc.pipes.flatMap((x) => x.points),
+      ...doc.cables.flatMap((x) => x.points),
+      ...doc.objects.map((o) => o.position),
+    ],
+    [doc.boundaryPoints, doc.areas, doc.pipes, doc.cables, doc.objects],
   );
 
   // ---------- rendu ----------
@@ -462,7 +511,7 @@ export function TwinEditor({
     }
 
     // Zones
-    for (const area of doc.areas) {
+    for (const area of layers.areas ? doc.areas : []) {
       const colors = AREA_COLORS[area.areaType] ?? AREA_COLORS.custom;
       const isSelected = selection.some((s) => s.kind === "area" && s.id === area.id);
       drawPolygon(area.points, colors.fill, isSelected ? "#15654a" : colors.stroke);
@@ -491,8 +540,112 @@ export function TwinEditor({
       }
     }
 
+    // Réseaux, SOUS les objets : un tuyau passe derrière la vanne qu'il
+    // alimente, sinon le trait barre le symbole.
+    const drawPolyline = (
+      points: Point[], style: { color: string; width: number; dash: number[] },
+      selected: boolean, lengthLabel: boolean,
+    ) => {
+      if (points.length < 2) return;
+      ctx.beginPath();
+      points.forEach((pt, i) => {
+        const sp = toScreen(pt);
+        i === 0 ? ctx.moveTo(sp.x, sp.y) : ctx.lineTo(sp.x, sp.y);
+      });
+      ctx.setLineDash(style.dash);
+      ctx.strokeStyle = selected ? "#15654a" : style.color;
+      ctx.lineWidth = selected ? style.width + 1.5 : style.width;
+      ctx.lineCap = "round";
+      ctx.lineJoin = "round";
+      ctx.stroke();
+      ctx.setLineDash([]);
+
+      if (selected) {
+        for (const pt of points) {
+          const sp = toScreen(pt);
+          ctx.fillStyle = "#ffffff";
+          ctx.strokeStyle = "#15654a";
+          ctx.lineWidth = 1.5;
+          ctx.beginPath();
+          ctx.arc(sp.x, sp.y, 4, 0, Math.PI * 2);
+          ctx.fill();
+          ctx.stroke();
+        }
+      }
+
+      // « La longueur est calculée automatiquement » — affichée au
+      // milieu du tracé, et seulement quand elle est lisible.
+      if (lengthLabel && camera.pixelsPerMeter > 4) {
+        const mid = toScreen(points[Math.floor(points.length / 2)]);
+        const text = formatMeters(perimeter(points, false));
+        ctx.font = "10px system-ui, sans-serif";
+        const w = ctx.measureText(text).width;
+        ctx.fillStyle = "rgba(255,255,255,0.9)";
+        ctx.fillRect(mid.x - w / 2 - 3, mid.y - 15, w + 6, 14);
+        ctx.fillStyle = style.color;
+        ctx.textAlign = "center";
+        ctx.fillText(text, mid.x, mid.y - 4);
+        ctx.textAlign = "left";
+      }
+    };
+
+    if (layers.irrigation) {
+      for (const pipe of doc.pipes) {
+        drawPolyline(
+          pipe.points, PIPE_STYLE[pipe.lineType],
+          selection.some((sel) => sel.kind === "pipe" && sel.id === pipe.id),
+          true,
+        );
+      }
+    }
+    if (layers.devices) {
+      for (const cable of doc.cables) {
+        drawPolyline(
+          cable.points, CABLE_STYLE[cable.cableType],
+          selection.some((sel) => sel.kind === "cable" && sel.id === cable.id),
+          true,
+        );
+      }
+    }
+
+    // §COVERAGE — la portée des arroseurs, sous les objets eux-mêmes.
+    //
+    // Ce que ce dessin dit exactement : le disque qu'un arroseur réglé
+    // ainsi peut atteindre. Il ne dit RIEN de la pluviométrie réelle,
+    // qui dépend de la pression, du vent et du modèle. C'est
+    // « estimated », jamais « measured », et le panneau le répète.
+    if (layers.coverage) {
+      for (const object of doc.objects) {
+        if (object.objectType !== "sprinkler") continue;
+        const radius = object.sprinklerRadiusMeters;
+        if (!radius || radius <= 0) continue;
+        const start = object.sprinklerStartAngleDegrees ?? 0;
+        const end = object.sprinklerEndAngleDegrees ?? 360;
+        const center = toScreen(object.position);
+        const r = radius * camera.pixelsPerMeter;
+
+        // Les angles sont donnés dans le repère du monde (0 = est,
+        // sens trigonométrique). Le canvas tourne dans l'autre sens
+        // parce que son axe y descend : d'où les signes inversés.
+        ctx.beginPath();
+        ctx.moveTo(center.x, center.y);
+        ctx.arc(center.x, center.y, r, (-end * Math.PI) / 180, (-start * Math.PI) / 180);
+        ctx.closePath();
+        ctx.fillStyle = "rgba(90,150,200,0.18)";
+        ctx.fill();
+        ctx.strokeStyle = "rgba(56,103,143,0.6)";
+        ctx.lineWidth = 1;
+        ctx.setLineDash([4, 3]);
+        ctx.stroke();
+        ctx.setLineDash([]);
+      }
+    }
+
     // Objets
     for (const object of [...doc.objects].sort((a, b) => a.zIndex - b.zIndex)) {
+      // §CALQUES — un objet dont le calque est éteint n'est pas dessiné.
+      const layer = layerForObjectType(object.objectType);
+      if (layer && !layers[layer]) continue;
       const colors = colorForObject(object.objectType);
       const isSelected = selection.some((s) => s.kind === "object" && s.id === object.id);
       const s = toScreen(object.position);
@@ -500,7 +653,7 @@ export function TwinEditor({
       if (ROUND_OBJECTS.has(object.objectType)) {
         // §"TREE SCALE" — le diamètre graphique suit canopyDiameter
         // quand il existe, plutôt qu'une taille arbitraire.
-        const diameter = VEGETATION.has(object.objectType)
+        const diameter = VEGETATION.has(object.objectType) && layers.canopies
           ? (object.canopyDiameterMeters ?? object.widthMeters)
           : object.widthMeters;
         const r = Math.max((diameter / 2) * camera.pixelsPerMeter, 3);
@@ -558,6 +711,7 @@ export function TwinEditor({
 
       // §"MESURES : afficher en direct".
       if (cursor && draft.length > 0) {
+        // (la longueur cumulée du tracé est affichée dans le bandeau)
         const last = draft[draft.length - 1];
         const d = distance(last, cursor);
         const mid = toScreen({
@@ -627,7 +781,7 @@ export function TwinEditor({
       ctx.textAlign = "left";
     }
   }, [doc, camera, view, selection, draft, cursor, snap, mapMode, showTiles, tileLayer,
-      geoOrigin, plans, calibratingId, calibrationPoints]);
+      geoOrigin, plans, calibratingId, calibrationPoints, layers]);
 
   // ---------- interaction ----------
   const pointerWorld = (event: React.PointerEvent | React.MouseEvent): Point => {
@@ -638,7 +792,12 @@ export function TwinEditor({
   };
 
   const hitTest = (p: Point): Selection | null => {
+    // Un calque éteint rend ses éléments insélectionnables : attraper
+    // par mégarde quelque chose qu'on a délibérément masqué est la
+    // façon la plus sûre de casser un plan sans s'en apercevoir.
     for (const o of [...doc.objects].sort((a, b) => b.zIndex - a.zIndex)) {
+      const layer = layerForObjectType(o.objectType);
+      if (layer && !layers[layer]) continue;
       const w = ROUND_OBJECTS.has(o.objectType)
         ? (VEGETATION.has(o.objectType) ? (o.canopyDiameterMeters ?? o.widthMeters) : o.widthMeters)
         : o.widthMeters;
@@ -647,8 +806,28 @@ export function TwinEditor({
         return { kind: "object", id: o.id };
       }
     }
-    for (const a of doc.areas) {
-      if (pointInPolygon(p, a.points)) return { kind: "area", id: a.id };
+
+    // Les réseaux avant les zones : un trait posé sur un massif doit
+    // rester attrapable, alors que le massif occupe toute la surface.
+    // La tolérance est en PIXELS puis convertie, pour rester constante
+    // à l'écran quel que soit le zoom — un tuyau de 25 mm dessiné à
+    // faible zoom serait autrement impossible à viser.
+    const tolerance = 6 / camera.pixelsPerMeter;
+    if (layers.irrigation) {
+      for (const pipe of doc.pipes) {
+        if (distanceToPolyline(p, pipe.points) <= tolerance) return { kind: "pipe", id: pipe.id };
+      }
+    }
+    if (layers.devices) {
+      for (const cable of doc.cables) {
+        if (distanceToPolyline(p, cable.points) <= tolerance) return { kind: "cable", id: cable.id };
+      }
+    }
+
+    if (layers.areas) {
+      for (const a of doc.areas) {
+        if (pointInPolygon(p, a.points)) return { kind: "area", id: a.id };
+      }
     }
     return null;
   };
@@ -674,7 +853,7 @@ export function TwinEditor({
       return;
     }
 
-    if (tool.kind === "boundary" || tool.kind === "area") {
+    if (DRAWING_TOOLS.has(tool.kind)) {
       let p = snapPoint(raw, allVertices, snap);
       if (snap.toAngles && event.shiftKey && draft.length > 0) {
         p = snapAngle(draft[draft.length - 1], p);
@@ -698,6 +877,13 @@ export function TwinEditor({
         canopyDiameterMeters: VEGETATION.has(tool.objectType) ? size.w : null,
         linkedEntityId: null,
         linkedEntityKind: null,
+        // Un arroseur posé sans portée serait un point sans signification.
+        // 4 m sur 360° : un tuyau d'arrosage ordinaire, à corriger dans le
+        // panneau — une valeur de départ visible vaut mieux qu'un vide.
+        sprinklerRadiusMeters: tool.objectType === "sprinkler" ? 4 : null,
+        sprinklerStartAngleDegrees: tool.objectType === "sprinkler" ? 0 : null,
+        sprinklerEndAngleDegrees: tool.objectType === "sprinkler" ? 360 : null,
+        sprinklerFlowRateLitersPerHour: null,
       };
       commit((s) => ({ ...s, objects: [...s.objects, created] }));
       setSelection([{ kind: "object", id: created.id }]);
@@ -731,7 +917,7 @@ export function TwinEditor({
   function onPointerMove(event: React.PointerEvent) {
     const raw = pointerWorld(event);
 
-    if (tool.kind === "boundary" || tool.kind === "area") {
+    if (DRAWING_TOOLS.has(tool.kind)) {
       let p = snapPoint(raw, allVertices, snap);
       if (snap.toAngles && event.shiftKey && draft.length > 0) {
         p = snapAngle(draft[draft.length - 1], p);
@@ -759,6 +945,10 @@ export function TwinEditor({
       d.last = raw;
       const objectIds = new Set(selection.filter((s) => s.kind === "object").map((s) => s.id));
       const areaIds = new Set(selection.filter((s) => s.kind === "area").map((s) => s.id));
+      const pipeIds = new Set(selection.filter((s) => s.kind === "pipe").map((s) => s.id));
+      const cableIds = new Set(selection.filter((s) => s.kind === "cable").map((s) => s.id));
+      const shift = (pts: Point[]) =>
+        pts.map((pt) => ({ xMeters: pt.xMeters + dx, yMeters: pt.yMeters + dy }));
       // Pas de `commit` ici : un point d'historique par pixel parcouru
       // rendrait l'undo inutilisable. Le point est posé au relâchement.
       setDoc((s) => ({
@@ -769,10 +959,10 @@ export function TwinEditor({
             : o,
         ),
         areas: s.areas.map((a) =>
-          areaIds.has(a.id)
-            ? { ...a, points: a.points.map((p) => ({ xMeters: p.xMeters + dx, yMeters: p.yMeters + dy })) }
-            : a,
+          areaIds.has(a.id) ? { ...a, points: shift(a.points) } : a,
         ),
+        pipes: s.pipes.map((x) => (pipeIds.has(x.id) ? { ...x, points: shift(x.points) } : x)),
+        cables: s.cables.map((x) => (cableIds.has(x.id) ? { ...x, points: shift(x.points) } : x)),
       }));
       dirty.current = true;
     }
@@ -810,8 +1000,45 @@ export function TwinEditor({
   }
 
   const finishDraft = useCallback(() => {
-    if (draft.length < 3) {
+    // Un tuyau se contente de deux points ; une surface en exige trois,
+    // sinon elle n'a pas d'aire.
+    const minimum = OPEN_TOOLS.has(tool.kind) ? 2 : 3;
+    if (draft.length < minimum) {
       setDraft([]);
+      return;
+    }
+    if (tool.kind === "pipe") {
+      const pipe: TwinPipe = {
+        id: crypto.randomUUID(),
+        points: draft,
+        // Les diamètres courants du réseau d'arrosage domestique. Le
+        // panneau permet de corriger ; ces valeurs évitent d'avoir à le
+        // faire à chaque tracé.
+        diameterMM: tool.lineType === "mainSupply" ? 32 : tool.lineType === "secondary" ? 25 : 16,
+        material: "pe",
+        lineType: tool.lineType,
+        startNodeObjectId: null,
+        endNodeObjectId: null,
+      };
+      commit((s) => ({ ...s, pipes: [...s.pipes, pipe] }));
+      setSelection([{ kind: "pipe", id: pipe.id }]);
+      setDraft([]);
+      setTool({ kind: "select" });
+      return;
+    }
+    if (tool.kind === "cable") {
+      const cable: TwinCable = {
+        id: crypto.randomUUID(),
+        points: draft,
+        cableType: tool.cableType,
+        sectionMM2: tool.cableType === "lowVoltage" ? 2.5 : null,
+        startNodeObjectId: null,
+        endNodeObjectId: null,
+      };
+      commit((s) => ({ ...s, cables: [...s.cables, cable] }));
+      setSelection([{ kind: "cable", id: cable.id }]);
+      setDraft([]);
+      setTool({ kind: "select" });
       return;
     }
     if (tool.kind === "boundary") {
@@ -834,12 +1061,18 @@ export function TwinEditor({
     if (selection.length === 0) return;
     const objectIds = selection.filter((s) => s.kind === "object").map((s) => s.id);
     const areaIds = selection.filter((s) => s.kind === "area").map((s) => s.id);
+    const pipeIds = selection.filter((s) => s.kind === "pipe").map((s) => s.id);
+    const cableIds = selection.filter((s) => s.kind === "cable").map((s) => s.id);
     deleted.current.objects.push(...objectIds);
     deleted.current.areas.push(...areaIds);
+    deleted.current.pipes.push(...pipeIds);
+    deleted.current.cables.push(...cableIds);
     commit((s) => ({
       ...s,
       objects: s.objects.filter((o) => !objectIds.includes(o.id)),
       areas: s.areas.filter((a) => !areaIds.includes(a.id)),
+      pipes: s.pipes.filter((x) => !pipeIds.includes(x.id)),
+      cables: s.cables.filter((x) => !cableIds.includes(x.id)),
     }));
     setSelection([]);
   }, [selection, commit]);
@@ -894,9 +1127,32 @@ export function TwinEditor({
     selection.length === 1 && selection[0].kind === "area"
       ? doc.areas.find((a) => a.id === selection[0].id) ?? null
       : null;
+  const selectedPipe =
+    selection.length === 1 && selection[0].kind === "pipe"
+      ? doc.pipes.find((x) => x.id === selection[0].id) ?? null
+      : null;
+  const selectedCable =
+    selection.length === 1 && selection[0].kind === "cable"
+      ? doc.cables.find((x) => x.id === selection[0].id) ?? null
+      : null;
 
   const patchObject = (id: string, patch: Partial<TwinObject>) =>
     commit((s) => ({ ...s, objects: s.objects.map((o) => (o.id === id ? { ...o, ...patch } : o)) }));
+  const patchPipe = (id: string, patch: Partial<TwinPipe>) =>
+    commit((s) => ({ ...s, pipes: s.pipes.map((x) => (x.id === id ? { ...x, ...patch } : x)) }));
+  const patchCable = (id: string, patch: Partial<TwinCable>) =>
+    commit((s) => ({ ...s, cables: s.cables.map((x) => (x.id === id ? { ...x, ...patch } : x)) }));
+
+  // §"QUANTITÉS AUTOMATIQUES" — recalculé à chaque changement du plan,
+  // jamais stocké : un métré enregistré à côté du dessin le contredit
+  // dès la première modification.
+  const quantities = useMemo(
+    () => computeQuantities({
+      boundaryPoints: doc.boundaryPoints,
+      areas: doc.areas, objects: doc.objects, pipes: doc.pipes, cables: doc.cables,
+    }),
+    [doc],
+  );
 
   return (
     <div className="flex h-full flex-col">
@@ -907,10 +1163,14 @@ export function TwinEditor({
         onUndo={undo} onRedo={redo}
         onFinish={finishDraft} drafting={draft.length > 0}
         saveState={saveState} gardenName={initial.gardenName}
-        onToggleRevisions={() => { setShowRevisions((v) => !v); setShowPlans(false); }}
+        onToggleRevisions={() => { setShowRevisions((v) => !v); setShowPlans(false); setShowLayers(false); setShowQuantities(false); }}
         revisionsOpen={showRevisions}
-        onTogglePlans={() => { setShowPlans((v) => !v); setShowRevisions(false); }}
+        onTogglePlans={() => { setShowPlans((v) => !v); setShowRevisions(false); setShowLayers(false); setShowQuantities(false); }}
         plansOpen={showPlans}
+        onToggleLayers={() => { setShowLayers((v) => !v); setShowPlans(false); setShowRevisions(false); setShowQuantities(false); }}
+        layersOpen={showLayers}
+        onToggleQuantities={() => { setShowQuantities((v) => !v); setShowPlans(false); setShowRevisions(false); setShowLayers(false); }}
+        quantitiesOpen={showQuantities}
       />
 
       {saveState === "conflict" && (
@@ -952,8 +1212,12 @@ export function TwinEditor({
             <div className="pointer-events-none absolute left-1/2 top-3 -translate-x-1/2 rounded-full bg-ink/85 px-3 py-1.5 text-xs text-white">
               {draft.length} point{draft.length > 1 ? "s" : ""} ·{" "}
               {formatMeters(perimeter(draft, false))}
-              {draft.length >= 3 && ` · ${formatArea(polygonArea(draft))}`} — double-clic ou
-              Entrée pour fermer
+              {/* Une aire n'a de sens que pour une surface fermée : un
+                  tuyau en L n'en a pas, et en afficher une tromperait. */}
+              {!OPEN_TOOLS.has(tool.kind) && draft.length >= 3 && ` · ${formatArea(polygonArea(draft))}`}
+              {OPEN_TOOLS.has(tool.kind)
+                ? " — double-clic ou Entrée pour terminer"
+                : " — double-clic ou Entrée pour fermer"}
             </div>
           )}
         </div>
@@ -982,14 +1246,29 @@ export function TwinEditor({
             onRestore={restoreRevision}
             onClose={() => setShowRevisions(false)}
           />
+        ) : showLayers ? (
+          <Layers
+            layers={layers}
+            setLayers={setLayers}
+            onClose={() => setShowLayers(false)}
+          />
+        ) : showQuantities ? (
+          <Quantities
+            report={quantities}
+            onClose={() => setShowQuantities(false)}
+          />
         ) : (
           <Properties
             plants={plants}
             object={selectedObject}
             area={selectedArea}
+            pipe={selectedPipe}
+            cable={selectedCable}
             count={selection.length}
             boundaryPoints={doc.boundaryPoints}
             onPatchObject={patchObject}
+            onPatchPipe={patchPipe}
+            onPatchCable={patchCable}
             onPatchArea={(id, patch) =>
               commit((s) => ({ ...s, areas: s.areas.map((a) => (a.id === id ? { ...a, ...patch } : a)) }))
             }
@@ -1007,6 +1286,7 @@ function Toolbar({
   tool, setTool, mapMode, setMapMode, snap, setSnap,
   onUndo, onRedo, onFinish, drafting, saveState, gardenName,
   onToggleRevisions, revisionsOpen, onTogglePlans, plansOpen,
+  onToggleLayers, layersOpen, onToggleQuantities, quantitiesOpen,
 }: {
   tool: Tool; setTool: (t: Tool) => void;
   mapMode: MapMode; setMapMode: (m: MapMode) => void;
@@ -1015,6 +1295,8 @@ function Toolbar({
   drafting: boolean; saveState: SaveState; gardenName: string;
   onToggleRevisions: () => void; revisionsOpen: boolean;
   onTogglePlans: () => void; plansOpen: boolean;
+  onToggleLayers: () => void; layersOpen: boolean;
+  onToggleQuantities: () => void; quantitiesOpen: boolean;
 }) {
   const SAVE_LABEL: Record<SaveState, string> = {
     idle: "", saving: "Enregistrement…", saved: "Enregistré",
@@ -1076,6 +1358,14 @@ function Toolbar({
         className={`rounded-md px-2.5 py-1.5 text-xs font-medium ${revisionsOpen ? "bg-accent-wash text-accent" : "text-ink-soft hover:bg-canvas"}`}>
         Versions
       </button>
+      <button onClick={onToggleLayers}
+        className={`rounded-md px-2.5 py-1.5 text-xs font-medium ${layersOpen ? "bg-accent-wash text-accent" : "text-ink-soft hover:bg-canvas"}`}>
+        Calques
+      </button>
+      <button onClick={onToggleQuantities}
+        className={`rounded-md px-2.5 py-1.5 text-xs font-medium ${quantitiesOpen ? "bg-accent-wash text-accent" : "text-ink-soft hover:bg-canvas"}`}>
+        Métré
+      </button>
 
       <div className="ml-auto flex items-center gap-2">
         <span className={`text-xs ${saveTone}`}>{SAVE_LABEL[saveState]}</span>
@@ -1119,6 +1409,45 @@ function Library({ tool, setTool }: { tool: Tool; setTool: (t: Tool) => void }) 
         ))}
       </div>
 
+      {/*
+        Les réseaux ne sont pas des objets ponctuels : on les TRACE, comme
+        une zone. D'où leur place à part, au-dessus de la bibliothèque
+        d'objets, et non parmi les vannes et les arroseurs.
+      */}
+      <p className="mb-1 mt-3 px-1.5 text-[11px] font-medium text-ink-faint">
+        Réseau d&apos;irrigation
+      </p>
+      <div className="flex flex-wrap gap-1 px-1">
+        {PIPE_LINE_TYPES.map((t) => (
+          <button key={t} onClick={() => setTool({ kind: "pipe", lineType: t })}
+            className={`flex items-center gap-1.5 rounded border px-1.5 py-1 text-[11px] ${
+              tool.kind === "pipe" && tool.lineType === t
+                ? "border-accent bg-accent-wash text-accent"
+                : "border-line text-ink-soft hover:border-line-strong"}`}>
+            <span className="inline-block h-0.5 w-3.5 shrink-0"
+              style={{ backgroundColor: PIPE_STYLE[t].color }} />
+            {PIPE_LINE_TYPE_LABELS[t]}
+          </button>
+        ))}
+      </div>
+
+      <p className="mb-1 mt-3 px-1.5 text-[11px] font-medium text-ink-faint">
+        Câbles
+      </p>
+      <div className="flex flex-wrap gap-1 px-1">
+        {CABLE_TYPES.filter((t) => t !== "other").map((t) => (
+          <button key={t} onClick={() => setTool({ kind: "cable", cableType: t })}
+            className={`flex items-center gap-1.5 rounded border px-1.5 py-1 text-[11px] ${
+              tool.kind === "cable" && tool.cableType === t
+                ? "border-accent bg-accent-wash text-accent"
+                : "border-line text-ink-soft hover:border-line-strong"}`}>
+            <span className="inline-block h-0.5 w-3.5 shrink-0"
+              style={{ backgroundColor: CABLE_STYLE[t].color }} />
+            {CABLE_TYPE_LABELS[t]}
+          </button>
+        ))}
+      </div>
+
       {GROUPS.map((group) => (
         <div key={group.title}>
           <p className="mb-1 mt-3 px-1.5 text-[11px] font-medium text-ink-faint">{group.title}</p>
@@ -1140,15 +1469,20 @@ function Library({ tool, setTool }: { tool: Tool; setTool: (t: Tool) => void }) 
 }
 
 function Properties({
-  plants, object, area, count, boundaryPoints, onPatchObject, onPatchArea, onDelete,
+  plants, object, area, pipe, cable, count, boundaryPoints,
+  onPatchObject, onPatchArea, onPatchPipe, onPatchCable, onDelete,
 }: {
   plants: LinkablePlant[];
   object: TwinObject | null;
   area: TwinArea | null;
+  pipe: TwinPipe | null;
+  cable: TwinCable | null;
   count: number;
   boundaryPoints: Point[];
   onPatchObject: (id: string, patch: Partial<TwinObject>) => void;
   onPatchArea: (id: string, patch: Partial<TwinArea>) => void;
+  onPatchPipe: (id: string, patch: Partial<TwinPipe>) => void;
+  onPatchCable: (id: string, patch: Partial<TwinCable>) => void;
   onDelete: () => void;
 }) {
   return (
@@ -1189,6 +1523,10 @@ function Properties({
               className="rounded-md border border-line-strong bg-surface px-2 py-1 text-xs outline-none focus:border-accent" />
           </label>
 
+          {object.objectType === "sprinkler" && (
+            <SprinklerFields object={object} onPatchObject={onPatchObject} />
+          )}
+
           <PlantLink plants={plants} object={object} onPatchObject={onPatchObject} />
           <button onClick={onDelete} className="mt-1 w-full rounded-md bg-critical-wash px-2 py-1.5 text-xs font-medium text-critical">
             Supprimer
@@ -1213,7 +1551,10 @@ function Properties({
         </div>
       )}
 
-      {!object && !area && count === 0 && (
+      {pipe && <PipeProperties pipe={pipe} onPatch={onPatchPipe} onDelete={onDelete} />}
+      {cable && <CableProperties cable={cable} onPatch={onPatchCable} onDelete={onDelete} />}
+
+      {!object && !area && !pipe && !cable && count === 0 && (
         <div>
           <p className="text-xs text-ink-soft">
             Sélectionnez un élément, ou choisissez un outil dans la bibliothèque.
@@ -1236,6 +1577,278 @@ function Properties({
           </div>
         </div>
       )}
+    </aside>
+  );
+}
+
+/**
+ * §PIPE — « un tuyau n'est PAS une simple ligne graphique. »
+ *
+ * Diamètre, matériau, nature de la conduite : de quoi chiffrer, pas
+ * seulement de quoi dessiner. La longueur est en lecture seule et le
+ * restera : elle se lit sur le tracé, et un champ modifiable inviterait
+ * à écrire un chiffre qui contredirait le dessin dès le premier coude
+ * déplacé.
+ */
+function PipeProperties({
+  pipe, onPatch, onDelete,
+}: {
+  pipe: TwinPipe;
+  onPatch: (id: string, patch: Partial<TwinPipe>) => void;
+  onDelete: () => void;
+}) {
+  return (
+    <div className="flex flex-col gap-2.5">
+      <p className="text-sm font-medium">{PIPE_LINE_TYPE_LABELS[pipe.lineType]}</p>
+
+      <Readout label="Longueur mesurée" value={formatMeters(perimeter(pipe.points, false))} />
+      <Readout label="Points" value={String(pipe.points.length)} />
+
+      <label className="flex flex-col gap-1">
+        <span className="text-[11px] text-ink-faint">Nature</span>
+        <select value={pipe.lineType}
+          onChange={(e) => onPatch(pipe.id, { lineType: e.target.value as PipeLineType })}
+          className="rounded-md border border-line-strong bg-surface px-2 py-1 text-xs outline-none focus:border-accent">
+          {PIPE_LINE_TYPES.map((t) => (
+            <option key={t} value={t}>{PIPE_LINE_TYPE_LABELS[t]}</option>
+          ))}
+        </select>
+      </label>
+
+      <NumberRow label="Diamètre (mm)" value={pipe.diameterMM} min={1}
+        onChange={(v) => onPatch(pipe.id, { diameterMM: v })} />
+
+      <label className="flex flex-col gap-1">
+        <span className="text-[11px] text-ink-faint">Matériau</span>
+        <select value={pipe.material}
+          onChange={(e) => onPatch(pipe.id, { material: e.target.value as PipeMaterial })}
+          className="rounded-md border border-line-strong bg-surface px-2 py-1 text-xs outline-none focus:border-accent">
+          {PIPE_MATERIALS.map((m) => (
+            <option key={m} value={m}>{PIPE_MATERIAL_LABELS[m]}</option>
+          ))}
+        </select>
+      </label>
+
+      <button onClick={onDelete} className="mt-1 w-full rounded-md bg-critical-wash px-2 py-1.5 text-xs font-medium text-critical">
+        Supprimer
+      </button>
+    </div>
+  );
+}
+
+/**
+ * §LIGHTING. Même forme que le tuyau, à ceci près qu'il n'y a
+ * délibérément ni calcul de chute de tension ni dimensionnement :
+ * « Pas d'ingénierie électrique certifiée automatique. » On mesure un
+ * linéaire pour le chiffrer, c'est tout.
+ */
+function CableProperties({
+  cable, onPatch, onDelete,
+}: {
+  cable: TwinCable;
+  onPatch: (id: string, patch: Partial<TwinCable>) => void;
+  onDelete: () => void;
+}) {
+  return (
+    <div className="flex flex-col gap-2.5">
+      <p className="text-sm font-medium">Câble — {CABLE_TYPE_LABELS[cable.cableType]}</p>
+
+      <Readout label="Longueur mesurée" value={formatMeters(perimeter(cable.points, false))} />
+
+      <label className="flex flex-col gap-1">
+        <span className="text-[11px] text-ink-faint">Type</span>
+        <select value={cable.cableType}
+          onChange={(e) => onPatch(cable.id, { cableType: e.target.value as CableType })}
+          className="rounded-md border border-line-strong bg-surface px-2 py-1 text-xs outline-none focus:border-accent">
+          {CABLE_TYPES.map((t) => (
+            <option key={t} value={t}>{CABLE_TYPE_LABELS[t]}</option>
+          ))}
+        </select>
+      </label>
+
+      <NumberRow label="Section (mm²)" value={cable.sectionMM2 ?? 0} min={0}
+        onChange={(v) => onPatch(cable.id, { sectionMM2: v > 0 ? v : null })} />
+
+      <p className="text-[11px] text-ink-faint">
+        Métré uniquement. Le dimensionnement électrique reste à la charge
+        d&apos;un professionnel qualifié.
+      </p>
+
+      <button onClick={onDelete} className="mt-1 w-full rounded-md bg-critical-wash px-2 py-1.5 text-xs font-medium text-critical">
+        Supprimer
+      </button>
+    </div>
+  );
+}
+
+/**
+ * §SPRINKLER — rayon et secteur arrosé.
+ *
+ * Les angles sont ceux du plan : 0° à l'est, croissant vers le nord.
+ * Les valeurs usuelles sont proposées en un clic parce qu'un arroseur
+ * de jardin se règle presque toujours sur un quart, un demi ou un tour
+ * complet, et que saisir « 90 » puis « 180 » à la main pour chaque tête
+ * est un travail inutile.
+ */
+function SprinklerFields({
+  object, onPatchObject,
+}: {
+  object: TwinObject;
+  onPatchObject: (id: string, patch: Partial<TwinObject>) => void;
+}) {
+  const start = object.sprinklerStartAngleDegrees ?? 0;
+  const end = object.sprinklerEndAngleDegrees ?? 360;
+  const sector = Math.abs(end - start);
+
+  const PRESETS = [90, 180, 270, 360];
+
+  return (
+    <div className="flex flex-col gap-2.5 border-t border-line pt-2.5">
+      <span className="text-[11px] font-medium text-ink-faint">Arrosage</span>
+
+      <NumberRow label="Portée (m)" value={object.sprinklerRadiusMeters ?? 0} min={0}
+        onChange={(v) => onPatchObject(object.id, { sprinklerRadiusMeters: v > 0 ? v : null })} />
+
+      <div className="flex flex-col gap-1">
+        <span className="text-[11px] text-ink-faint">Secteur</span>
+        <div className="flex flex-wrap gap-1">
+          {PRESETS.map((deg) => (
+            <button key={deg}
+              onClick={() => onPatchObject(object.id, {
+                sprinklerStartAngleDegrees: start,
+                sprinklerEndAngleDegrees: start + deg,
+              })}
+              className={`rounded border px-1.5 py-1 text-[11px] ${
+                Math.round(sector) === deg
+                  ? "border-accent bg-accent-wash text-accent"
+                  : "border-line text-ink-soft hover:border-line-strong"}`}>
+              {deg}°
+            </button>
+          ))}
+        </div>
+      </div>
+
+      <NumberRow label="Orientation (°)" value={start}
+        onChange={(v) => onPatchObject(object.id, {
+          sprinklerStartAngleDegrees: v,
+          sprinklerEndAngleDegrees: v + sector,
+        })} />
+
+      <NumberRow label="Débit (L/h)" value={object.sprinklerFlowRateLitersPerHour ?? 0} min={0}
+        onChange={(v) => onPatchObject(object.id, {
+          sprinklerFlowRateLitersPerHour: v > 0 ? v : null,
+        })} />
+
+      <p className="text-[11px] text-ink-faint">
+        Portée <strong>estimée</strong> d&apos;après ce réglage. La pluviométrie
+        réelle dépend de la pression, du vent et du modèle — activez le
+        calque « Couverture d&apos;arrosage » pour la visualiser.
+      </p>
+    </div>
+  );
+}
+
+function Layers({
+  layers, setLayers, onClose,
+}: {
+  layers: Record<MapLayer, boolean>;
+  setLayers: (l: Record<MapLayer, boolean>) => void;
+  onClose: () => void;
+}) {
+  const applyProfile = (key: LayerProfile) => {
+    const wanted = new Set<string>(LAYER_PROFILES[key].layers);
+    setLayers(
+      Object.fromEntries(MAP_LAYERS.map((l) => [l, wanted.has(l)])) as Record<MapLayer, boolean>,
+    );
+  };
+
+  return (
+    <aside className="w-64 shrink-0 overflow-y-auto border-l border-line bg-surface px-3 py-3">
+      <div className="mb-2 flex items-center justify-between">
+        <p className="text-xs font-semibold uppercase tracking-wide text-ink-faint">Calques</p>
+        <button onClick={onClose} className="text-xs text-ink-faint hover:text-ink">Fermer</button>
+      </div>
+
+      <p className="mb-1 text-[11px] text-ink-faint">Profils</p>
+      <div className="mb-3 flex flex-wrap gap-1">
+        {(Object.keys(LAYER_PROFILES) as LayerProfile[]).map((key) => (
+          <button key={key} onClick={() => applyProfile(key)}
+            className="rounded border border-line px-1.5 py-1 text-[11px] text-ink-soft hover:border-line-strong">
+            {LAYER_PROFILES[key].label}
+          </button>
+        ))}
+      </div>
+
+      <div className="flex flex-col gap-1.5 border-t border-line pt-2.5">
+        {MAP_LAYERS.map((layer) => (
+          <label key={layer} className="flex items-center gap-2 text-xs text-ink-soft">
+            <input type="checkbox" checked={layers[layer]}
+              onChange={(e) => setLayers({ ...layers, [layer]: e.target.checked })} />
+            {LAYER_LABELS[layer]}
+          </label>
+        ))}
+      </div>
+
+      <p className="mt-3 border-t border-line pt-2.5 text-[11px] text-ink-faint">
+        Les calques ne changent que l&apos;affichage. Rien n&apos;est supprimé,
+        et ces réglages ne sont pas enregistrés avec le plan.
+      </p>
+    </aside>
+  );
+}
+
+/**
+ * §"QUANTITÉS AUTOMATIQUES".
+ *
+ * Trois listes séparées et jamais un total : additionner des m², des m
+ * et des unités ne veut rien dire, et un grand nombre en bas de panneau
+ * serait lu comme un résultat.
+ */
+function Quantities({
+  report, onClose,
+}: {
+  report: ReturnType<typeof computeQuantities>;
+  onClose: () => void;
+}) {
+  const SECTIONS: { title: string; lines: typeof report.surfaces }[] = [
+    { title: "Surfaces", lines: report.surfaces },
+    { title: "Linéaires", lines: report.lengths },
+    { title: "Quantités", lines: report.counts },
+  ];
+
+  return (
+    <aside className="w-64 shrink-0 overflow-y-auto border-l border-line bg-surface px-3 py-3">
+      <div className="mb-2 flex items-center justify-between">
+        <p className="text-xs font-semibold uppercase tracking-wide text-ink-faint">Métré</p>
+        <button onClick={onClose} className="text-xs text-ink-faint hover:text-ink">Fermer</button>
+      </div>
+
+      {report.isEmpty ? (
+        <p className="text-[11px] text-ink-faint">
+          Rien à mesurer pour l&apos;instant. Tracez une zone, un réseau ou
+          placez des végétaux.
+        </p>
+      ) : (
+        SECTIONS.filter((s) => s.lines.length > 0).map((section) => (
+          <div key={section.title} className="mb-3">
+            <p className="mb-1 text-[11px] font-medium text-ink-faint">{section.title}</p>
+            <table className="w-full text-xs">
+              <tbody>
+                {section.lines.map((line) => (
+                  <tr key={line.key} className="border-b border-line last:border-0">
+                    <td className="py-1 pr-2 text-ink-soft">{line.label}</td>
+                    <td className="py-1 text-right font-medium tabular-nums">{line.formatted}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        ))
+      )}
+
+      <p className="mt-2 border-t border-line pt-2.5 text-[11px] text-ink-faint">
+        Mesuré sur le plan, jamais saisi. Recalculé à chaque modification.
+      </p>
     </aside>
   );
 }
