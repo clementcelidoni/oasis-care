@@ -102,7 +102,10 @@ export const NAVIGATION: NavItem[] = [
   // Celui-ci est l'autre : pots, substrat, paillage, consommables —
   // ce qui entre par une commande fournisseur, donc au Milestone 9.
   // Deux entrées nommées « Stocks » se seraient confondues.
-  { label: "Stock matériaux", href: "/stocks", permission: "nursery.stock.manage", milestone: 9 },
+  // Repoussé encore : le Milestone 9 livre les COMMANDES de fournitures,
+  // pas un inventaire des consommables. La liste du milestone ne le
+  // demande pas, et une page vide vaudrait moins qu’une promesse datée.
+  { label: "Stock matériaux", href: "/stocks", permission: "nursery.stock.manage", milestone: 10 },
   { label: "Factures", href: "/factures", permission: "invoice.create", milestone: 10 },
   { label: "Contrats", href: "/contrats", permission: "projects.read", milestone: 10 },
   { label: "Matériel", href: "/materiel", permission: "projects.manage", milestone: 10 },
@@ -113,7 +116,7 @@ export const NAVIGATION: NavItem[] = [
 ];
 
 /** Milestones already delivered. Everything above this is shown as coming. */
-export const DELIVERED_THROUGH_MILESTONE = 8;
+export const DELIVERED_THROUGH_MILESTONE = 9;
 
 export function isAvailable(item: NavItem): boolean {
   return item.milestone <= DELIVERED_THROUGH_MILESTONE;
