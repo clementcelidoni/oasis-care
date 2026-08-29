@@ -7,6 +7,7 @@ import {
   PERMISSIONS,
   type Role,
 } from "@/lib/auth/permissions";
+import { OrganizationForm } from "./OrganizationForm";
 
 /**
  * Organisation, membres et droits — la partie visible de ce que
@@ -40,10 +41,12 @@ export default async function SettingsPage() {
           <Row label="Votre rôle" value={ROLE_LABELS[organization.role]} />
           <Row label="Espace de travail" value={organization.workspaceId} mono />
         </dl>
-        <p className="mt-4 text-xs text-ink-faint">
-          L&apos;activité détermine les modules affichés dans le menu — une
-          entreprise sans pépinière ne voit pas les écrans de pépinière.
-        </p>
+
+        <OrganizationForm
+          name={organization.name}
+          businessType={organization.businessType}
+          canEdit={organization.permissions.includes("organization.manageUsers")}
+        />
       </Card>
 
       <Card className="mb-4">
