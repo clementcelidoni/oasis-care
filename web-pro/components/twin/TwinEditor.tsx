@@ -15,9 +15,11 @@ import {
   type TwinDocument, type TwinObject, type TwinArea, type ObjectType,
   planScale,
   type AreaType, type MapMode, type RevisionState, type RevisionSummary,
-  type PlanImage,
+  type PlanImage, type LinkablePlant,
 } from "@/lib/twin/types";
-import { saveTwin, saveRevision, listRevisions, loadRevision } from "@/lib/twin/actions";
+import {
+  saveTwin, saveRevision, listRevisions, loadRevision, listLinkablePlants,
+} from "@/lib/twin/actions";
 import { useTileLayer } from "./useTileLayer";
 import { PlanPanel } from "./PlanPanel";
 import { listPlanImages, updatePlanImage } from "@/lib/twin/planActions";
@@ -71,6 +73,7 @@ export function TwinEditor({
   const [calibratingId, setCalibratingId] = useState<string | null>(null);
   const [calibrationPoints, setCalibrationPoints] = useState<Point[]>([]);
   const planImages = useRef(new Map<string, HTMLImageElement>());
+  const [plants, setPlants] = useState<LinkablePlant[]>([]);
   const modifiedAt = useRef<string | null>(baseModifiedAt);
 
   const [camera, setCamera] = useState<Camera>({ centerX: 0, centerY: 0, pixelsPerMeter: 14 });
@@ -207,6 +210,11 @@ export function TwinEditor({
     },
     [commit],
   );
+
+  // ---------- carnet de plantes, pour le rattachement ----------
+  useEffect(() => {
+    void listLinkablePlants(initial.gardenId).then(setPlants);
+  }, [initial.gardenId]);
 
   // ---------- plans importés ----------
   const reloadPlans = useCallback(async () => {
@@ -688,6 +696,8 @@ export function TwinEditor({
         zIndex: doc.objects.length,
         label: null,
         canopyDiameterMeters: VEGETATION.has(tool.objectType) ? size.w : null,
+        linkedEntityId: null,
+        linkedEntityKind: null,
       };
       commit((s) => ({ ...s, objects: [...s.objects, created] }));
       setSelection([{ kind: "object", id: created.id }]);
@@ -974,6 +984,7 @@ export function TwinEditor({
           />
         ) : (
           <Properties
+            plants={plants}
             object={selectedObject}
             area={selectedArea}
             count={selection.length}
@@ -1129,8 +1140,9 @@ function Library({ tool, setTool }: { tool: Tool; setTool: (t: Tool) => void }) 
 }
 
 function Properties({
-  object, area, count, boundaryPoints, onPatchObject, onPatchArea, onDelete,
+  plants, object, area, count, boundaryPoints, onPatchObject, onPatchArea, onDelete,
 }: {
+  plants: LinkablePlant[];
   object: TwinObject | null;
   area: TwinArea | null;
   count: number;
@@ -1176,6 +1188,8 @@ function Properties({
             <input value={object.label ?? ""} onChange={(e) => onPatchObject(object.id, { label: e.target.value || null })}
               className="rounded-md border border-line-strong bg-surface px-2 py-1 text-xs outline-none focus:border-accent" />
           </label>
+
+          <PlantLink plants={plants} object={object} onPatchObject={onPatchObject} />
           <button onClick={onDelete} className="mt-1 w-full rounded-md bg-critical-wash px-2 py-1.5 text-xs font-medium text-critical">
             Supprimer
           </button>
@@ -1321,6 +1335,70 @@ function Revisions({
         Restaurer remplace le plan courant, mais reste annulable par Ctrl+Z.
       </p>
     </aside>
+  );
+}
+
+/**
+ * §11C : rattacher l'objet du plan à une vraie plante du carnet.
+ *
+ * Écrit `linkedEntityId` + `linkedEntityKind`, les deux colonnes que
+ * l'iPhone lit déjà depuis la Phase 6 — toucher l'objet y ouvre la
+ * fiche de la plante. `linkedEntityKind` ne peut valoir que `plant` ou
+ * `sensor` : ce sont les seuls cas de l'enum Swift.
+ */
+function PlantLink({
+  plants, object, onPatchObject,
+}: {
+  plants: LinkablePlant[];
+  object: TwinObject;
+  onPatchObject: (id: string, patch: Partial<TwinObject>) => void;
+}) {
+  const linked =
+    object.linkedEntityKind === "plant"
+      ? plants.find((p) => p.id === object.linkedEntityId) ?? null
+      : null;
+
+  return (
+    <div className="flex flex-col gap-1 border-t border-line pt-2.5">
+      <span className="text-[11px] text-ink-faint">Plante rattachée</span>
+
+      {plants.length === 0 ? (
+        <p className="text-[11px] text-ink-faint">
+          Aucune plante dans votre carnet. Ajoutez-en depuis l&apos;application
+          iPhone, elles apparaîtront ici.
+        </p>
+      ) : (
+        <select
+          value={object.linkedEntityKind === "plant" ? object.linkedEntityId ?? "" : ""}
+          onChange={(e) => {
+            const id = e.target.value;
+            const plant = plants.find((p) => p.id === id) ?? null;
+            onPatchObject(object.id, {
+              linkedEntityId: id || null,
+              linkedEntityKind: id ? "plant" : null,
+              // Reprend le nom de la plante comme étiquette, sauf si
+              // l'utilisateur en a déjà saisi une : son texte l'emporte.
+              label: object.label ?? plant?.customName ?? null,
+            });
+          }}
+          className="rounded-md border border-line-strong bg-surface px-2 py-1 text-xs outline-none focus:border-accent"
+        >
+          <option value="">— Aucune —</option>
+          {plants.map((p) => (
+            <option key={p.id} value={p.id}>
+              {p.customName}
+              {p.commonName ? ` · ${p.commonName}` : ""}
+            </option>
+          ))}
+        </select>
+      )}
+
+      {linked && (
+        <p className="text-[11px] text-ink-faint">
+          {linked.scientificName ?? linked.commonName ?? ""}
+        </p>
+      )}
+    </div>
   );
 }
 

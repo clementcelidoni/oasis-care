@@ -5,6 +5,7 @@ import { createClient } from "@/lib/supabase/server";
 import { getActiveOrganization } from "@/lib/auth/organization";
 import type {
   TwinDocument, TwinObject, TwinArea, RevisionState, RevisionSummary,
+  LinkablePlant,
 } from "./types";
 
 /**
@@ -49,7 +50,7 @@ export async function loadTwin(gardenId: string): Promise<TwinDocument | null> {
     supabase
       .from("garden_map_objects")
       .select(
-        "id, object_type, position_x_meters, position_y_meters, rotation_radians, width_meters, height_meters, z_index, label, canopy_diameter_meters",
+        "id, object_type, position_x_meters, position_y_meters, rotation_radians, width_meters, height_meters, z_index, label, canopy_diameter_meters, linked_entity_id, linked_entity_kind",
       )
       .eq("garden_id", gardenId)
       .is("deleted_at", null)
@@ -78,8 +79,45 @@ export async function loadTwin(gardenId: string): Promise<TwinDocument | null> {
       zIndex: o.z_index ?? 0,
       label: o.label,
       canopyDiameterMeters: o.canopy_diameter_meters,
+      linkedEntityId: o.linked_entity_id,
+      linkedEntityKind: o.linked_entity_kind,
     })),
   };
+}
+
+/**
+ * Les plantes du carnet, proposées au rattachement d'un objet du plan.
+ *
+ * §11C : « chaque élément du plan peut être associé à une vraie entité
+ * Oasis… toucher l'objet ouvre la vraie fiche. » Ce sont les mêmes
+ * lignes que la liste Végétaux de l'iPhone.
+ *
+ * Les plantes du jardin courant d'abord : rattacher un arbre du plan à
+ * une plante déjà rattachée à ce jardin est le cas courant, chercher
+ * dans tout le carnet est l'exception.
+ */
+export async function listLinkablePlants(gardenId: string): Promise<LinkablePlant[]> {
+  const supabase = await createClient();
+  const { data } = await supabase
+    .from("plants")
+    .select("id, custom_name, common_name, scientific_name, garden_id")
+    .eq("is_archived", false)
+    .order("custom_name")
+    .limit(500);
+
+  const rows = (data ?? []).map((p) => ({
+    id: p.id,
+    customName: p.custom_name,
+    commonName: p.common_name,
+    scientificName: p.scientific_name,
+    gardenId: p.garden_id,
+  }));
+
+  return rows.sort((a, b) => {
+    const aHere = a.gardenId === gardenId ? 0 : 1;
+    const bHere = b.gardenId === gardenId ? 0 : 1;
+    return aHere - bHere || a.customName.localeCompare(b.customName, "fr");
+  });
 }
 
 type SavePayload = {
@@ -194,6 +232,8 @@ export async function saveTwin(
         z_index: o.zIndex,
         label: o.label,
         canopy_diameter_meters: o.canopyDiameterMeters,
+        linked_entity_id: o.linkedEntityId,
+        linked_entity_kind: o.linkedEntityKind,
         updated_at: now,
         deleted_at: null,
       })),

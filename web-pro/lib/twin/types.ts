@@ -130,6 +130,17 @@ export function defaultSizeFor(type: ObjectType) {
 // Entités, telles qu'elles existent en base depuis la Phase 6
 // ---------------------------------------------------------------
 
+/**
+ * §11C : « une plante placée peut être liée à SpeciesProfile, Plant,
+ * NurseryCatalogItem, NurseryStock, QuoteItem. »
+ *
+ * Restreint à ce que l'iPhone sait décoder : GardenObjectLinkKind ne
+ * connaît que `plant` et `sensor`. Écrire une autre valeur la ferait
+ * refuser au décodage, et le jardin cesserait de s'afficher sur le
+ * téléphone. Les autres cibles viendront quand l'enum Swift les aura.
+ */
+export type LinkKind = "plant" | "sensor";
+
 export type TwinObject = {
   id: string;
   objectType: ObjectType;
@@ -140,6 +151,17 @@ export type TwinObject = {
   zIndex: number;
   label: string | null;
   canopyDiameterMeters: number | null;
+  linkedEntityId: string | null;
+  linkedEntityKind: LinkKind | null;
+};
+
+/** Une plante réelle du carnet, proposée au rattachement. */
+export type LinkablePlant = {
+  id: string;
+  customName: string;
+  commonName: string | null;
+  scientificName: string | null;
+  gardenId: string | null;
 };
 
 export type TwinArea = {
