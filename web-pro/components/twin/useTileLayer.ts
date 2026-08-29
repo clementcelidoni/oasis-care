@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import {
   activeProvider, bestZoom, buildTileUrl,
   lonToTileX, latToTileY, tileXToLon, tileYToLat,
@@ -16,9 +16,16 @@ import { worldToScreen, screenToWorld, type Camera, type Viewport } from "@/lib/
  * que fournir les images prêtes à dessiner, pour que le fond ne soit
  * jamais l'affaire du moteur de dessin des objets.
  */
-export type LoadedTile = {
+
+/**
+ * Une tuile visible, désignée par ses seules coordonnées.
+ *
+ * L'image n'y figure pas : elle vit dans le cache, dont la clé est
+ * justement ce triplet. Séparer les deux permet de DÉDUIRE la liste des
+ * tuiles visibles pendant le rendu, sans la stocker dans un état.
+ */
+export type VisibleTile = {
   key: string;
-  image: HTMLImageElement;
   x: number;
   y: number;
   z: number;
@@ -32,14 +39,13 @@ export function useTileLayer(
 ) {
   const cache = useRef(new Map<string, HTMLImageElement>());
   const [, forceRender] = useState(0);
-  const [tiles, setTiles] = useState<LoadedTile[]>([]);
   const provider = activeProvider();
 
-  useEffect(() => {
-    if (!enabled || !origin || view.width < 10) {
-      setTiles([]);
-      return;
-    }
+  // Quelles tuiles sont visibles ne dépend que de la caméra et de
+  // l'emprise : c'est un calcul, pas un état. Le déduire pendant le
+  // rendu évite un rendu de plus à chaque déplacement de la carte.
+  const tiles = useMemo<VisibleTile[]>(() => {
+    if (!enabled || !origin || view.width < 10) return [];
 
     const z = bestZoom(camera.pixelsPerMeter, origin.latitude, provider.maxZoom);
 
@@ -62,37 +68,42 @@ export function useTileLayer(
     // Garde-fou : à un zoom inadapté l'emprise peut couvrir des milliers
     // de tuiles. Mieux vaut ne rien afficher qu'inonder le fournisseur.
     const count = (maxX - minX + 1) * (maxY - minY + 1);
-    if (count > 120) {
-      setTiles([]);
-      return;
-    }
+    if (count > 120) return [];
 
-    const next: LoadedTile[] = [];
+    const next: VisibleTile[] = [];
     for (let x = minX; x <= maxX; x++) {
       for (let y = minY; y <= maxY; y++) {
-        const key = `${z}/${x}/${y}`;
-        let image = cache.current.get(key);
-        if (!image) {
-          image = new Image();
-          image.crossOrigin = "anonymous";
-          image.src = buildTileUrl(provider, x, y, z);
-          image.onload = () => forceRender((n) => n + 1);
-          // Une tuile manquante (bord de couverture) ne doit pas
-          // réessayer en boucle : on la garde en cache, vide.
-          image.onerror = () => {};
-          cache.current.set(key, image);
-        }
-        next.push({ key, image, x, y, z });
+        next.push({ key: `${z}/${x}/${y}`, x, y, z });
       }
     }
-    setTiles(next);
+    return next;
   }, [enabled, origin, camera, view, provider]);
+
+  // Le téléchargement, lui, est bien une synchronisation avec
+  // l'extérieur : on lance les requêtes manquantes, et c'est l'arrivée
+  // de l'image qui redemande un rendu.
+  useEffect(() => {
+    for (const tile of tiles) {
+      if (cache.current.has(tile.key)) continue;
+      const image = new Image();
+      image.crossOrigin = "anonymous";
+      image.src = buildTileUrl(provider, tile.x, tile.y, tile.z);
+      image.onload = () => forceRender((n) => n + 1);
+      // Une tuile manquante (bord de couverture) ne doit pas
+      // réessayer en boucle : on la garde en cache, vide.
+      image.onerror = () => {};
+      cache.current.set(tile.key, image);
+    }
+  }, [tiles, provider]);
 
   /** Dessine le fond. Appelé par le canvas avant tout le reste. */
   function draw(ctx: CanvasRenderingContext2D) {
     if (!origin) return;
     for (const tile of tiles) {
-      if (!tile.image.complete || tile.image.naturalWidth === 0) continue;
+      // Absente du cache : le rendu précède le premier passage de
+      // l'effet de chargement. La tuile arrivera au rendu suivant.
+      const image = cache.current.get(tile.key);
+      if (!image || !image.complete || image.naturalWidth === 0) continue;
 
       // Coins de la tuile en géographique, puis en mètres locaux, puis
       // à l'écran. La tuile n'est pas rigoureusement un rectangle dans
@@ -111,7 +122,7 @@ export function useTileLayer(
 
       // +1 px : sans cela un liseré du fond apparaît entre les tuiles
       // dès que les bords tombent sur des demi-pixels.
-      ctx.drawImage(tile.image, a.x, a.y, b.x - a.x + 1, b.y - a.y + 1);
+      ctx.drawImage(image, a.x, a.y, b.x - a.x + 1, b.y - a.y + 1);
     }
   }
 
