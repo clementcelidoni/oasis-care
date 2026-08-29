@@ -197,10 +197,6 @@ export function TwinEditor({
     setRevisions(await listRevisions(initial.gardenId));
   }, [initial.gardenId]);
 
-  useEffect(() => {
-    if (showRevisions) void refreshRevisions();
-  }, [showRevisions, refreshRevisions]);
-
   const captureRevision = useCallback(
     async (label: string, state: RevisionState) => {
       await saveRevision({
@@ -253,8 +249,10 @@ export function TwinEditor({
   }, [initial.gardenId]);
 
   // ---------- plans importés ----------
-  const reloadPlans = useCallback(async () => {
-    const list = await listPlanImages(initial.gardenId);
+  // Le préchargement des images est une affaire de cache, pas d'état :
+  // il remplit la ref que le canvas consulte au dessin, et rend la liste
+  // telle quelle pour que l'appelant la pose ensuite dans l'état.
+  const cachePlanImages = useCallback((list: PlanImage[]) => {
     for (const plan of list) {
       if (!plan.url || planImages.current.has(plan.id)) continue;
       const image = new Image();
@@ -262,9 +260,17 @@ export function TwinEditor({
       image.onload = () => setPlans((p) => [...p]); // redessine une fois chargée
       planImages.current.set(plan.id, image);
     }
-    setPlans(list);
-  }, [initial.gardenId]);
+    return list;
+  }, []);
 
+  const reloadPlans = useCallback(
+    () => listPlanImages(initial.gardenId).then(cachePlanImages).then(setPlans),
+    [initial.gardenId, cachePlanImages],
+  );
+
+  // Chargement initial. L'état n'est posé qu'au retour du serveur, dans
+  // la continuation de la promesse — comme pour le carnet de plantes
+  // juste au-dessus.
   useEffect(() => {
     void reloadPlans();
   }, [reloadPlans]);
@@ -331,37 +337,49 @@ export function TwinEditor({
     [plans, calibratingId, initial.gardenId],
   );
 
-  // ---------- taille du canvas ----------
+  // ---------- taille du canvas, et cadrage initial ----------
+  // Les bornes du cadrage viennent de `initial` et non de `doc` : le
+  // cadrage n'a lieu qu'une fois, au montage, où les deux coïncident.
+  // S'appuyer sur `initial` évite en prime de recadrer sur un plan déjà
+  // modifié si la première mesure arrivait tard.
+  const initialBounds = useMemo(
+    () =>
+      boundsOf([
+        ...(initial.boundary?.points ?? []),
+        ...initial.areas.flatMap((a) => a.points),
+        ...initial.objects.map((o) => o.position),
+      ]),
+    [initial],
+  );
+
+  const didFit = useRef(false);
   useEffect(() => {
     const element = wrapRef.current;
     if (!element) return;
+    // Mesure et cadrage tiennent dans le même observateur : la taille
+    // réelle du canvas n'existe qu'au moment où celui-ci la rapporte, et
+    // c'est ce même signal qui doit fixer le premier zoom. Séparer les
+    // deux imposait un rendu intermédiaire, mal cadré.
     const observer = new ResizeObserver(([entry]) => {
-      setView({ width: entry.contentRect.width, height: entry.contentRect.height });
+      const next = { width: entry.contentRect.width, height: entry.contentRect.height };
+      setView(next);
+
+      if (didFit.current || next.width < 50) return;
+      // Posé avant le test des bornes : sur un plan vide il n'y a rien à
+      // cadrer, et il ne faut pas réessayer à chaque redimensionnement.
+      didFit.current = true;
+      if (!initialBounds) return;
+      const w = Math.max(initialBounds.maxX - initialBounds.minX, 10);
+      const h = Math.max(initialBounds.maxY - initialBounds.minY, 10);
+      setCamera({
+        centerX: (initialBounds.minX + initialBounds.maxX) / 2,
+        centerY: (initialBounds.minY + initialBounds.maxY) / 2,
+        pixelsPerMeter: Math.min(next.width / (w * 1.3), next.height / (h * 1.3)),
+      });
     });
     observer.observe(element);
     return () => observer.disconnect();
-  }, []);
-
-  // ---------- cadrage initial sur le contenu existant ----------
-  const didFit = useRef(false);
-  useEffect(() => {
-    if (didFit.current || view.width < 50) return;
-    const all = [
-      ...doc.boundaryPoints,
-      ...doc.areas.flatMap((a) => a.points),
-      ...doc.objects.map((o) => o.position),
-    ];
-    didFit.current = true;
-    const b = boundsOf(all);
-    if (!b) return;
-    const w = Math.max(b.maxX - b.minX, 10);
-    const h = Math.max(b.maxY - b.minY, 10);
-    setCamera({
-      centerX: (b.minX + b.maxX) / 2,
-      centerY: (b.minY + b.maxY) / 2,
-      pixelsPerMeter: Math.min(view.width / (w * 1.3), view.height / (h * 1.3)),
-    });
-  }, [view, doc]);
+  }, [initialBounds]);
 
   // Fond satellite. L'origine géographique vient du jardin : sans
   // latitude/longitude, aucun géoréférencement n'est possible et on le
@@ -1163,7 +1181,15 @@ export function TwinEditor({
         onUndo={undo} onRedo={redo}
         onFinish={finishDraft} drafting={draft.length > 0}
         saveState={saveState} gardenName={initial.gardenName}
-        onToggleRevisions={() => { setShowRevisions((v) => !v); setShowPlans(false); setShowLayers(false); setShowQuantities(false); }}
+        onToggleRevisions={() => {
+          // Le rechargement appartient au clic, pas à un effet : c'est
+          // l'ouverture du panneau qui demande la liste, et rien d'autre
+          // ne la rend obsolète.
+          const opening = !showRevisions;
+          setShowRevisions(opening);
+          setShowPlans(false); setShowLayers(false); setShowQuantities(false);
+          if (opening) void refreshRevisions();
+        }}
         revisionsOpen={showRevisions}
         onTogglePlans={() => { setShowPlans((v) => !v); setShowRevisions(false); setShowLayers(false); setShowQuantities(false); }}
         plansOpen={showPlans}
