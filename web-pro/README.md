@@ -6,6 +6,12 @@ mêmes comptes, mêmes jardins, mêmes données.
 
 ## Démarrer
 
+**Le plus simple :** double-cliquez sur `Lancer Oasis Care Pro.cmd`, à la
+racine du projet. Il installe ce qu'il faut au premier lancement, puis
+démarre le serveur.
+
+En ligne de commande :
+
 ```bash
 npm install --prefix web-pro
 cp web-pro/.env.example web-pro/.env.local   # puis renseigner les valeurs
