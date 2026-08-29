@@ -98,7 +98,11 @@ export const NAVIGATION: NavItem[] = [
   },
   { label: "Achats", href: "/achats", permission: "invoice.create", milestone: 9 },
   { label: "Fournisseurs", href: "/fournisseurs", permission: "invoice.create", milestone: 9 },
-  { label: "Stocks", href: "/stocks", permission: "nursery.stock.manage", milestone: 8 },
+  // Le stock VIVANT est celui de la pépinière, et il a sa propre page.
+  // Celui-ci est l'autre : pots, substrat, paillage, consommables —
+  // ce qui entre par une commande fournisseur, donc au Milestone 9.
+  // Deux entrées nommées « Stocks » se seraient confondues.
+  { label: "Stock matériaux", href: "/stocks", permission: "nursery.stock.manage", milestone: 9 },
   { label: "Factures", href: "/factures", permission: "invoice.create", milestone: 10 },
   { label: "Contrats", href: "/contrats", permission: "projects.read", milestone: 10 },
   { label: "Matériel", href: "/materiel", permission: "projects.manage", milestone: 10 },
