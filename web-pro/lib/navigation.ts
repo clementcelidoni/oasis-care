@@ -59,8 +59,10 @@ export const NAVIGATION: NavItem[] = [
       // « Chantiers » n'est pas une sous-page : c'est /projets lui-même.
       // Deux adresses pour la même liste ne feraient qu'égarer.
       { label: "Visites", href: "/projets/visites", permission: "projects.read", milestone: 7 },
-      { label: "Conception", href: "/projets/conception", permission: "projects.read", milestone: 7 },
       { label: "Interventions", href: "/projets/interventions", permission: "projects.read", milestone: 7 },
+      // La conception, c'est le Digital Twin, livré au Milestone 3.
+      // Une page « Conception » vide à côté serait une fausse promesse.
+      { label: "Conception", href: "/digital-twin", permission: "digitalTwin.edit", milestone: 3 },
     ],
   },
   { label: "Digital Twin", href: "/digital-twin", permission: "digitalTwin.edit", milestone: 3 },
@@ -105,7 +107,7 @@ export const NAVIGATION: NavItem[] = [
 ];
 
 /** Milestones already delivered. Everything above this is shown as coming. */
-export const DELIVERED_THROUGH_MILESTONE = 6;
+export const DELIVERED_THROUGH_MILESTONE = 7;
 
 export function isAvailable(item: NavItem): boolean {
   return item.milestone <= DELIVERED_THROUGH_MILESTONE;
