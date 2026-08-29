@@ -95,7 +95,7 @@ export const NAVIGATION: NavItem[] = [
 ];
 
 /** Milestones already delivered. Everything above this is shown as coming. */
-export const DELIVERED_THROUGH_MILESTONE = 3;
+export const DELIVERED_THROUGH_MILESTONE = 4;
 
 export function isAvailable(item: NavItem): boolean {
   return item.milestone <= DELIVERED_THROUGH_MILESTONE;
