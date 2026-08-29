@@ -2,7 +2,7 @@
 
 import { revalidatePath } from "next/cache";
 import { createClient } from "@/lib/supabase/server";
-import { getActiveOrganization } from "@/lib/auth/organization";
+import { gardenWorkspaceId, NO_GARDEN_WORKSPACE } from "./workspace";
 import type { PlanImage } from "./types";
 
 /**
@@ -69,9 +69,6 @@ export async function listPlanImages(gardenId: string): Promise<PlanImage[]> {
 export async function uploadPlanImage(
   formData: FormData,
 ): Promise<{ ok: boolean; error?: string }> {
-  const organization = await getActiveOrganization();
-  if (!organization) return { ok: false, error: "Aucune organisation active." };
-
   const gardenId = String(formData.get("garden_id") ?? "");
   const file = formData.get("file");
   if (!gardenId || !(file instanceof File) || file.size === 0) {
@@ -93,9 +90,16 @@ export async function uploadPlanImage(
     return { ok: false, error: "Fichier trop volumineux (25 Mo maximum)." };
   }
 
+  // Le chemin de stockage ET la ligne portent l’espace du JARDIN : la
+  // première partie du chemin est exactement ce que vérifie la RLS du
+  // bucket, donc s’y tromper rangerait le fichier hors de portée de son
+  // propre jardin.
+  const workspaceId = await gardenWorkspaceId(gardenId);
+  if (!workspaceId) return { ok: false, error: NO_GARDEN_WORKSPACE };
+
   const supabase = await createClient();
   const extension = file.name.split(".").pop()?.toLowerCase() ?? "png";
-  const path = `${organization.workspaceId}/${gardenId}/${crypto.randomUUID()}.${extension}`;
+  const path = `${workspaceId}/${gardenId}/${crypto.randomUUID()}.${extension}`;
 
   const { error: uploadError } = await supabase.storage
     .from(BUCKET)
@@ -103,7 +107,7 @@ export async function uploadPlanImage(
   if (uploadError) return { ok: false, error: uploadError.message };
 
   const { error } = await supabase.from("garden_plan_images").insert({
-    workspace_id: organization.workspaceId,
+    workspace_id: workspaceId,
     garden_id: gardenId,
     storage_path: path,
     original_filename: file.name,

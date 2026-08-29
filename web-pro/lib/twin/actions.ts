@@ -3,6 +3,7 @@
 import { revalidatePath } from "next/cache";
 import { createClient } from "@/lib/supabase/server";
 import { getActiveOrganization } from "@/lib/auth/organization";
+import { gardenWorkspaceId, NO_GARDEN_WORKSPACE } from "./workspace";
 import type {
   TwinDocument, TwinObject, TwinArea, RevisionState, RevisionSummary,
   LinkablePlant,
@@ -166,11 +167,12 @@ export async function twinLastModified(gardenId: string): Promise<string | null>
 export async function saveTwin(
   payload: SavePayload,
 ): Promise<{ ok: boolean; error?: string; conflict?: boolean; modifiedAt?: string | null }> {
-  const organization = await getActiveOrganization();
-  if (!organization) return { ok: false, error: "Aucune organisation active." };
+  // L'espace vient du jardin, pas de l'organisation active — voir
+  // `gardenWorkspaceId`.
+  const workspaceId = await gardenWorkspaceId(payload.gardenId);
+  if (!workspaceId) return { ok: false, error: NO_GARDEN_WORKSPACE };
 
   const supabase = await createClient();
-  const workspaceId = organization.workspaceId;
   const now = new Date().toISOString();
 
   // §CONCURRENCY — « Ne pas écraser silencieusement le travail d'un
@@ -304,14 +306,14 @@ export async function saveRevision(input: {
   state: RevisionState;
   snapshot: { boundary: unknown; areas: unknown[]; objects: unknown[] };
 }): Promise<{ ok: boolean; error?: string }> {
-  const organization = await getActiveOrganization();
-  if (!organization) return { ok: false, error: "Aucune organisation active." };
+  const workspaceId = await gardenWorkspaceId(input.gardenId);
+  if (!workspaceId) return { ok: false, error: NO_GARDEN_WORKSPACE };
 
   const supabase = await createClient();
   const { data: user } = await supabase.auth.getUser();
 
   const { error } = await supabase.from("digital_twin_revisions").insert({
-    workspace_id: organization.workspaceId,
+    workspace_id: workspaceId,
     garden_id: input.gardenId,
     label: input.label,
     state: input.state,
@@ -334,7 +336,14 @@ export async function loadRevision(revisionId: string) {
   return data ?? null;
 }
 
-/** Crée un jardin depuis le web, en fournissant l'id (voir plus haut). */
+/**
+ * Crée un jardin depuis le web, en fournissant l'id (voir plus haut).
+ *
+ * Seul écrivain à prendre légitimement l'espace de l'ORGANISATION : un
+ * jardin créé ici n'a pas de parent dont hériter, et il appartient à
+ * l'entreprise. Tout ce qui pend ensuite à un jardin prend l'espace de
+ * ce jardin — voir `gardenWorkspaceId`.
+ */
 export async function createGarden(formData: FormData) {
   const organization = await getActiveOrganization();
   if (!organization) return;
