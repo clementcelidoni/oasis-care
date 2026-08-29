@@ -63,7 +63,16 @@ export const NAVIGATION: NavItem[] = [
     ],
   },
   { label: "Digital Twin", href: "/digital-twin", permission: "digitalTwin.edit", milestone: 3 },
-  { label: "Devis", href: "/devis", permission: "quotes.read", milestone: 5 },
+  {
+    label: "Devis",
+    href: "/devis",
+    permission: "quotes.read",
+    milestone: 5,
+    children: [
+      { label: "Devis", href: "/devis", permission: "quotes.read", milestone: 5 },
+      { label: "Bibliothèque de prix", href: "/catalogue", permission: "quotes.read", milestone: 5 },
+    ],
+  },
   { label: "Planning", href: "/planning", permission: "projects.read", milestone: 7 },
   { label: "Équipes", href: "/equipes", permission: "projects.manage", milestone: 7 },
   {
@@ -95,7 +104,7 @@ export const NAVIGATION: NavItem[] = [
 ];
 
 /** Milestones already delivered. Everything above this is shown as coming. */
-export const DELIVERED_THROUGH_MILESTONE = 4;
+export const DELIVERED_THROUGH_MILESTONE = 5;
 
 export function isAvailable(item: NavItem): boolean {
   return item.milestone <= DELIVERED_THROUGH_MILESTONE;

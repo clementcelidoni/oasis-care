@@ -1281,6 +1281,7 @@ export function TwinEditor({
         ) : showQuantities ? (
           <Quantities
             report={quantities}
+            gardenId={initial.gardenId}
             onClose={() => setShowQuantities(false)}
           />
         ) : (
@@ -1831,9 +1832,10 @@ function Layers({
  * serait lu comme un résultat.
  */
 function Quantities({
-  report, onClose,
+  report, gardenId, onClose,
 }: {
   report: ReturnType<typeof computeQuantities>;
+  gardenId: string;
   onClose: () => void;
 }) {
   const SECTIONS: { title: string; lines: typeof report.surfaces }[] = [
@@ -1872,8 +1874,23 @@ function Quantities({
         ))
       )}
 
+      {/*
+        §"DIGITAL TWIN → DEVIS". Un lien, et non un bouton qui écrirait
+        directement : « NE PAS ajouter silencieusement des coûts. » La
+        page d'après montre chaque ligne proposée avant d'en créer une.
+      */}
+      {!report.isEmpty && (
+        <a
+          href={`/devis/depuis-plan/${gardenId}`}
+          className="mt-2 block rounded-md bg-accent px-2.5 py-2 text-center text-xs font-medium text-accent-ink"
+        >
+          Verser dans un devis
+        </a>
+      )}
+
       <p className="mt-2 border-t border-line pt-2.5 text-[11px] text-ink-faint">
         Mesuré sur le plan, jamais saisi. Recalculé à chaque modification.
+        {!report.isEmpty && " Rien n’est ajouté à un devis sans votre relecture."}
       </p>
     </aside>
   );
