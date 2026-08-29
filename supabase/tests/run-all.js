@@ -31,16 +31,41 @@ const suites = fs
   .filter((f) => f.endsWith(".sql"))
   .sort();
 
+/**
+ * Une coupure réseau n'est pas un échec de test.
+ *
+ * La liaison avec Supabase lâche de temps en temps depuis cette
+ * machine, et un `ECONNRESET` au milieu de la sixième suite faisait
+ * tomber tout le processus — on perdait le résultat des cinq
+ * précédentes. Trois essais, espacés, avant de conclure.
+ */
+async function post(sql, attempt = 1) {
+  try {
+    return await fetch(
+      `https://api.supabase.com/v1/projects/${PROJECT_REF}/database/query`,
+      {
+        method: "POST",
+        headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
+        body: JSON.stringify({ query: sql }),
+      },
+    );
+  } catch (error) {
+    if (attempt >= 3) throw error;
+    await new Promise((resolve) => setTimeout(resolve, attempt * 1500));
+    return post(sql, attempt + 1);
+  }
+}
+
 async function run(file) {
   const sql = fs.readFileSync(path.join(dir, file), "utf8");
-  const response = await fetch(
-    `https://api.supabase.com/v1/projects/${PROJECT_REF}/database/query`,
-    {
-      method: "POST",
-      headers: { Authorization: `Bearer ${token}`, "Content-Type": "application/json" },
-      body: JSON.stringify({ query: sql }),
-    },
-  );
+  let response;
+  try {
+    response = await post(sql);
+  } catch (error) {
+    // Distinguer nettement « le réseau a lâché » de « le test échoue » :
+    // les confondre enverrait chercher un bogue qui n'existe pas.
+    return { file, ok: false, note: `réseau injoignable — ${(error && error.message) || error}` };
+  }
 
   const body = await response.text();
   if (response.status !== 201) {
