@@ -155,13 +155,12 @@ export type TwinObject = {
   linkedEntityKind: LinkKind | null;
 };
 
-/** Une plante réelle du carnet, proposée au rattachement. */
+/** Une plante réelle de CE jardin, proposée au rattachement. */
 export type LinkablePlant = {
   id: string;
   customName: string;
   commonName: string | null;
   scientificName: string | null;
-  gardenId: string | null;
 };
 
 export type TwinArea = {

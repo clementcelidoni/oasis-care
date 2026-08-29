@@ -1339,12 +1339,20 @@ function Revisions({
 }
 
 /**
- * §11C : rattacher l'objet du plan à une vraie plante du carnet.
+ * §11C : rattacher l'objet du plan à une vraie plante de ce jardin.
  *
  * Écrit `linkedEntityId` + `linkedEntityKind`, les deux colonnes que
  * l'iPhone lit déjà depuis la Phase 6 — toucher l'objet y ouvre la
  * fiche de la plante. `linkedEntityKind` ne peut valoir que `plant` ou
  * `sensor` : ce sont les seuls cas de l'enum Swift.
+ *
+ * Le choix se limite aux plantes de CE jardin — voir
+ * `listLinkablePlants`. D'où le cas ci-dessous : un objet peut porter un
+ * lien vers une plante absente de cette liste, posé depuis l'iPhone ou
+ * avant que la liste ne soit bornée. On l'affiche pour ce qu'il est au
+ * lieu de laisser le menu dire « Aucune », ce qui serait un mensonge :
+ * le lien existe bel et bien en base et l'utilisateur doit pouvoir le
+ * voir avant de décider de le retirer.
  */
 function PlantLink({
   plants, object, onPatchObject,
@@ -1353,23 +1361,22 @@ function PlantLink({
   object: TwinObject;
   onPatchObject: (id: string, patch: Partial<TwinObject>) => void;
 }) {
-  const linked =
-    object.linkedEntityKind === "plant"
-      ? plants.find((p) => p.id === object.linkedEntityId) ?? null
-      : null;
+  const linkedId = object.linkedEntityKind === "plant" ? object.linkedEntityId : null;
+  const linked = linkedId ? plants.find((p) => p.id === linkedId) ?? null : null;
+  const linkedElsewhere = linkedId !== null && linked === null;
 
   return (
     <div className="flex flex-col gap-1 border-t border-line pt-2.5">
       <span className="text-[11px] text-ink-faint">Plante rattachée</span>
 
-      {plants.length === 0 ? (
+      {plants.length === 0 && !linkedElsewhere ? (
         <p className="text-[11px] text-ink-faint">
-          Aucune plante dans votre carnet. Ajoutez-en depuis l&apos;application
+          Aucune plante dans ce jardin. Ajoutez-en depuis l&apos;application
           iPhone, elles apparaîtront ici.
         </p>
       ) : (
         <select
-          value={object.linkedEntityKind === "plant" ? object.linkedEntityId ?? "" : ""}
+          value={linkedId ?? ""}
           onChange={(e) => {
             const id = e.target.value;
             const plant = plants.find((p) => p.id === id) ?? null;
@@ -1384,6 +1391,9 @@ function PlantLink({
           className="rounded-md border border-line-strong bg-surface px-2 py-1 text-xs outline-none focus:border-accent"
         >
           <option value="">— Aucune —</option>
+          {linkedElsewhere && (
+            <option value={linkedId}>Plante d&apos;un autre jardin</option>
+          )}
           {plants.map((p) => (
             <option key={p.id} value={p.id}>
               {p.customName}
@@ -1396,6 +1406,13 @@ function PlantLink({
       {linked && (
         <p className="text-[11px] text-ink-faint">
           {linked.scientificName ?? linked.commonName ?? ""}
+        </p>
+      )}
+
+      {linkedElsewhere && (
+        <p className="text-[11px] text-warning">
+          Cette plante n&apos;appartient pas à ce jardin. Choisissez
+          « Aucune » pour retirer le lien.
         </p>
       )}
     </div>

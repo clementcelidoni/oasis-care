@@ -87,38 +87,39 @@ export async function loadTwin(gardenId: string): Promise<TwinDocument | null> {
 }
 
 /**
- * Les plantes du carnet, proposées au rattachement d'un objet du plan.
+ * Les plantes DE CE JARDIN, proposées au rattachement d'un objet du plan.
  *
  * §11C : « chaque élément du plan peut être associé à une vraie entité
  * Oasis… toucher l'objet ouvre la vraie fiche. » Ce sont les mêmes
  * lignes que la liste Végétaux de l'iPhone.
  *
- * Les plantes du jardin courant d'abord : rattacher un arbre du plan à
- * une plante déjà rattachée à ce jardin est le cas courant, chercher
- * dans tout le carnet est l'exception.
+ * Strictement ce jardin, et non tout le carnet. Un plan est le plan d'un
+ * terrain : proposer sous le plan d'un client les plantes du jardin d'un
+ * autre client n'a aucun sens, et rattacher les deux par mégarde ferait
+ * apparaître le végétal d'autrui sur sa fiche. Le filtre par `garden_id`
+ * borne aussi l'espace de travail au passage, un jardin n'en ayant qu'un.
+ *
+ * Un jardin sans plante renvoie une liste vide : c'est la bonne réponse,
+ * et le panneau le dit plutôt que d'élargir la recherche.
  */
 export async function listLinkablePlants(gardenId: string): Promise<LinkablePlant[]> {
   const supabase = await createClient();
   const { data } = await supabase
     .from("plants")
-    .select("id, custom_name, common_name, scientific_name, garden_id")
+    .select("id, custom_name, common_name, scientific_name")
+    .eq("garden_id", gardenId)
     .eq("is_archived", false)
     .order("custom_name")
     .limit(500);
 
-  const rows = (data ?? []).map((p) => ({
-    id: p.id,
-    customName: p.custom_name,
-    commonName: p.common_name,
-    scientificName: p.scientific_name,
-    gardenId: p.garden_id,
-  }));
-
-  return rows.sort((a, b) => {
-    const aHere = a.gardenId === gardenId ? 0 : 1;
-    const bHere = b.gardenId === gardenId ? 0 : 1;
-    return aHere - bHere || a.customName.localeCompare(b.customName, "fr");
-  });
+  return (data ?? [])
+    .map((p) => ({
+      id: p.id,
+      customName: p.custom_name,
+      commonName: p.common_name,
+      scientificName: p.scientific_name,
+    }))
+    .sort((a, b) => a.customName.localeCompare(b.customName, "fr"));
 }
 
 type SavePayload = {
