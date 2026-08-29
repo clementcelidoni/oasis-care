@@ -18,7 +18,7 @@ export function Sidebar({ items, organizationName, role, userEmail }: Props) {
   return (
     <nav
       aria-label="Navigation principale"
-      className="flex h-full w-64 shrink-0 flex-col border-r border-line bg-surface"
+      className="flex h-full w-64 shrink-0 flex-col border-r border-line bg-surface print:hidden"
     >
       <div className="border-b border-line px-4 py-4">
         <div className="flex items-center gap-2.5">

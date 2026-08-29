@@ -95,3 +95,25 @@ body {
     transition-duration: 0.01ms !important;
   }
 }
+
+/* ------------------------------------------------------------------
+   Impression
+   ------------------------------------------------------------------
+   Les marges viennent de @page et non du document : le navigateur les
+   applique à CHAQUE page, alors qu'un padding CSS ne s'applique qu'en
+   haut de la première et en bas de la dernière. Sur un devis de trois
+   pages, le texte toucherait le bord des deux pages du milieu.
+
+   Le fond est forcé en blanc : la teinte de l'interface consommerait
+   de l'encre sur toute la surface, pour rien. */
+@media print {
+  @page {
+    margin: 14mm;
+  }
+
+  html,
+  body {
+    height: auto;
+    background: #ffffff;
+  }
+}

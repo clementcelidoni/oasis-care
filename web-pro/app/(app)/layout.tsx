@@ -24,15 +24,22 @@ export default async function AppLayout({ children }: LayoutProps<"/">) {
 
   const items = visibleNavigation(organization.businessType, organization.permissions);
 
+  // IMPRESSION — la coquille se déplie.
+  //
+  // À l'écran, `h-screen` + `overflow-hidden` gardent le menu fixe
+  // pendant qu'on fait défiler le contenu. À l'impression, ces deux
+  // règles coupent le document à la hauteur d'un écran : un devis de
+  // trois pages n'en sortirait qu'une, sans rien signaler. D'où les
+  // variantes `print:` ci-dessous, et le `print:hidden` sur le menu.
   return (
-    <div className="flex h-screen overflow-hidden">
+    <div className="flex h-screen overflow-hidden print:block print:h-auto print:overflow-visible">
       <Sidebar
         items={items}
         organizationName={organization.name}
         role={organization.role}
         userEmail={user.email ?? ""}
       />
-      <main className="flex-1 overflow-y-auto">{children}</main>
+      <main className="flex-1 overflow-y-auto print:overflow-visible">{children}</main>
     </div>
   );
 }
