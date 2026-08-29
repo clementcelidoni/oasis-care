@@ -5,7 +5,7 @@ import { useRouter } from "next/navigation";
 import { useState } from "react";
 import { moveIntervention, createIntervention } from "@/lib/field/actions";
 import {
-  addDays, isoDay, formatDayShort, formatTime, WEEKDAY_LABELS,
+  addDays, isoDay, formatDayShort, formatTime, dayAtHour, WEEKDAY_LABELS,
   INTERVENTION_KINDS, INTERVENTION_KIND_LABELS, INTERVENTION_STATUS_LABELS,
   type Intervention, type Team,
 } from "@/lib/field/types";
@@ -210,9 +210,12 @@ function NewInterventionForm({
         Huit heures par défaut, de 8 h à 16 h : la journée type. Se
         trompe souvent, mais un champ vide se trompe toujours, et se
         corrige sur la fiche.
+
+        En instants ISO et non en « JJT08:00 » : la base est en UTC et
+        aurait lu 8 h du matin comme 10 h ici.
       */}
-      <input type="hidden" name="scheduled_start" value={`${dayIso}T08:00`} />
-      <input type="hidden" name="scheduled_end" value={`${dayIso}T16:00`} />
+      <input type="hidden" name="scheduled_start" value={dayAtHour(dayIso, 8)} />
+      <input type="hidden" name="scheduled_end" value={dayAtHour(dayIso, 16)} />
 
       <input
         name="title"

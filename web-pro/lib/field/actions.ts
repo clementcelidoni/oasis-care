@@ -5,6 +5,7 @@ import { redirect } from "next/navigation";
 import { createClient } from "@/lib/supabase/server";
 import { requireOrganization } from "@/lib/auth/organization";
 import { inputToCents, parseQuantity } from "@/lib/quotes/types";
+import { keepScheduleOrdered } from "./types";
 
 /**
  * §11G planning, §11H équipes.
@@ -200,8 +201,15 @@ export async function createIntervention(formData: FormData) {
   const title = text(formData, "title");
   if (!title) return;
 
-  const start = text(formData, "scheduled_start");
   const supabase = await createClient();
+
+  // Même garde à la création : une intervention créée à l'envers
+  // échouerait sur la contrainte au lieu de se corriger.
+  const draft = {
+    scheduled_start: text(formData, "scheduled_start"),
+    scheduled_end: text(formData, "scheduled_end"),
+  };
+  keepScheduleOrdered(draft, { scheduled_start: null, scheduled_end: null });
 
   const { data, error } = await supabase
     .from("field_interventions")
@@ -213,8 +221,8 @@ export async function createIntervention(formData: FormData) {
       customer_id: text(formData, "customer_id"),
       team_id: text(formData, "team_id"),
       instructions: text(formData, "instructions"),
-      scheduled_start: start,
-      scheduled_end: text(formData, "scheduled_end"),
+      scheduled_start: draft.scheduled_start,
+      scheduled_end: draft.scheduled_end,
     })
     .select("id")
     .single();
@@ -247,6 +255,18 @@ export async function updateIntervention(formData: FormData) {
   }
 
   const supabase = await createClient();
+
+  // Les bornes se jugent ensemble : un formulaire qui n'envoie que la
+  // fin doit être comparé au début DÉJÀ enregistré, pas à rien.
+  if ("scheduled_start" in patch || "scheduled_end" in patch) {
+    const { data: previous } = await supabase
+      .from("field_interventions")
+      .select("scheduled_start, scheduled_end")
+      .eq("id", id)
+      .maybeSingle();
+    if (previous) keepScheduleOrdered(patch, previous);
+  }
+
   const { error } = await supabase.from("field_interventions").update(patch).eq("id", id);
   if (error) throw new Error(error.message);
 

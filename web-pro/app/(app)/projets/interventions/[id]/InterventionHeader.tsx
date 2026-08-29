@@ -1,9 +1,11 @@
 "use client";
 
+import { useState } from "react";
 import { updateIntervention } from "@/lib/field/actions";
 import {
   INTERVENTION_KINDS, INTERVENTION_KIND_LABELS,
   INTERVENTION_STATUSES, INTERVENTION_STATUS_LABELS,
+  toLocalInput, fromLocalInput,
   type Intervention, type Team,
 } from "@/lib/field/types";
 
@@ -14,15 +16,12 @@ export function InterventionHeader({
   intervention: Intervention;
   teams: Team[];
 }) {
-  // `datetime-local` veut « AAAA-MM-JJTHH:MM » en heure locale, pas
-  // l'ISO UTC que renvoie Postgres. Sans cette conversion le champ
-  // reste vide, et l'utilisateur croit l'horaire perdu.
-  const toLocalInput = (iso: string | null) => {
-    if (!iso) return "";
-    const d = new Date(iso);
-    const pad = (n: number) => String(n).padStart(2, "0");
-    return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`;
-  };
+  // Le champ affiche l'heure LOCALE ; ce qui part au serveur est
+  // l'instant ISO. Deux valeurs distinctes, donc deux champs : le
+  // `datetime-local` n'est pas nommé, et un champ caché porte l'ISO.
+  // Sans cela, « 08:00 » serait enregistré à 08:00 UTC, soit 10 h ici.
+  const [start, setStart] = useState(intervention.scheduled_start);
+  const [end, setEnd] = useState(intervention.scheduled_end);
 
   return (
     <form
@@ -72,12 +71,15 @@ export function InterventionHeader({
         </select>
       </label>
 
+      <input type="hidden" name="scheduled_start" value={start ?? ""} />
+      <input type="hidden" name="scheduled_end" value={end ?? ""} />
+
       <label className="flex flex-col gap-1">
         <span className="text-[11px] text-ink-faint">Début</span>
         <input
           type="datetime-local"
-          name="scheduled_start"
-          defaultValue={toLocalInput(intervention.scheduled_start)}
+          value={toLocalInput(start)}
+          onChange={(e) => setStart(fromLocalInput(e.target.value))}
           onBlur={(e) => e.currentTarget.form?.requestSubmit()}
           className="rounded-md border border-line-strong bg-surface px-2 py-1.5 text-sm outline-none focus:border-accent"
         />
@@ -87,8 +89,8 @@ export function InterventionHeader({
         <span className="text-[11px] text-ink-faint">Fin</span>
         <input
           type="datetime-local"
-          name="scheduled_end"
-          defaultValue={toLocalInput(intervention.scheduled_end)}
+          value={toLocalInput(end)}
+          onChange={(e) => setEnd(fromLocalInput(e.target.value))}
           onBlur={(e) => e.currentTarget.form?.requestSubmit()}
           className="rounded-md border border-line-strong bg-surface px-2 py-1.5 text-sm outline-none focus:border-accent"
         />

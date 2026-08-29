@@ -155,6 +155,46 @@ export function formatTime(iso: string | null): string {
 }
 
 /**
+ * `<input type="datetime-local">` ne connaît AUCUN fuseau.
+ *
+ * Il rend « 2026-08-29T08:00 », que Postgres — dont le fuseau est UTC —
+ * lit comme 08:00 UTC, soit 10 h à Paris. Envoyer la valeur telle
+ * quelle décalait donc chaque intervention de deux heures, et de deux
+ * heures DE PLUS à chaque réenregistrement, puisque le champ était
+ * rempli à partir de l'heure locale de la valeur déjà décalée. Rien ne
+ * le signalait : les cartes du planning se déplaçaient toutes seules.
+ *
+ * Ces deux fonctions font la traduction, et doivent encadrer tout champ
+ * `datetime-local` de l'application.
+ */
+export function toLocalInput(iso: string | null): string {
+  if (!iso) return "";
+  const d = new Date(iso);
+  if (Number.isNaN(d.getTime())) return "";
+  const pad = (n: number) => String(n).padStart(2, "0");
+  return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}`
+    + `T${pad(d.getHours())}:${pad(d.getMinutes())}`;
+}
+
+/**
+ * L'inverse : une saisie locale vers l'instant qu'elle désigne.
+ *
+ * `new Date("2026-08-29T08:00")` — sans `Z` ni décalage — est interprété
+ * en heure LOCALE par la norme, ce qui est exactement ce qu'on veut.
+ */
+export function fromLocalInput(value: string): string | null {
+  if (!value) return null;
+  const d = new Date(value);
+  return Number.isNaN(d.getTime()) ? null : d.toISOString();
+}
+
+/** L'instant d'une heure donnée, un jour donné, en heure locale. */
+export function dayAtHour(dayIso: string, hour: number): string {
+  const [y, m, d] = dayIso.split("-").map(Number);
+  return new Date(y, m - 1, d, hour, 0, 0, 0).toISOString();
+}
+
+/**
  * Les heures d'une durée planifiée, arrondies au quart d'heure.
  *
  * Sert à pré-remplir le pointage : le chef d'équipe corrige, mais part
@@ -166,3 +206,42 @@ export function scheduledHours(start: string | null, end: string | null): number
   if (!Number.isFinite(ms) || ms <= 0) return 0;
   return Math.round((ms / 3_600_000) * 4) / 4;
 }
+
+/**
+ * Empêche une fin antérieure au début.
+ *
+ * Reculer l'heure de début après la fin est un geste normal — on
+ * décale une intervention de la matinée à l'après-midi — mais la
+ * contrainte de la base le refuse, et l'utilisateur reçoit alors le nom
+ * d'une contrainte SQL en pleine figure.
+ *
+ * La DURÉE est conservée : déplacer le début de 8 h à 14 h sur une
+ * intervention de huit heures la fait finir à 22 h, pas planter. C'est
+ * ce que fait n'importe quel agenda, et c'est presque toujours
+ * l'intention. Une fin explicitement placée après le début n'est jamais
+ * touchée.
+ */
+export function keepScheduleOrdered(
+  patch: Record<string, unknown>,
+  previous: { scheduled_start: string | null; scheduled_end: string | null },
+) {
+  const start = "scheduled_start" in patch
+    ? (patch.scheduled_start as string | null) : previous.scheduled_start;
+  const end = "scheduled_end" in patch
+    ? (patch.scheduled_end as string | null) : previous.scheduled_end;
+  if (!start || !end) return;
+
+  const startMs = new Date(start).getTime();
+  const endMs = new Date(end).getTime();
+  if (!Number.isFinite(startMs) || !Number.isFinite(endMs) || endMs >= startMs) return;
+
+  const previousDuration =
+    previous.scheduled_start && previous.scheduled_end
+      ? new Date(previous.scheduled_end).getTime() - new Date(previous.scheduled_start).getTime()
+      : 0;
+  // Une durée héritée valable, sinon une heure : mieux vaut une durée
+  // arbitraire mais visible qu'une intervention de durée nulle.
+  const duration = previousDuration > 0 ? previousDuration : 3_600_000;
+  patch.scheduled_end = new Date(startMs + duration).toISOString();
+}
+
