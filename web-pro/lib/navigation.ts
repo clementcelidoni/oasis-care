@@ -85,8 +85,10 @@ export const NAVIGATION: NavItem[] = [
     businessTypes: NURSERY_TYPES,
     milestone: 8,
     children: [
+      // « Lots » n'est pas une sous-page : c'est /pepiniere lui-même,
+      // comme « Chantiers » est /projets. Deux adresses pour la même
+      // liste ne font qu'égarer.
       { label: "Tableau de bord", href: "/pepiniere", permission: "nursery.stock.manage", milestone: 8 },
-      { label: "Lots", href: "/pepiniere/lots", permission: "nursery.stock.manage", milestone: 8 },
       { label: "Production", href: "/pepiniere/production", permission: "nursery.stock.manage", milestone: 8 },
       { label: "Emplacements", href: "/pepiniere/emplacements", permission: "nursery.stock.manage", milestone: 8 },
       { label: "Stock", href: "/pepiniere/stock", permission: "nursery.stock.manage", milestone: 8 },
@@ -107,7 +109,7 @@ export const NAVIGATION: NavItem[] = [
 ];
 
 /** Milestones already delivered. Everything above this is shown as coming. */
-export const DELIVERED_THROUGH_MILESTONE = 7;
+export const DELIVERED_THROUGH_MILESTONE = 8;
 
 export function isAvailable(item: NavItem): boolean {
   return item.milestone <= DELIVERED_THROUGH_MILESTONE;
