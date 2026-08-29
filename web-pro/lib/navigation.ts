@@ -56,9 +56,10 @@ export const NAVIGATION: NavItem[] = [
     businessTypes: LANDSCAPE_TYPES,
     milestone: 6,
     children: [
-      { label: "Visites", href: "/projets/visites", permission: "projects.read", milestone: 6 },
-      { label: "Conception", href: "/projets/conception", permission: "projects.read", milestone: 6 },
-      { label: "Chantiers", href: "/projets/chantiers", permission: "projects.read", milestone: 6 },
+      // « Chantiers » n'est pas une sous-page : c'est /projets lui-même.
+      // Deux adresses pour la même liste ne feraient qu'égarer.
+      { label: "Visites", href: "/projets/visites", permission: "projects.read", milestone: 7 },
+      { label: "Conception", href: "/projets/conception", permission: "projects.read", milestone: 7 },
       { label: "Interventions", href: "/projets/interventions", permission: "projects.read", milestone: 7 },
     ],
   },
@@ -104,7 +105,7 @@ export const NAVIGATION: NavItem[] = [
 ];
 
 /** Milestones already delivered. Everything above this is shown as coming. */
-export const DELIVERED_THROUGH_MILESTONE = 5;
+export const DELIVERED_THROUGH_MILESTONE = 6;
 
 export function isAvailable(item: NavItem): boolean {
   return item.milestone <= DELIVERED_THROUGH_MILESTONE;

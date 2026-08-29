@@ -10,6 +10,7 @@ import {
 } from "@/lib/quotes/types";
 import { QuoteEditor } from "./QuoteEditor";
 import { StatusBar } from "./StatusBar";
+import { ToProjectBar } from "./ToProjectBar";
 
 /**
  * §11E — la fiche d'un devis.
@@ -38,8 +39,10 @@ export default async function QuotePage({ params }: PageProps<"/devis/[id]">) {
     crm_customers: { id: string; display_name: string; billing_city: string | null } | null;
   };
 
-  const [{ data: sections }, { data: lines }, { data: totals }, { data: revisions }, catalog] =
-    await Promise.all([
+  const [
+    { data: sections }, { data: lines }, { data: totals }, { data: revisions },
+    { data: project }, catalog,
+  ] = await Promise.all([
       supabase.from("quote_sections").select("*").eq("quote_id", id).order("position"),
       supabase.from("quote_lines").select("*").eq("quote_id", id).order("position"),
       supabase.from("quote_totals").select("*").eq("quote_id", id).maybeSingle(),
@@ -48,8 +51,16 @@ export default async function QuotePage({ params }: PageProps<"/devis/[id]">) {
         .select("id, label, total_excluding_vat_cents, created_at")
         .eq("quote_id", id)
         .order("created_at", { ascending: false }),
+      supabase
+        .from("projects")
+        .select("id, number")
+        .eq("quote_id", id)
+        .is("archived_at", null)
+        .maybeSingle(),
       listCatalog(),
     ]);
+
+  const existingProject = project as { id: string; number: string } | null;
 
   const customer = quote.crm_customers;
   const editable = isEditable(quote.status);
@@ -94,6 +105,16 @@ export default async function QuotePage({ params }: PageProps<"/devis/[id]">) {
       </div>
 
       <StatusBar quote={quote} />
+
+      {/*
+        §DEVIS ACCEPTÉ — « Bouton : Transformer en projet. »
+        Réservé aux devis acceptés : proposer de lancer un chantier sur
+        un brouillon inviterait à démarrer des travaux que le client n'a
+        pas commandés.
+      */}
+      {quote.status === "accepted" && (
+        <ToProjectBar quoteId={quote.id} existingProject={existingProject} />
+      )}
 
       {!editable && (
         <p className="mb-5 rounded-lg bg-info-wash px-3 py-2 text-sm text-info">

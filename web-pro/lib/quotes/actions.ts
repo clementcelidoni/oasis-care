@@ -4,7 +4,10 @@ import { revalidatePath } from "next/cache";
 import { redirect } from "next/navigation";
 import { createClient } from "@/lib/supabase/server";
 import { getActiveOrganization } from "@/lib/auth/organization";
-import { inputToCents, parseQuantity, type QuoteStatus } from "./types";
+import {
+  inputToCents, parseQuantity, COST_KIND_FROM_ITEM_TYPE,
+  type QuoteStatus, type CatalogItemType,
+} from "./types";
 
 /**
  * §11E — devis.
@@ -178,16 +181,22 @@ export async function addLine(formData: FormData) {
   let costCents = 0;
   let saleCents = 0;
   let vatRate = 20;
+  // Nulle tant qu'on ne la connaît pas : deviner d'après le libellé
+  // collerait une catégorie fausse sur des lignes que personne ne relit.
+  let costKind: string | null = text(formData, "cost_kind");
 
   if (catalogItemId) {
     const { data: item } = await supabase
       .from("catalog_items")
-      .select("name, unit")
+      .select("name, unit, item_type")
       .eq("id", catalogItemId)
       .maybeSingle();
     if (item) {
       description = description || item.name;
       unit = item.unit;
+      // La nature suit l'article : c'est ce qui permettra au chantier
+      // issu de ce devis de classer sa dépense.
+      costKind = COST_KIND_FROM_ITEM_TYPE[item.item_type as CatalogItemType] ?? null;
     }
     // Le tarif EN COURS de la grille par défaut : `valid_until is null`.
     const { data: price } = await supabase
@@ -241,6 +250,7 @@ export async function addLine(formData: FormData) {
     unit_cost_cents: costCents,
     unit_sale_price_cents: saleCents,
     vat_rate: vatRate,
+    cost_kind: costKind,
   });
   if (error) throw new Error(error.message);
 

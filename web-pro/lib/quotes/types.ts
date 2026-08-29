@@ -74,6 +74,45 @@ export const CATALOG_ITEM_TYPE_LABELS: Record<CatalogItemType, string> = {
   custom: "Divers",
 };
 
+/**
+ * Natures de coût du suivi de chantier — §JOB COSTING.
+ *
+ * Portée par la ligne de devis dès qu'on la connaît, pour que le
+ * chantier qui en naîtra sache classer sa dépense. Sans elle, tout
+ * atterrit dans « Divers » et le comparatif prévu/réel se réduit à une
+ * seule ligne.
+ */
+export const COST_KINDS = [
+  "labor", "material", "plant", "equipment",
+  "subcontracting", "transport", "waste", "other",
+] as const;
+export type CostKind = (typeof COST_KINDS)[number];
+
+export const COST_KIND_LABELS: Record<CostKind, string> = {
+  labor: "Main-d'œuvre",
+  material: "Fournitures",
+  plant: "Végétaux",
+  equipment: "Matériel et location",
+  subcontracting: "Sous-traitance",
+  transport: "Transport",
+  waste: "Évacuation",
+  other: "Divers",
+};
+
+/** Ce que devient un type d'article du catalogue. Miroir de `cost_kind_from_catalog_type`. */
+export const COST_KIND_FROM_ITEM_TYPE: Record<CatalogItemType, CostKind> = {
+  plant: "plant",
+  labor: "labor",
+  material: "material",
+  equipment: "equipment",
+  rental: "equipment",
+  transport: "transport",
+  waste: "waste",
+  subcontracting: "subcontracting",
+  service: "other",
+  custom: "other",
+};
+
 /** Unités courantes du métier. Le champ reste libre — voir migration 0048. */
 export const COMMON_UNITS = ["u", "m", "m²", "m³", "h", "j", "kg", "L", "forfait"];
 

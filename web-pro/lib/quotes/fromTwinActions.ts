@@ -4,7 +4,7 @@ import { revalidatePath } from "next/cache";
 import { redirect } from "next/navigation";
 import { createClient } from "@/lib/supabase/server";
 import { getActiveOrganization } from "@/lib/auth/organization";
-import { parseQuantity } from "./types";
+import { parseQuantity, COST_KIND_FROM_ITEM_TYPE, type CatalogItemType } from "./types";
 
 /**
  * §"DIGITAL TWIN → DEVIS" — l'écriture, après validation humaine.
@@ -82,6 +82,7 @@ export async function addProposedLinesToQuote(formData: FormData) {
     const quantity = parseQuantity(String(formData.get(`quantity-${key}`) ?? "0"));
     const unit = String(formData.get(`unit-${key}`) ?? "u").trim() || "u";
     const sectionTitle = String(formData.get(`section-${key}`) ?? "").trim();
+    const itemType = String(formData.get(`kind-${key}`) ?? "").trim();
     if (!description || quantity <= 0) continue;
 
     let sectionId = sectionTitle ? sectionByTitle.get(sectionTitle) ?? null : null;
@@ -119,6 +120,7 @@ export async function addProposedLinesToQuote(formData: FormData) {
       unit_cost_cents: price?.purchase_price_cents ?? 0,
       unit_sale_price_cents: price?.sale_price_cents ?? 0,
       vat_rate: price?.vat_rate ?? 20,
+      cost_kind: COST_KIND_FROM_ITEM_TYPE[itemType as CatalogItemType] ?? null,
     });
   }
 

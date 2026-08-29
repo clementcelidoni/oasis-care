@@ -100,6 +100,10 @@ export function ProposalForm({
                       className="w-14 shrink-0 rounded border border-line bg-surface px-1.5 py-1 text-sm outline-none focus:border-accent"
                     />
                     <input type="hidden" name={`section-${line.key}`} value={line.section} />
+                    {/* La proposition sait de quelle nature est la ligne :
+                        la perdre ici obligerait à la ressaisir sur le
+                        chantier, ligne par ligne. */}
+                    <input type="hidden" name={`kind-${line.key}`} value={line.itemType} />
                   </li>
                 );
               })}
