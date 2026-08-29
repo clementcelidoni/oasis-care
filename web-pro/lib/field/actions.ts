@@ -524,3 +524,39 @@ export async function deleteTimeEntry(formData: FormData) {
   if (data?.intervention_id) revalidatePath(`/projets/interventions/${data.intervention_id}`);
   if (data?.project_id) revalidatePath(`/projets/${data.project_id}`);
 }
+
+/**
+ * Valide d'un coup tout ce qui est en attente sur une intervention.
+ *
+ * Le geste manquait. Valider ligne par ligne, dans une pastille en bout
+ * de rangée, faisait qu'on pointait ses heures et qu'elles
+ * n'apparaissaient nulle part — signalé à l'usage, et parfaitement
+ * logique : rien ne montrait qu'il restait quelque chose à faire.
+ *
+ * La validation elle-même reste nécessaire : une heure ne devient de
+ * l'argent qu'une fois relue. Mais relire doit coûter un clic, pas dix.
+ */
+export async function validateAllTime(formData: FormData) {
+  const interventionId = String(formData.get("intervention_id") ?? "");
+  if (!interventionId) return;
+
+  const supabase = await createClient();
+  const { data: user } = await supabase.auth.getUser();
+
+  const { data, error } = await supabase
+    .from("time_entries")
+    .update({
+      validated: true,
+      validated_by: user.user?.id ?? null,
+      validated_at: new Date().toISOString(),
+    })
+    .eq("intervention_id", interventionId)
+    .eq("validated", false)
+    .select("project_id");
+  if (error) throw new Error(error.message);
+
+  revalidatePath(`/projets/interventions/${interventionId}`);
+  for (const id of new Set((data ?? []).map((r) => r.project_id).filter(Boolean))) {
+    revalidatePath(`/projets/${id}`);
+  }
+}

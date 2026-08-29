@@ -43,13 +43,14 @@ export default async function ProjectPage({ params }: PageProps<"/projets/[id]">
 
   const [
     { data: phases }, { data: tasks }, { data: resources },
-    { data: costs }, { data: summary }, { data: suppliers }, photos,
+    { data: costs }, { data: summary }, { data: labor }, { data: suppliers }, photos,
   ] = await Promise.all([
     supabase.from("project_phases").select("*").eq("project_id", id).order("position"),
     supabase.from("project_tasks").select("*").eq("project_id", id).order("position"),
     supabase.from("project_resources").select("*").eq("project_id", id),
     supabase.from("project_costs").select("*").eq("project_id", id).order("incurred_on", { ascending: false }),
     supabase.from("project_cost_summary").select("*").eq("project_id", id),
+    supabase.from("project_labor_from_time").select("*").eq("project_id", id).maybeSingle(),
     supabase.from("suppliers").select("id, name").is("archived_at", null).order("name"),
     listProjectPhotos(id),
   ]);
@@ -151,6 +152,7 @@ export default async function ProjectPage({ params }: PageProps<"/projets/[id]">
         costs={(costs ?? []) as ProjectCost[]}
         phases={allPhases}
         suppliers={(suppliers ?? []) as { id: string; name: string }[]}
+        pendingHours={Number(labor?.pending_hours ?? 0)}
       />
 
       <Photos projectId={id} photos={photos} phases={allPhases} />

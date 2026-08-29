@@ -1,6 +1,8 @@
 "use client";
 
-import { logTeamTime, logTime, setTimeEntryValidation, deleteTimeEntry } from "@/lib/field/actions";
+import {
+  logTeamTime, logTime, setTimeEntryValidation, deleteTimeEntry, validateAllTime,
+} from "@/lib/field/actions";
 import { formatDate } from "@/lib/crm/types";
 import { formatCents } from "@/lib/quotes/types";
 import {
@@ -30,11 +32,45 @@ export function TimeSheet({
 }) {
   const today = new Date().toISOString().slice(0, 10);
 
+  const pending = entries.filter((e) => !e.validated);
+  const pendingHours = pending.reduce((sum, e) => sum + Number(e.hours), 0);
+  const pendingCents = pending
+    .filter((e) => e.kind === "work")
+    .reduce((sum, e) => sum + e.total_cents, 0);
+
   return (
     <section className="mb-8">
       <h2 className="mb-2 text-xs font-semibold uppercase tracking-wide text-ink-faint">
         Heures
       </h2>
+
+      {/*
+        Le rappel qui manquait. Sans lui, on pointait ses heures et rien
+        n'apparaissait sur le chantier, sans qu'aucun écran ne dise
+        pourquoi ni quoi faire — la validation se cachait dans une
+        pastille en bout de rangée.
+      */}
+      {pending.length > 0 && (
+        <form
+          action={validateAllTime}
+          className="mb-2 flex flex-wrap items-center gap-3 rounded-lg border border-warning/40 bg-warning/10 px-4 py-2.5"
+        >
+          <input type="hidden" name="intervention_id" value={interventionId} />
+          <span className="text-sm">
+            <strong>{pendingHours.toLocaleString("fr-FR")} h en attente de validation</strong>
+            {pendingCents > 0 && (
+              <> — {formatCents(pendingCents)} qui n&apos;entrent dans aucun budget tant
+                que vous n&apos;avez pas relu.</>
+            )}
+          </span>
+          <button
+            type="submit"
+            className="rounded-md bg-accent px-3 py-1.5 text-xs font-medium text-accent-ink"
+          >
+            Tout valider
+          </button>
+        </form>
+      )}
 
       <div className="overflow-hidden rounded-lg border border-line bg-surface">
         {hasTeam && (

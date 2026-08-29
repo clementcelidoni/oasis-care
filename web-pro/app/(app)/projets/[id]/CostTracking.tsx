@@ -20,7 +20,7 @@ import { varianceTone, type CostSummaryRow, type ProjectResource, type ProjectCo
  * est pire qu'aucun chiffre.
  */
 export function CostTracking({
-  projectId, summary, resources, costs, phases, suppliers,
+  projectId, summary, resources, costs, phases, suppliers, pendingHours,
 }: {
   projectId: string;
   summary: CostSummaryRow[];
@@ -28,6 +28,8 @@ export function CostTracking({
   costs: ProjectCost[];
   phases: ProjectPhase[];
   suppliers: { id: string; name: string }[];
+  /** Heures pointées mais pas encore validées — voir plus bas. */
+  pendingHours: number;
 }) {
   const byKind = new Map(summary.map((r) => [r.kind, r]));
   const kinds = COST_KINDS.filter((k) => {
@@ -102,6 +104,19 @@ export function CostTracking({
             </tfoot>
           </table>
         </div>
+      )}
+
+      {/*
+        Des heures pointées et non validées n'apparaissent dans aucun
+        chiffre ci-dessus. Sans ce rappel, on cherche longtemps pourquoi
+        la main-d'œuvre reste à zéro alors que l'équipe a travaillé.
+      */}
+      {pendingHours > 0 && (
+        <p className="mb-4 rounded-lg border border-warning/40 bg-warning/10 px-3 py-2 text-sm">
+          <strong>{pendingHours.toLocaleString("fr-FR")} h pointées ne sont pas encore
+          validées</strong> et n&apos;entrent donc dans aucun chiffre ci-dessus. Validez-les
+          depuis la fiche de l&apos;intervention concernée.
+        </p>
       )}
 
       <details className="mb-4">
