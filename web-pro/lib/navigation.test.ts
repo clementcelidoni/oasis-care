@@ -3,7 +3,7 @@ import assert from "node:assert/strict";
 import fs from "node:fs";
 import path from "node:path";
 import {
-  NAVIGATION, DELIVERED_THROUGH_MILESTONE, isAvailable, visibleNavigation,
+  NAVIGATION, DELIVERED_THROUGH_MILESTONE, UNSCHEDULED, isAvailable, visibleNavigation,
 } from "./navigation.ts";
 
 /**
@@ -98,8 +98,17 @@ test("un pépiniériste ne voit pas les modules de paysagiste, et l'inverse", ()
   assert.equal(landscaper.some((i) => i.href === "/pepiniere"), false);
 });
 
-test("le compteur de milestones reste dans les bornes du plan", () => {
+test("chaque module est dans le plan, ou explicitement hors plan", () => {
   assert.ok(DELIVERED_THROUGH_MILESTONE >= 1 && DELIVERED_THROUGH_MILESTONE <= 12);
-  const highest = Math.max(...flatten().map((i) => i.milestone));
-  assert.ok(highest <= 12, `Un module annonce le milestone ${highest}, hors du plan.`);
+
+  // Un numéro entre 1 et 12, ou le marqueur « non programmé ». Rien
+  // entre les deux : un 13 inventé s'allumerait un jour sans qu'aucune
+  // ligne de la spec ne le prévoie.
+  const strays = flatten()
+    .filter((i) => i.milestone !== UNSCHEDULED && (i.milestone < 1 || i.milestone > 12))
+    .map((i) => `${i.label} → milestone ${i.milestone}`);
+  assert.deepEqual(strays, [], `Milestones hors bornes : ${strays.join(", ")}`);
+
+  // Et le marqueur doit rester hors d'atteinte du compteur.
+  assert.ok(UNSCHEDULED > 12);
 });

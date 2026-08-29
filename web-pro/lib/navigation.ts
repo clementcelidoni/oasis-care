@@ -13,6 +13,17 @@ import type { BusinessType, Permission } from "@/lib/auth/permissions";
  * see `isAvailable`. Showing the shape of the product early is useful;
  * pretending a page exists is not.
  */
+/**
+ * Pour un module que la spec DÉCRIT sans le PROGRAMMER.
+ *
+ * Le plan du document s'arrête à douze milestones ; §11P (matériel),
+ * §11Q (contrats) et §11R (documents) n'y figurent dans aucun. Leur
+ * donner un numéro les allumerait le jour où ce milestone sort, sur des
+ * pages qui n'existent pas — c'est exactement le 404 rencontré au
+ * Milestone 8.
+ */
+export const UNSCHEDULED = 99;
+
 export type NavItem = {
   label: string;
   href: string;
@@ -105,18 +116,22 @@ export const NAVIGATION: NavItem[] = [
   // Repoussé encore : le Milestone 9 livre les COMMANDES de fournitures,
   // pas un inventaire des consommables. La liste du milestone ne le
   // demande pas, et une page vide vaudrait moins qu’une promesse datée.
-  { label: "Stock matériaux", href: "/stocks", permission: "nursery.stock.manage", milestone: 10 },
+  { label: "Stock matériaux", href: "/stocks", permission: "nursery.stock.manage", milestone: UNSCHEDULED },
   { label: "Factures", href: "/factures", permission: "invoice.create", milestone: 10 },
-  { label: "Contrats", href: "/contrats", permission: "projects.read", milestone: 10 },
-  { label: "Matériel", href: "/materiel", permission: "projects.manage", milestone: 10 },
-  { label: "Documents", href: "/documents", permission: "projects.read", milestone: 10 },
+  // §11P, §11Q et §11R décrivent ces modules, mais le plan de
+  // milestones du document ne les programme nulle part. UNSCHEDULED les
+  // laisse visibles comme « à venir » plutôt que de leur inventer une
+  // date qu'aucune ligne de la spec ne donne.
+  { label: "Contrats", href: "/contrats", permission: "projects.read", milestone: UNSCHEDULED },
+  { label: "Matériel", href: "/materiel", permission: "projects.manage", milestone: UNSCHEDULED },
+  { label: "Documents", href: "/documents", permission: "projects.read", milestone: UNSCHEDULED },
   { label: "Analytics", href: "/analytics", permission: "projects.read", milestone: 11 },
   { label: "Oasis AI", href: "/oasis-ai", milestone: 12 },
   { label: "Paramètres", href: "/parametres", milestone: 1 },
 ];
 
 /** Milestones already delivered. Everything above this is shown as coming. */
-export const DELIVERED_THROUGH_MILESTONE = 9;
+export const DELIVERED_THROUGH_MILESTONE = 10;
 
 export function isAvailable(item: NavItem): boolean {
   return item.milestone <= DELIVERED_THROUGH_MILESTONE;
