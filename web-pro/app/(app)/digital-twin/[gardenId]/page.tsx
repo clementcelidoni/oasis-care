@@ -1,5 +1,5 @@
 import { notFound } from "next/navigation";
-import { loadTwin } from "@/lib/twin/actions";
+import { loadTwin, twinLastModified } from "@/lib/twin/actions";
 import { TwinEditor } from "@/components/twin/TwinEditor";
 
 /**
@@ -11,7 +11,10 @@ export default async function TwinEditorPage({
   params,
 }: PageProps<"/digital-twin/[gardenId]">) {
   const { gardenId } = await params;
-  const document = await loadTwin(gardenId);
+  const [document, baseModifiedAt] = await Promise.all([
+    loadTwin(gardenId),
+    twinLastModified(gardenId),
+  ]);
 
   // RLS rend un jardin d'une autre organisation indiscernable d'un
   // jardin inexistant — c'est le bon comportement.
@@ -19,7 +22,9 @@ export default async function TwinEditorPage({
 
   return (
     <div className="h-full">
-      <TwinEditor initial={document} />
+      {/* `baseModifiedAt` sert de repère pour la détection de conflit :
+          si le serveur a bougé depuis, on refuse d'écraser. */}
+      <TwinEditor initial={document} baseModifiedAt={baseModifiedAt} />
     </div>
   );
 }

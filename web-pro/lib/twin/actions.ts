@@ -3,7 +3,9 @@
 import { revalidatePath } from "next/cache";
 import { createClient } from "@/lib/supabase/server";
 import { getActiveOrganization } from "@/lib/auth/organization";
-import type { TwinDocument, TwinObject, TwinArea } from "./types";
+import type {
+  TwinDocument, TwinObject, TwinArea, RevisionState, RevisionSummary,
+} from "./types";
 
 /**
  * Lecture et écriture du Digital Twin.
@@ -85,7 +87,25 @@ type SavePayload = {
   objects: TwinObject[];
   deletedAreaIds: string[];
   deletedObjectIds: string[];
+  /**
+   * Dernière modification connue au moment du chargement. Sert à la
+   * détection de conflit — voir `saveTwin`.
+   */
+  baseModifiedAt: string | null;
 };
+
+/**
+ * Horodatage de la dernière écriture sur ce jardin, tous appareils
+ * confondus. §CONCURRENCY.
+ */
+export async function twinLastModified(gardenId: string): Promise<string | null> {
+  const supabase = await createClient();
+  const { data, error } = await supabase.rpc("garden_twin_last_modified", {
+    p_garden_id: gardenId,
+  });
+  if (error) return null;
+  return (data as string) ?? null;
+}
 
 /**
  * Enregistre l'état de l'éditeur.
@@ -99,13 +119,27 @@ type SavePayload = {
  * Sync Engine iOS — un `delete` brutal empêcherait l'autre appareil de
  * jamais apprendre que l'objet a disparu.
  */
-export async function saveTwin(payload: SavePayload): Promise<{ ok: boolean; error?: string }> {
+export async function saveTwin(
+  payload: SavePayload,
+): Promise<{ ok: boolean; error?: string; conflict?: boolean; modifiedAt?: string | null }> {
   const organization = await getActiveOrganization();
   if (!organization) return { ok: false, error: "Aucune organisation active." };
 
   const supabase = await createClient();
   const workspaceId = organization.workspaceId;
   const now = new Date().toISOString();
+
+  // §CONCURRENCY — « Ne pas écraser silencieusement le travail d'un
+  // autre utilisateur. » Si quelqu'un (ou l'iPhone) a écrit depuis notre
+  // chargement, on refuse et on le dit, plutôt que d'aplatir son travail.
+  if (payload.baseModifiedAt) {
+    const { data: current } = await supabase.rpc("garden_twin_last_modified", {
+      p_garden_id: payload.gardenId,
+    });
+    if (current && new Date(current as string) > new Date(payload.baseModifiedAt)) {
+      return { ok: false, conflict: true, modifiedAt: current as string };
+    }
+  }
 
   if (payload.boundary) {
     const { error } = await supabase.from("garden_boundaries").upsert(
@@ -179,7 +213,79 @@ export async function saveTwin(payload: SavePayload): Promise<{ ok: boolean; err
   }
 
   revalidatePath(`/digital-twin/${payload.gardenId}`);
+  const { data: after } = await supabase.rpc("garden_twin_last_modified", {
+    p_garden_id: payload.gardenId,
+  });
+  return { ok: true, modifiedAt: (after as string) ?? now };
+}
+
+// ---------------------------------------------------------------
+// Révisions — §"VERSIONS DU PROJET"
+// ---------------------------------------------------------------
+
+export async function listRevisions(gardenId: string): Promise<RevisionSummary[]> {
+  const supabase = await createClient();
+  const { data } = await supabase
+    .from("digital_twin_revisions")
+    .select("id, label, state, created_at, snapshot")
+    .eq("garden_id", gardenId)
+    .is("archived_at", null)
+    .order("created_at", { ascending: false });
+
+  return (data ?? []).map((r) => {
+    const snapshot = r.snapshot as { areas?: unknown[]; objects?: unknown[] } | null;
+    return {
+      id: r.id,
+      label: r.label,
+      state: r.state as RevisionState,
+      createdAt: r.created_at,
+      objectCount: snapshot?.objects?.length ?? 0,
+      areaCount: snapshot?.areas?.length ?? 0,
+    };
+  });
+}
+
+/**
+ * Fige l'état courant sous un nom.
+ *
+ * L'instantané est stocké en JSON plutôt que par références : une
+ * révision « existant » doit continuer de montrer le terrain d'avant
+ * travaux même après que le plan courant ait entièrement changé.
+ */
+export async function saveRevision(input: {
+  gardenId: string;
+  label: string;
+  state: RevisionState;
+  snapshot: { boundary: unknown; areas: unknown[]; objects: unknown[] };
+}): Promise<{ ok: boolean; error?: string }> {
+  const organization = await getActiveOrganization();
+  if (!organization) return { ok: false, error: "Aucune organisation active." };
+
+  const supabase = await createClient();
+  const { data: user } = await supabase.auth.getUser();
+
+  const { error } = await supabase.from("digital_twin_revisions").insert({
+    workspace_id: organization.workspaceId,
+    garden_id: input.gardenId,
+    label: input.label,
+    state: input.state,
+    snapshot: input.snapshot,
+    created_by: user.user?.id ?? null,
+  });
+
+  if (error) return { ok: false, error: error.message };
+  revalidatePath(`/digital-twin/${input.gardenId}`);
   return { ok: true };
+}
+
+export async function loadRevision(revisionId: string) {
+  const supabase = await createClient();
+  const { data } = await supabase
+    .from("digital_twin_revisions")
+    .select("id, label, state, snapshot")
+    .eq("id", revisionId)
+    .maybeSingle();
+  return data ?? null;
 }
 
 /** Crée un jardin depuis le web, en fournissant l'id (voir plus haut). */

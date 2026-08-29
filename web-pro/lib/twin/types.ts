@@ -162,6 +162,29 @@ export type TwinDocument = {
   objects: TwinObject[];
 };
 
+/**
+ * §"VERSIONS DU PROJET". Ces libellés vivent ici et non dans
+ * `actions.ts` : un fichier `"use server"` ne peut exporter que des
+ * fonctions async, jamais un objet.
+ */
+export type RevisionState = "existing" | "proposal" | "approved" | "asBuilt";
+
+export const REVISION_STATE_LABELS: Record<RevisionState, string> = {
+  existing: "Existant",
+  proposal: "Projet",
+  approved: "Validé",
+  asBuilt: "Réalisé",
+};
+
+export type RevisionSummary = {
+  id: string;
+  label: string;
+  state: RevisionState;
+  createdAt: string;
+  objectCount: number;
+  areaCount: number;
+};
+
 export type MapMode = "oasisPlan" | "satellite" | "hybrid" | "standard";
 
 export const MAP_MODE_LABELS: Record<MapMode, string> = {

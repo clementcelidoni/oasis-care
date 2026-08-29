@@ -11,10 +11,11 @@ import {
   OBJECT_TYPES, AREA_TYPES, OBJECT_TYPE_LABELS, AREA_TYPE_LABELS,
   AREA_COLORS, ROUND_OBJECTS, VEGETATION, colorForObject, defaultSizeFor,
   MAP_MODE_LABELS,
+  REVISION_STATE_LABELS,
   type TwinDocument, type TwinObject, type TwinArea, type ObjectType,
-  type AreaType, type MapMode,
+  type AreaType, type MapMode, type RevisionState, type RevisionSummary,
 } from "@/lib/twin/types";
-import { saveTwin } from "@/lib/twin/actions";
+import { saveTwin, saveRevision, listRevisions, loadRevision } from "@/lib/twin/actions";
 
 type Tool =
   | { kind: "select" }
@@ -34,7 +35,13 @@ type Snapshot = {
 
 const MAX_HISTORY = 60;
 
-export function TwinEditor({ initial }: { initial: TwinDocument }) {
+export function TwinEditor({
+  initial,
+  baseModifiedAt,
+}: {
+  initial: TwinDocument;
+  baseModifiedAt: string | null;
+}) {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const wrapRef = useRef<HTMLDivElement>(null);
 
@@ -52,6 +59,9 @@ export function TwinEditor({ initial }: { initial: TwinDocument }) {
   const [mapMode, setMapMode] = useState<MapMode>("oasisPlan");
   const [snap, setSnap] = useState<SnapSettings>(DEFAULT_SNAP);
   const [saveState, setSaveState] = useState<SaveState>("idle");
+  const [revisions, setRevisions] = useState<RevisionSummary[]>([]);
+  const [showRevisions, setShowRevisions] = useState(false);
+  const modifiedAt = useRef<string | null>(baseModifiedAt);
 
   const [camera, setCamera] = useState<Camera>({ centerX: 0, centerY: 0, pixelsPerMeter: 14 });
   const [view, setView] = useState({ width: 800, height: 600 });
@@ -113,10 +123,18 @@ export function TwinEditor({ initial }: { initial: TwinDocument }) {
         objects: doc.objects,
         deletedAreaIds: deleted.current.areas,
         deletedObjectIds: deleted.current.objects,
+        baseModifiedAt: modifiedAt.current,
       });
       if (result.ok) {
         deleted.current = { areas: [], objects: [] };
+        modifiedAt.current = result.modifiedAt ?? modifiedAt.current;
         setSaveState("saved");
+      } else if (result.conflict) {
+        // On garde le travail local intact et on cesse d'enregistrer
+        // automatiquement : réessayer en boucle finirait par écraser
+        // l'autre version dès qu'il aurait le dos tourné.
+        dirty.current = false;
+        setSaveState("conflict");
       } else {
         dirty.current = true;
         setSaveState("error");
@@ -129,10 +147,56 @@ export function TwinEditor({ initial }: { initial: TwinDocument }) {
   }, [doc, initial.gardenId, boundaryId]);
 
   useEffect(() => {
-    if (!dirty.current) return;
+    if (!dirty.current || saveState === "conflict") return;
     const timer = setTimeout(save, 1200);
     return () => clearTimeout(timer);
-  }, [doc, save]);
+  }, [doc, save, saveState]);
+
+  // ---------- révisions ----------
+  const refreshRevisions = useCallback(async () => {
+    setRevisions(await listRevisions(initial.gardenId));
+  }, [initial.gardenId]);
+
+  useEffect(() => {
+    if (showRevisions) void refreshRevisions();
+  }, [showRevisions, refreshRevisions]);
+
+  const captureRevision = useCallback(
+    async (label: string, state: RevisionState) => {
+      await saveRevision({
+        gardenId: initial.gardenId,
+        label,
+        state,
+        snapshot: {
+          boundary: doc.boundaryPoints,
+          areas: doc.areas,
+          objects: doc.objects,
+        },
+      });
+      await refreshRevisions();
+    },
+    [doc, initial.gardenId, refreshRevisions],
+  );
+
+  const restoreRevision = useCallback(
+    async (revisionId: string) => {
+      const revision = await loadRevision(revisionId);
+      if (!revision) return;
+      const snapshot = revision.snapshot as {
+        boundary?: Point[]; areas?: TwinArea[]; objects?: TwinObject[];
+      };
+      // Passe par `commit` : restaurer une révision est annulable comme
+      // n'importe quelle autre modification.
+      commit({
+        boundaryPoints: snapshot.boundary ?? [],
+        areas: snapshot.areas ?? [],
+        objects: snapshot.objects ?? [],
+      });
+      setSelection([]);
+      setShowRevisions(false);
+    },
+    [commit],
+  );
 
   // ---------- taille du canvas ----------
   useEffect(() => {
@@ -649,7 +713,29 @@ export function TwinEditor({ initial }: { initial: TwinDocument }) {
         onUndo={undo} onRedo={redo}
         onFinish={finishDraft} drafting={draft.length > 0}
         saveState={saveState} gardenName={initial.gardenName}
+        onToggleRevisions={() => setShowRevisions((v) => !v)}
+        revisionsOpen={showRevisions}
       />
+
+      {saveState === "conflict" && (
+        <div className="flex flex-wrap items-center gap-3 border-b border-line bg-critical-wash px-3 py-2 text-sm text-critical">
+          <span>
+            <strong>Ce plan a été modifié ailleurs</strong> — depuis un autre onglet,
+            un collègue ou l&apos;iPhone. Vos changements ne sont pas enregistrés,
+            et rien n&apos;a été écrasé.
+          </span>
+          <button
+            onClick={() => window.location.reload()}
+            className="rounded-md bg-critical px-2.5 py-1 text-xs font-medium text-white"
+          >
+            Recharger la version du serveur
+          </button>
+          <span className="text-xs">
+            Pour ne rien perdre : enregistrez d&apos;abord une révision de votre
+            travail, puis rechargez.
+          </span>
+        </div>
+      )}
 
       <div className="flex min-h-0 flex-1">
         <Library tool={tool} setTool={setTool} />
@@ -676,17 +762,26 @@ export function TwinEditor({ initial }: { initial: TwinDocument }) {
           )}
         </div>
 
-        <Properties
-          object={selectedObject}
-          area={selectedArea}
-          count={selection.length}
-          boundaryPoints={doc.boundaryPoints}
-          onPatchObject={patchObject}
-          onPatchArea={(id, patch) =>
-            commit((s) => ({ ...s, areas: s.areas.map((a) => (a.id === id ? { ...a, ...patch } : a)) }))
-          }
-          onDelete={deleteSelection}
-        />
+        {showRevisions ? (
+          <Revisions
+            revisions={revisions}
+            onCapture={captureRevision}
+            onRestore={restoreRevision}
+            onClose={() => setShowRevisions(false)}
+          />
+        ) : (
+          <Properties
+            object={selectedObject}
+            area={selectedArea}
+            count={selection.length}
+            boundaryPoints={doc.boundaryPoints}
+            onPatchObject={patchObject}
+            onPatchArea={(id, patch) =>
+              commit((s) => ({ ...s, areas: s.areas.map((a) => (a.id === id ? { ...a, ...patch } : a)) }))
+            }
+            onDelete={deleteSelection}
+          />
+        )}
       </div>
     </div>
   );
@@ -697,12 +792,14 @@ export function TwinEditor({ initial }: { initial: TwinDocument }) {
 function Toolbar({
   tool, setTool, mapMode, setMapMode, snap, setSnap,
   onUndo, onRedo, onFinish, drafting, saveState, gardenName,
+  onToggleRevisions, revisionsOpen,
 }: {
   tool: Tool; setTool: (t: Tool) => void;
   mapMode: MapMode; setMapMode: (m: MapMode) => void;
   snap: SnapSettings; setSnap: (s: SnapSettings) => void;
   onUndo: () => void; onRedo: () => void; onFinish: () => void;
   drafting: boolean; saveState: SaveState; gardenName: string;
+  onToggleRevisions: () => void; revisionsOpen: boolean;
 }) {
   const SAVE_LABEL: Record<SaveState, string> = {
     idle: "", saving: "Enregistrement…", saved: "Enregistré",
@@ -753,6 +850,13 @@ function Toolbar({
         className="rounded-md border border-line bg-surface px-1.5 py-1 text-xs">
         {[0.1, 0.25, 0.5, 1].map((g) => <option key={g} value={g}>{g} m</option>)}
       </select>
+
+      <span className="mx-1 h-5 w-px bg-line" />
+
+      <button onClick={onToggleRevisions}
+        className={`rounded-md px-2.5 py-1.5 text-xs font-medium ${revisionsOpen ? "bg-accent-wash text-accent" : "text-ink-soft hover:bg-canvas"}`}>
+        Versions
+      </button>
 
       <div className="ml-auto flex items-center gap-2">
         <span className={`text-xs ${saveTone}`}>{SAVE_LABEL[saveState]}</span>
@@ -910,6 +1014,104 @@ function Properties({
           </div>
         </div>
       )}
+    </aside>
+  );
+}
+
+/** §"VERSIONS DU PROJET" — figer, comparer, restaurer. */
+function Revisions({
+  revisions, onCapture, onRestore, onClose,
+}: {
+  revisions: RevisionSummary[];
+  onCapture: (label: string, state: RevisionState) => Promise<void>;
+  onRestore: (id: string) => Promise<void>;
+  onClose: () => void;
+}) {
+  const [label, setLabel] = useState("");
+  const [state, setState] = useState<RevisionState>("proposal");
+  const [busy, setBusy] = useState(false);
+
+  const STATE_TONE: Record<RevisionState, string> = {
+    existing: "bg-canvas text-ink-soft",
+    proposal: "bg-info-wash text-info",
+    approved: "bg-accent-wash text-accent",
+    asBuilt: "bg-warning-wash text-warning",
+  };
+
+  return (
+    <aside className="w-72 shrink-0 overflow-y-auto border-l border-line bg-surface px-3 py-3">
+      <div className="mb-3 flex items-center justify-between">
+        <p className="text-xs font-semibold uppercase tracking-wide text-ink-faint">Versions</p>
+        <button onClick={onClose} className="text-xs text-ink-soft hover:text-ink">Fermer</button>
+      </div>
+
+      <div className="mb-4 flex flex-col gap-2 rounded-lg border border-line bg-surface-raised p-3">
+        <input
+          value={label}
+          onChange={(e) => setLabel(e.target.value)}
+          placeholder="Nom de la version"
+          className="rounded-md border border-line-strong bg-surface px-2 py-1.5 text-xs outline-none focus:border-accent"
+        />
+        <select
+          value={state}
+          onChange={(e) => setState(e.target.value as RevisionState)}
+          className="rounded-md border border-line-strong bg-surface px-2 py-1.5 text-xs outline-none focus:border-accent"
+        >
+          {(Object.keys(REVISION_STATE_LABELS) as RevisionState[]).map((s) => (
+            <option key={s} value={s}>{REVISION_STATE_LABELS[s]}</option>
+          ))}
+        </select>
+        <button
+          disabled={busy || label.trim() === ""}
+          onClick={async () => {
+            setBusy(true);
+            await onCapture(label.trim(), state);
+            setLabel("");
+            setBusy(false);
+          }}
+          className="rounded-md bg-accent px-2 py-1.5 text-xs font-medium text-accent-ink disabled:opacity-50"
+        >
+          {busy ? "Enregistrement…" : "Figer l'état actuel"}
+        </button>
+        <p className="text-[11px] leading-relaxed text-ink-faint">
+          Une version est une copie complète du plan à cet instant. Elle ne
+          bouge plus, même si le plan courant change entièrement.
+        </p>
+      </div>
+
+      {revisions.length === 0 ? (
+        <p className="text-xs text-ink-faint">Aucune version enregistrée.</p>
+      ) : (
+        <ul className="flex flex-col gap-1.5">
+          {revisions.map((r) => (
+            <li key={r.id} className="rounded-lg border border-line p-2.5">
+              <div className="flex items-start justify-between gap-2">
+                <p className="min-w-0 truncate text-sm font-medium">{r.label}</p>
+                <span className={`shrink-0 rounded px-1.5 py-0.5 text-[10px] font-medium ${STATE_TONE[r.state]}`}>
+                  {REVISION_STATE_LABELS[r.state]}
+                </span>
+              </div>
+              <p className="mt-0.5 text-[11px] text-ink-faint">
+                {new Date(r.createdAt).toLocaleString("fr-FR", {
+                  day: "2-digit", month: "short", hour: "2-digit", minute: "2-digit",
+                })}
+                {" · "}
+                {r.objectCount} objet{r.objectCount > 1 ? "s" : ""}, {r.areaCount} zone
+                {r.areaCount > 1 ? "s" : ""}
+              </p>
+              <button
+                onClick={() => onRestore(r.id)}
+                className="mt-2 w-full rounded-md border border-line-strong px-2 py-1 text-[11px] font-medium hover:bg-canvas"
+              >
+                Restaurer dans le plan
+              </button>
+            </li>
+          ))}
+        </ul>
+      )}
+      <p className="mt-3 text-[11px] leading-relaxed text-ink-faint">
+        Restaurer remplace le plan courant, mais reste annulable par Ctrl+Z.
+      </p>
     </aside>
   );
 }
