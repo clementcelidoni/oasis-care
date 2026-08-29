@@ -3,7 +3,7 @@
 import { revalidatePath } from "next/cache";
 import { redirect } from "next/navigation";
 import { createClient } from "@/lib/supabase/server";
-import { getActiveOrganization } from "@/lib/auth/organization";
+import { getActiveOrganization, requireOrganization } from "@/lib/auth/organization";
 import { inputToCents, parseQuantity } from "@/lib/quotes/types";
 import { DEFAULT_PHASES } from "./types";
 
@@ -48,8 +48,7 @@ export async function createProjectFromQuote(formData: FormData) {
 
 /** Un chantier parti de rien, avec les phases usuelles. */
 export async function createProject(formData: FormData) {
-  const organization = await getActiveOrganization();
-  if (!organization) redirect("/bienvenue");
+  const organization = await requireOrganization();
 
   const customerId = text(formData, "customer_id");
   if (!customerId) return;
@@ -127,8 +126,7 @@ export async function updateProject(formData: FormData) {
 // ---------------------------------------------------------------
 
 export async function addPhase(formData: FormData) {
-  const organization = await getActiveOrganization();
-  if (!organization) return;
+  const organization = await requireOrganization();
   const projectId = String(formData.get("project_id") ?? "");
   const title = text(formData, "title");
   if (!projectId || !title) return;
@@ -192,8 +190,7 @@ export async function deletePhase(formData: FormData) {
 }
 
 export async function addTask(formData: FormData) {
-  const organization = await getActiveOrganization();
-  if (!organization) return;
+  const organization = await requireOrganization();
   const projectId = String(formData.get("project_id") ?? "");
   const title = text(formData, "title");
   if (!projectId || !title) return;
@@ -260,8 +257,7 @@ export async function deleteTask(formData: FormData) {
 // ---------------------------------------------------------------
 
 export async function addCost(formData: FormData) {
-  const organization = await getActiveOrganization();
-  if (!organization) return;
+  const organization = await requireOrganization();
   const projectId = String(formData.get("project_id") ?? "");
   const description = text(formData, "description");
   if (!projectId || !description) return;

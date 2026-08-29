@@ -3,7 +3,7 @@
 import { revalidatePath } from "next/cache";
 import { redirect } from "next/navigation";
 import { createClient } from "@/lib/supabase/server";
-import { getActiveOrganization } from "@/lib/auth/organization";
+import { requireOrganization } from "@/lib/auth/organization";
 import { parseQuantity, COST_KIND_FROM_ITEM_TYPE, type CatalogItemType } from "./types";
 
 /**
@@ -22,8 +22,7 @@ import { parseQuantity, COST_KIND_FROM_ITEM_TYPE, type CatalogItemType } from ".
  */
 
 export async function addProposedLinesToQuote(formData: FormData) {
-  const organization = await getActiveOrganization();
-  if (!organization) redirect("/bienvenue");
+  const organization = await requireOrganization();
 
   const quoteId = String(formData.get("quote_id") ?? "");
   const gardenId = String(formData.get("garden_id") ?? "");

@@ -2,7 +2,7 @@
 
 import { revalidatePath } from "next/cache";
 import { createClient } from "@/lib/supabase/server";
-import { getActiveOrganization } from "@/lib/auth/organization";
+import { getActiveOrganization, requireOrganization } from "@/lib/auth/organization";
 import { inputToCents, parseQuantity, type CatalogItem } from "./types";
 
 /**
@@ -111,8 +111,7 @@ export async function listCatalog(search?: string, type?: string): Promise<Catal
 }
 
 export async function createCatalogItem(formData: FormData) {
-  const organization = await getActiveOrganization();
-  if (!organization) return;
+  const organization = await requireOrganization();
 
   const name = text(formData, "name");
   if (!name) return;

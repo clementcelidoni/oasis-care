@@ -1,4 +1,5 @@
-import { createClient } from "@/lib/supabase/server";
+import { redirect } from "next/navigation";
+import { createClient, getCurrentUser } from "@/lib/supabase/server";
 import type { BusinessType, Role } from "@/lib/auth/permissions";
 import { permissionsForRole, type Permission } from "@/lib/auth/permissions";
 
@@ -76,4 +77,29 @@ export async function getActiveOrganization(
     if (match) return match;
   }
   return organizations[0];
+}
+
+/**
+ * L'organisation active, ou une redirection.
+ *
+ * À utiliser dans les Server Actions, où l'alternative — `if
+ * (!organization) return;` — ne fait rien de visible : l'utilisateur
+ * clique, rien ne se passe, et il recommence.
+ *
+ * La distinction compte. Pas de session, c'est la page de connexion ;
+ * une session sans organisation, c'est la page de création. Renvoyer
+ * vers la connexion quelqu'un qui est déjà connecté le laisserait
+ * tourner en rond.
+ *
+ * `redirect()` depuis une Server Action produit une réponse que le
+ * routeur client sait suivre — contrairement à une redirection émise
+ * par `proxy.ts`, qui lui renvoie une page HTML là où il attend une
+ * réponse d'action.
+ */
+export async function requireOrganization(): Promise<OrganizationContext> {
+  const organization = await getActiveOrganization();
+  if (organization) return organization;
+
+  const user = await getCurrentUser();
+  redirect(user ? "/bienvenue" : "/login");
 }

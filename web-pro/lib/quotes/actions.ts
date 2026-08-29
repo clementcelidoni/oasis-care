@@ -3,7 +3,7 @@
 import { revalidatePath } from "next/cache";
 import { redirect } from "next/navigation";
 import { createClient } from "@/lib/supabase/server";
-import { getActiveOrganization } from "@/lib/auth/organization";
+import { requireOrganization } from "@/lib/auth/organization";
 import {
   inputToCents, parseQuantity, COST_KIND_FROM_ITEM_TYPE,
   type QuoteStatus, type CatalogItemType,
@@ -29,8 +29,7 @@ function text(formData: FormData, key: string): string | null {
 }
 
 export async function createQuote(formData: FormData) {
-  const organization = await getActiveOrganization();
-  if (!organization) redirect("/bienvenue");
+  const organization = await requireOrganization();
 
   const customerId = text(formData, "customer_id");
   if (!customerId) return;
@@ -119,8 +118,7 @@ export async function setQuoteStatus(formData: FormData) {
 // ---------------------------------------------------------------
 
 export async function addSection(formData: FormData) {
-  const organization = await getActiveOrganization();
-  if (!organization) return;
+  const organization = await requireOrganization();
   const quoteId = String(formData.get("quote_id") ?? "");
   const title = text(formData, "title");
   if (!quoteId || !title) return;
@@ -168,8 +166,7 @@ export async function deleteSection(formData: FormData) {
  * ensuite qu'à savoir d'où elle vient, jamais à relire un prix.
  */
 export async function addLine(formData: FormData) {
-  const organization = await getActiveOrganization();
-  if (!organization) return;
+  const organization = await requireOrganization();
   const quoteId = String(formData.get("quote_id") ?? "");
   if (!quoteId) return;
 
@@ -312,8 +309,7 @@ export async function deleteLine(formData: FormData) {
  * après que le devis courant ait entièrement changé.
  */
 export async function captureQuoteRevision(formData: FormData) {
-  const organization = await getActiveOrganization();
-  if (!organization) return;
+  const organization = await requireOrganization();
   const quoteId = String(formData.get("quote_id") ?? "");
   const label = text(formData, "label") ?? "Version";
   if (!quoteId) return;

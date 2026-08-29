@@ -2,7 +2,7 @@
 
 import { revalidatePath } from "next/cache";
 import { createClient } from "@/lib/supabase/server";
-import { getActiveOrganization } from "@/lib/auth/organization";
+import { requireOrganization } from "@/lib/auth/organization";
 import { gardenWorkspaceId, NO_GARDEN_WORKSPACE } from "./workspace";
 import type {
   TwinDocument, TwinObject, TwinArea, TwinPipe, TwinCable,
@@ -453,8 +453,7 @@ export async function loadRevision(revisionId: string) {
  * ce jardin — voir `gardenWorkspaceId`.
  */
 export async function createGarden(formData: FormData) {
-  const organization = await getActiveOrganization();
-  if (!organization) return;
+  const organization = await requireOrganization();
 
   const name = String(formData.get("name") ?? "").trim();
   if (!name) return;

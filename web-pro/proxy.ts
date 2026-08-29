@@ -14,6 +14,12 @@ import { NextResponse, type NextRequest } from "next/server";
  * bounces obviously-signed-out visitors, and nothing more. The real
  * authorization lives in two places that a request cannot talk its way
  * around: `getUser()` in Server Components, and Postgres RLS.
+ *
+ * Because it is only optimistic, it FAILS OPEN. Two cases below let a
+ * request through that this file cannot judge — a Server Action, and an
+ * unreachable auth server. In both, the layout re-checks and RLS still
+ * refuses the data. Bouncing to the sign-in page on a doubt would log
+ * people out for a network hiccup, which is the worse failure.
  */
 export async function proxy(request: NextRequest) {
   let response = NextResponse.next({ request });
@@ -46,9 +52,26 @@ export async function proxy(request: NextRequest) {
     },
   );
 
-  const {
-    data: { user },
-  } = await supabase.auth.getUser();
+  /**
+   * "Signed out" and "could not ask" are different answers.
+   *
+   * A 4xx from the auth server is an ANSWER: the token is missing,
+   * expired beyond refresh, or forged. Anything without a status — a
+   * timeout, a DNS failure, a dropped connection — is not an answer at
+   * all, and treating it as one signs the user out mid-click every time
+   * their connection stutters.
+   */
+  let user = null;
+  let answered = true;
+  try {
+    const { data, error } = await supabase.auth.getUser();
+    user = data.user;
+    if (error && typeof (error as { status?: unknown }).status !== "number") {
+      answered = false;
+    }
+  } catch {
+    answered = false;
+  }
 
   const { pathname } = request.nextUrl;
   const isPublic =
@@ -56,7 +79,21 @@ export async function proxy(request: NextRequest) {
     pathname.startsWith("/auth") ||
     pathname.startsWith("/invitation");
 
-  if (!user && !isPublic) {
+  /**
+   * A Server Action is not a page navigation.
+   *
+   * It expects an action response, and answering with the sign-in page
+   * produces "An unexpected response was received from the server" plus
+   * a stack trace pointing at whichever form happened to be on screen —
+   * which is how this was found, from a stack blaming a task form for an
+   * expired session.
+   *
+   * Let it through. The action calls `requireOrganization()`, whose
+   * `redirect()` the client router knows how to follow.
+   */
+  const isServerAction = request.headers.get("next-action") !== null;
+
+  if (!user && !isPublic && answered && !isServerAction) {
     const loginUrl = request.nextUrl.clone();
     loginUrl.pathname = "/login";
     // Send them back where they were headed once signed in.

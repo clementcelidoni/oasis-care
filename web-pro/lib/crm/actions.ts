@@ -3,7 +3,7 @@
 import { revalidatePath } from "next/cache";
 import { redirect } from "next/navigation";
 import { createClient } from "@/lib/supabase/server";
-import { getActiveOrganization } from "@/lib/auth/organization";
+import { requireOrganization } from "@/lib/auth/organization";
 
 /**
  * Server Actions for the CRM.
@@ -21,8 +21,7 @@ function text(formData: FormData, key: string): string | null {
 }
 
 export async function createCustomer(formData: FormData) {
-  const organization = await getActiveOrganization();
-  if (!organization) redirect("/bienvenue");
+  const organization = await requireOrganization();
 
   const displayName = text(formData, "display_name");
   if (!displayName) return;
@@ -83,8 +82,7 @@ export async function convertLead(formData: FormData) {
 }
 
 export async function addContact(formData: FormData) {
-  const organization = await getActiveOrganization();
-  if (!organization) return;
+  const organization = await requireOrganization();
 
   const customerId = String(formData.get("customer_id") ?? "");
   const lastName = text(formData, "last_name");
@@ -105,8 +103,7 @@ export async function addContact(formData: FormData) {
 }
 
 export async function addSite(formData: FormData) {
-  const organization = await getActiveOrganization();
-  if (!organization) return;
+  const organization = await requireOrganization();
 
   const customerId = String(formData.get("customer_id") ?? "");
   const name = text(formData, "name");
@@ -135,8 +132,7 @@ export async function addSite(formData: FormData) {
  * violation, which is exactly how this was discovered.
  */
 export async function createGardenForSite(formData: FormData) {
-  const organization = await getActiveOrganization();
-  if (!organization) return;
+  const organization = await requireOrganization();
 
   const siteId = String(formData.get("site_id") ?? "");
   const customerId = String(formData.get("customer_id") ?? "");
@@ -163,8 +159,7 @@ export async function createGardenForSite(formData: FormData) {
 }
 
 export async function addActivity(formData: FormData) {
-  const organization = await getActiveOrganization();
-  if (!organization) return;
+  const organization = await requireOrganization();
 
   const customerId = String(formData.get("customer_id") ?? "");
   if (!customerId) return;
@@ -182,8 +177,7 @@ export async function addActivity(formData: FormData) {
 }
 
 export async function createOpportunity(formData: FormData) {
-  const organization = await getActiveOrganization();
-  if (!organization) return;
+  const organization = await requireOrganization();
 
   const customerId = String(formData.get("customer_id") ?? "");
   const title = text(formData, "title");
