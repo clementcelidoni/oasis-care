@@ -58,10 +58,10 @@ export function Photos({
               {group.map((photo) => (
                 <figure key={photo.id} className="overflow-hidden rounded-lg border border-line bg-surface">
                   {photo.url ? (
-                    // eslint-disable-next-line @next/next/no-img-element -- URL signée
-                    // d'un bucket privé, valable une heure : `next/image`
-                    // la mettrait en cache côté serveur bien après son
-                    // expiration, et l'image se briserait.
+                    /* URL signée d'un bucket privé, valable une heure :
+                       `next/image` la mettrait en cache côté serveur bien
+                       après son expiration, et l'image se briserait. */
+                    // eslint-disable-next-line @next/next/no-img-element
                     <img
                       src={photo.url}
                       alt={photo.caption ?? "Photo de chantier"}

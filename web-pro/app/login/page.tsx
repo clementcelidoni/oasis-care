@@ -19,13 +19,36 @@ export default function LoginPage() {
 
   const supabase = createClient();
 
+  /**
+   * Là où on retournera après la connexion.
+   *
+   * `proxy.ts` pose déjà `?next=` en renvoyant ici, et
+   * `/auth/callback` sait le suivre — mais personne ne le lui
+   * transmettait. Un client qui ouvrait son lien d'invitation
+   * atterrissait donc sur l'accueil, invitation perdue.
+   *
+   * Lu dans le gestionnaire plutôt qu'avec `useSearchParams` : le
+   * second forcerait toute la page en rendu dynamique pour une valeur
+   * dont on n'a besoin qu'au clic.
+   */
+  function callbackUrl() {
+    const next = new URLSearchParams(window.location.search).get("next");
+    const url = new URL("/auth/callback", window.location.origin);
+    // Un chemin de ce site, et rien d'autre : une URL absolue ferait de
+    // la connexion une redirection ouverte vers n'importe où.
+    if (next && next.startsWith("/") && !next.startsWith("//")) {
+      url.searchParams.set("next", next);
+    }
+    return url.toString();
+  }
+
   async function signInWithEmail(event: React.FormEvent) {
     event.preventDefault();
     setError(null);
     setStatus("sending");
     const { error } = await supabase.auth.signInWithOtp({
       email,
-      options: { emailRedirectTo: `${window.location.origin}/auth/callback` },
+      options: { emailRedirectTo: callbackUrl() },
     });
     if (error) {
       setError(error.message);
@@ -39,7 +62,7 @@ export default function LoginPage() {
     setError(null);
     const { error } = await supabase.auth.signInWithOAuth({
       provider,
-      options: { redirectTo: `${window.location.origin}/auth/callback` },
+      options: { redirectTo: callbackUrl() },
     });
     if (error) setError(error.message);
   }

@@ -5,6 +5,7 @@ import {
   formatCents, formatQuantity, EMPTY_TOTALS,
   type QuoteLine, type QuoteSection, type QuoteTotals,
 } from "@/lib/quotes/types";
+import { clientQuoteTotals } from "@/lib/portal/types";
 import { PrintButton } from "./PrintButton";
 
 /**
@@ -43,7 +44,7 @@ export default async function PrintQuotePage({ params }: PageProps<"/devis/[id]/
       supabase.from("quote_totals").select("*").eq("quote_id", id).maybeSingle(),
       supabase
         .from("business_organizations")
-        .select("name, legal_name, siret, vat_number, address_line1, postal_code, city, email, phone")
+        .select("name, legal_name, legal_form, siret, vat_number, rcs_city, address_line1, address_line2, postal_code, city, email, phone, insurance_details")
         .limit(1)
         .maybeSingle(),
     ]);
@@ -55,17 +56,13 @@ export default async function PrintQuotePage({ params }: PageProps<"/devis/[id]/
 
   // Ventilation de la TVA par taux : obligatoire dès qu'un devis en
   // mêle plusieurs, et de toute façon ce que le client attend.
-  const vatByRate = new Map<number, { base: number; vat: number }>();
-  const discount = 1 - quote.global_discount_percent / 100;
-  for (const line of allLines) {
-    const base = Math.round(line.sale_total_cents * discount);
-    const entry = vatByRate.get(line.vat_rate) ?? { base: 0, vat: 0 };
-    entry.base += base;
-    vatByRate.set(line.vat_rate, entry);
-  }
-  for (const [rate, entry] of vatByRate) {
-    entry.vat = Math.round((entry.base * rate) / 100);
-  }
+  //
+  // La même fonction que le portail, et la même formule que la vue
+  // `quote_totals`. Le calcul d'ici arrondissait LIGNE PAR LIGNE avant
+  // de regrouper, quand la base regroupe puis arrondit : sur un devis à
+  // plusieurs lignes avec remise globale, la ventilation ne retombait
+  // pas sur le « Total HT » imprimé juste au-dessus.
+  const breakdown = clientQuoteTotals(allLines, quote.global_discount_percent);
 
   const unsectioned = allLines.filter((l) => l.section_id === null);
 
@@ -81,6 +78,7 @@ export default async function PrintQuotePage({ params }: PageProps<"/devis/[id]/
           )}
           <p className="mt-1 whitespace-pre-line text-sm text-ink-soft">
             {[organization?.address_line1,
+              organization?.address_line2,
               [organization?.postal_code, organization?.city].filter(Boolean).join(" "),
             ].filter(Boolean).join("\n")}
           </p>
@@ -92,6 +90,17 @@ export default async function PrintQuotePage({ params }: PageProps<"/devis/[id]/
           )}
           {organization?.vat_number && (
             <p className="text-xs text-ink-faint">TVA {organization.vat_number}</p>
+          )}
+          {(organization?.legal_form || organization?.rcs_city) && (
+            <p className="text-xs text-ink-faint">
+              {[organization.legal_form, organization.rcs_city && "RCS " + organization.rcs_city]
+                .filter(Boolean)
+                .join(" · ")}
+            </p>
+          )}
+          {/* Mention obligatoire sur les travaux de paysage. */}
+          {organization?.insurance_details && (
+            <p className="mt-1 text-xs text-ink-faint">{organization.insurance_details}</p>
           )}
         </div>
 
@@ -149,12 +158,14 @@ export default async function PrintQuotePage({ params }: PageProps<"/devis/[id]/
                 {formatCents(t.total_excluding_vat_cents)}
               </td>
             </tr>
-            {[...vatByRate.entries()].sort((a, b) => b[0] - a[0]).map(([rate, entry]) => (
-              <tr key={rate}>
+            {breakdown.byRate.map((entry) => (
+              <tr key={entry.rate}>
                 <td className="py-1 pr-6 text-ink-soft">
-                  TVA {rate} % sur {formatCents(entry.base)}
+                  TVA {entry.rate} % sur {formatCents(entry.baseCents)}
                 </td>
-                <td className="tabular py-1 text-right text-ink-soft">{formatCents(entry.vat)}</td>
+                <td className="tabular py-1 text-right text-ink-soft">
+                  {formatCents(entry.vatCents)}
+                </td>
               </tr>
             ))}
             <tr className="border-t border-line-strong">

@@ -2,6 +2,7 @@ import { redirect } from "next/navigation";
 import { revalidatePath } from "next/cache";
 import { getCurrentUser, createClient } from "@/lib/supabase/server";
 import { getUserOrganizations } from "@/lib/auth/organization";
+import { hasPortalAccess } from "@/lib/portal/access";
 import { BUSINESS_TYPES, BUSINESS_TYPE_LABELS } from "@/lib/auth/permissions";
 
 /**
@@ -20,6 +21,11 @@ export default async function WelcomePage() {
 
   const organizations = await getUserOrganizations();
   if (organizations.length > 0) redirect("/");
+
+  // Un client invité arrive ici par le chemin le plus court : connexion,
+  // pas d'organisation, redirection. Lui demander de créer une
+  // entreprise pour lire sa facture serait absurde.
+  if (await hasPortalAccess()) redirect("/portail");
 
   async function createOrganization(formData: FormData) {
     "use server";

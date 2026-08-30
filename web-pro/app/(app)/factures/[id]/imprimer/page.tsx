@@ -36,7 +36,7 @@ export default async function PrintInvoicePage({
     supabase.from("invoice_balance").select("*").eq("invoice_id", id).maybeSingle(),
     supabase
       .from("business_organizations")
-      .select("name, legal_name, siret, vat_number, address_line1, postal_code, city, email, phone")
+      .select("name, legal_name, legal_form, siret, vat_number, rcs_city, address_line1, address_line2, postal_code, city, email, phone, insurance_details")
       .limit(1)
       .maybeSingle(),
   ]);
@@ -61,6 +61,7 @@ export default async function PrintInvoicePage({
           )}
           <p className="mt-1 whitespace-pre-line text-sm text-ink-soft">
             {[organization?.address_line1,
+              organization?.address_line2,
               [organization?.postal_code, organization?.city].filter(Boolean).join(" "),
             ].filter(Boolean).join("\n")}
           </p>
@@ -72,6 +73,17 @@ export default async function PrintInvoicePage({
           )}
           {organization?.vat_number && (
             <p className="text-xs text-ink-faint">TVA {organization.vat_number}</p>
+          )}
+          {(organization?.legal_form || organization?.rcs_city) && (
+            <p className="text-xs text-ink-faint">
+              {[organization.legal_form, organization.rcs_city && "RCS " + organization.rcs_city]
+                .filter(Boolean)
+                .join(" · ")}
+            </p>
+          )}
+          {/* Mention obligatoire sur les travaux de paysage. */}
+          {organization?.insurance_details && (
+            <p className="mt-1 text-xs text-ink-faint">{organization.insurance_details}</p>
           )}
         </div>
 

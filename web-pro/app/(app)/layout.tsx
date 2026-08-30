@@ -1,6 +1,7 @@
 import { redirect } from "next/navigation";
 import { getCurrentUser } from "@/lib/supabase/server";
 import { getActiveOrganization } from "@/lib/auth/organization";
+import { hasPortalAccess } from "@/lib/portal/access";
 import { visibleNavigation } from "@/lib/navigation";
 import { Sidebar } from "@/components/Sidebar";
 
@@ -18,9 +19,14 @@ export default async function AppLayout({ children }: LayoutProps<"/">) {
 
   const organization = await getActiveOrganization();
   // A signed-in user with no professional organization has nothing to
-  // show here — send them to create one rather than render an empty
-  // shell with a broken sidebar.
-  if (!organization) redirect("/bienvenue");
+  // show here — send them onward rather than render an empty shell with
+  // a broken sidebar.
+  //
+  // Le portail passe AVANT la création d'entreprise. Un particulier
+  // invité par son paysagiste n'a pas d'organisation et n'en veut
+  // pas : l'envoyer sur « Créons votre entreprise » lui demanderait de
+  // fonder une société pour lire sa facture.
+  if (!organization) redirect((await hasPortalAccess()) ? "/portail" : "/bienvenue");
 
   const items = visibleNavigation(organization.businessType, organization.permissions);
 

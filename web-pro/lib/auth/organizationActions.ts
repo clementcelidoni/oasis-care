@@ -46,3 +46,59 @@ export async function updateOrganizationProfile(formData: FormData) {
   revalidatePath("/", "layout");
   revalidatePath("/parametres");
 }
+
+/**
+ * L'identité légale — ce qui doit figurer sur un devis et une facture.
+ *
+ * Ces champs n'existaient pas. Les pages d'impression les demandaient
+ * déjà (`siret`, `vat_number`, `address_line1`…), la requête échouait
+ * en silence, et chaque document sortait sans entête. La migration 0056
+ * a créé les colonnes ; ce formulaire est ce qui les remplit.
+ *
+ * Tout est facultatif ici, et obligatoire sur le document : on ne
+ * bloque pas la saisie, mais l'écran des paramètres dit ce qui manque.
+ * Un champ requis dans un formulaire de réglages empêche d'enregistrer
+ * les trois autres.
+ */
+export async function updateOrganizationIdentity(formData: FormData) {
+  const organization = await requireOrganization();
+
+  const field = (key: string) => {
+    const value = String(formData.get(key) ?? "").trim();
+    return value === "" ? null : value;
+  };
+
+  const capital = String(formData.get("share_capital") ?? "").trim();
+  const capitalCents =
+    capital === ""
+      ? null
+      : Math.round(Number(capital.replace(",", ".")) * 100) || null;
+
+  const supabase = await createClient();
+  const { error } = await supabase
+    .from("business_organizations")
+    .update({
+      legal_name: field("legal_name"),
+      legal_form: field("legal_form"),
+      siret: field("siret"),
+      vat_number: field("vat_number"),
+      rcs_city: field("rcs_city"),
+      share_capital_cents: capitalCents,
+      address_line1: field("address_line1"),
+      address_line2: field("address_line2"),
+      postal_code: field("postal_code"),
+      city: field("city"),
+      email: field("email"),
+      phone: field("phone"),
+      website: field("website"),
+      insurance_details: field("insurance_details"),
+      updated_at: new Date().toISOString(),
+    })
+    .eq("id", organization.organizationId);
+  if (error) throw new Error(error.message);
+
+  revalidatePath("/parametres");
+  // L'entête change sur chaque devis et chaque facture déjà émis.
+  revalidatePath("/devis", "layout");
+  revalidatePath("/factures", "layout");
+}

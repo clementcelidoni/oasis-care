@@ -125,13 +125,18 @@ export const NAVIGATION: NavItem[] = [
   { label: "Contrats", href: "/contrats", permission: "projects.read", milestone: UNSCHEDULED },
   { label: "Matériel", href: "/materiel", permission: "projects.manage", milestone: UNSCHEDULED },
   { label: "Documents", href: "/documents", permission: "projects.read", milestone: UNSCHEDULED },
-  { label: "Analytics", href: "/analytics", permission: "projects.read", milestone: 11 },
+  // §11T porte les deux d'un seul tenant — « tableaux de bord
+  // analytiques » et « outils IA sur des données structurées
+  // stables » — et le plan les livre ensemble au douzième milestone.
+  // Analytics portait 11 par anticipation ; le onzième s'est révélé
+  // être le portail client.
+  { label: "Analytics", href: "/analytics", permission: "projects.read", milestone: 12 },
   { label: "Oasis AI", href: "/oasis-ai", milestone: 12 },
   { label: "Paramètres", href: "/parametres", milestone: 1 },
 ];
 
 /** Milestones already delivered. Everything above this is shown as coming. */
-export const DELIVERED_THROUGH_MILESTONE = 10;
+export const DELIVERED_THROUGH_MILESTONE = 11;
 
 export function isAvailable(item: NavItem): boolean {
   return item.milestone <= DELIVERED_THROUGH_MILESTONE;

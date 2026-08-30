@@ -8,6 +8,7 @@ import {
   type Role,
 } from "@/lib/auth/permissions";
 import { OrganizationForm } from "./OrganizationForm";
+import { IdentityForm, type OrganizationIdentity } from "./IdentityForm";
 
 /**
  * Organisation, membres et droits — la partie visible de ce que
@@ -23,11 +24,22 @@ export default async function SettingsPage() {
   if (!organization) return null;
 
   const supabase = await createClient();
-  const { data: members } = await supabase
-    .from("organization_members")
-    .select("id, role, created_at, user_id")
-    .is("archived_at", null)
-    .order("created_at");
+  const [{ data: members }, { data: identity }] = await Promise.all([
+    supabase
+      .from("organization_members")
+      .select("id, role, created_at, user_id")
+      .is("archived_at", null)
+      .order("created_at"),
+    supabase
+      .from("business_organizations")
+      .select(
+        "legal_name, legal_form, siret, vat_number, rcs_city, share_capital_cents, address_line1, address_line2, postal_code, city, email, phone, website, insurance_details",
+      )
+      .eq("id", organization.organizationId)
+      .maybeSingle(),
+  ]);
+
+  const canEditIdentity = organization.permissions.includes("organization.manageUsers");
 
   return (
     <div className="mx-auto max-w-3xl px-8 py-10">
@@ -46,6 +58,19 @@ export default async function SettingsPage() {
           name={organization.name}
           businessType={organization.businessType}
           canEdit={organization.permissions.includes("organization.manageUsers")}
+        />
+      </Card>
+
+      <Card className="mb-4 p-5">
+        <h2 className="mb-1 text-sm font-semibold">Identité légale</h2>
+        <p className="mb-4 text-xs text-ink-faint">
+          Ces informations composent l&apos;entête de vos devis et de vos
+          factures, et l&apos;exemplaire que vos clients consultent dans leur
+          portail.
+        </p>
+        <IdentityForm
+          identity={(identity ?? {}) as OrganizationIdentity}
+          canEdit={canEditIdentity}
         />
       </Card>
 

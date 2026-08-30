@@ -27,6 +27,21 @@ import {
   createGardenForSite,
   createOpportunity,
 } from "@/lib/crm/actions";
+import {
+  QUOTE_STATUS_LABELS, QUOTE_STATUS_TONE, type QuoteStatus, type BadgeTone,
+} from "@/lib/quotes/types";
+import {
+  PROJECT_STATUS_LABELS, PROJECT_STATUS_TONE, type ProjectStatus,
+} from "@/lib/projects/types";
+import {
+  INVOICE_STATUS_LABELS, INVOICE_STATUS_TONE, type InvoiceStatus,
+} from "@/lib/finance/types";
+import {
+  PortalSection,
+  type PortalInvitation,
+  type PortalAccess,
+  type DeliverableGarden,
+} from "./PortalSection";
 
 /**
  * §"CUSTOMER — Une fiche client regroupe : contacts, téléphones, emails,
@@ -54,13 +69,49 @@ export default async function CustomerPage({ params }: PageProps<"/crm/clients/[
   if (!customer) notFound();
   const c = customer as Customer;
 
-  const [{ data: contacts }, { data: sites }, { data: opportunities }, { data: activities }] =
-    await Promise.all([
-      supabase.from("crm_contacts").select("*").eq("customer_id", id).is("archived_at", null).order("is_primary", { ascending: false }),
-      supabase.from("crm_customer_sites").select("*").eq("customer_id", id).is("archived_at", null).order("name"),
-      supabase.from("crm_opportunities").select("*").eq("customer_id", id).is("archived_at", null).order("created_at", { ascending: false }),
-      supabase.from("crm_activities").select("*").eq("customer_id", id).is("archived_at", null).order("occurred_at", { ascending: false }).limit(30),
-    ]);
+  const [
+    { data: contacts }, { data: sites }, { data: opportunities }, { data: activities },
+    { data: invitation }, { data: portalAccess },
+    { data: quotes }, { data: projects }, { data: invoices },
+  ] = await Promise.all([
+    supabase.from("crm_contacts").select("*").eq("customer_id", id).is("archived_at", null).order("is_primary", { ascending: false }),
+    supabase.from("crm_customer_sites").select("*").eq("customer_id", id).is("archived_at", null).order("name"),
+    supabase.from("crm_opportunities").select("*").eq("customer_id", id).is("archived_at", null).order("created_at", { ascending: false }),
+    supabase.from("crm_activities").select("*").eq("customer_id", id).is("archived_at", null).order("occurred_at", { ascending: false }).limit(30),
+    supabase.from("client_invitations").select("id, email, token, expires_at, created_at").eq("customer_id", id).is("accepted_at", null).maybeSingle(),
+    supabase.from("client_portal_access").select("id, user_id, created_at").eq("customer_id", id).is("revoked_at", null).maybeSingle(),
+    supabase.from("quotes").select("id, number, title, status").eq("customer_id", id).is("archived_at", null).order("issued_on", { ascending: false }),
+    supabase.from("projects").select("id, number, name, status").eq("customer_id", id).is("archived_at", null).order("created_at", { ascending: false }),
+    supabase.from("invoices").select("id, number, status, issued_at").eq("customer_id", id).is("archived_at", null).order("created_at", { ascending: false }),
+  ]);
+
+  // Les jardins livrables : ceux rattachés à une propriété de ce
+  // client. « Livré » se lit sur `garden_access` — c'est la ligne
+  // `professional` que la livraison nous a laissée, la seule des deux
+  // que l'organisation ait le droit de voir.
+  const siteRows = (sites ?? []) as CustomerSite[];
+  const gardenIds = siteRows.map((s) => s.garden_id).filter((g): g is string => g !== null);
+
+  const [{ data: gardenRows }, { data: gardenAccess }] = await Promise.all([
+    gardenIds.length > 0
+      ? supabase.from("gardens").select("id, name").in("id", gardenIds)
+      : Promise.resolve({ data: [] as { id: string; name: string }[] }),
+    gardenIds.length > 0
+      ? supabase.from("garden_access").select("garden_id, created_at").in("garden_id", gardenIds).eq("role", "professional").is("revoked_at", null)
+      : Promise.resolve({ data: [] as { garden_id: string; created_at: string }[] }),
+  ]);
+
+  const gardenNames = new Map((gardenRows ?? []).map((g) => [g.id, g.name]));
+  const deliveredAt = new Map((gardenAccess ?? []).map((a) => [a.garden_id, a.created_at]));
+
+  const deliverableGardens: DeliverableGarden[] = siteRows
+    .filter((site) => site.garden_id !== null)
+    .map((site) => ({
+      id: site.garden_id as string,
+      name: gardenNames.get(site.garden_id as string) ?? "Jardin",
+      siteName: site.name,
+      deliveredAt: deliveredAt.get(site.garden_id as string) ?? null,
+    }));
 
   const isLead = c.lifecycle_stage === "lead";
 
@@ -204,16 +255,59 @@ export default async function CustomerPage({ params }: PageProps<"/crm/clients/[
           </form>
         </Section>
 
-        <Section title="À venir">
-          <div className="px-4 py-3">
-            <p className="text-sm text-ink-soft">
-              Devis, projets, interventions et factures apparaîtront sur cette
-              fiche aux jalons suivants.
-            </p>
-            <p className="mt-2 text-xs text-ink-faint">
-              Rien n&apos;est affiché tant que le module correspondant n&apos;existe pas.
-            </p>
-          </div>
+        <PortalSection
+          customerId={c.id}
+          customerEmail={c.email}
+          invitation={(invitation ?? null) as PortalInvitation | null}
+          access={(portalAccess ?? null) as PortalAccess | null}
+          gardens={deliverableGardens}
+        />
+      </div>
+
+      {/* §"Une fiche client regroupe … devis, projets, factures." Les
+          trois modules existent maintenant : les lister ici évite de
+          repasser par leur écran et de filtrer à la main. */}
+      <div className="mt-4 grid gap-4 lg:grid-cols-3">
+        <Section title="Devis" count={quotes?.length ?? 0}>
+          <DocumentList
+            items={(quotes ?? []).map((q) => ({
+              id: q.id as string,
+              href: `/devis/${q.id}`,
+              label: q.number as string,
+              detail: q.title as string,
+              status: QUOTE_STATUS_LABELS[q.status as QuoteStatus] ?? (q.status as string),
+              tone: QUOTE_STATUS_TONE[q.status as QuoteStatus] ?? "neutral",
+            }))}
+            empty="Aucun devis."
+          />
+        </Section>
+
+        <Section title="Chantiers" count={projects?.length ?? 0}>
+          <DocumentList
+            items={(projects ?? []).map((p) => ({
+              id: p.id as string,
+              href: `/projets/${p.id}`,
+              label: p.number as string,
+              detail: p.name as string,
+              status: PROJECT_STATUS_LABELS[p.status as ProjectStatus] ?? (p.status as string),
+              tone: PROJECT_STATUS_TONE[p.status as ProjectStatus] ?? "neutral",
+            }))}
+            empty="Aucun chantier."
+          />
+        </Section>
+
+        <Section title="Factures" count={invoices?.length ?? 0}>
+          <DocumentList
+            items={(invoices ?? []).map((i) => ({
+              id: i.id as string,
+              href: `/factures/${i.id}`,
+              label: (i.number as string | null) ?? "Brouillon",
+              detail: i.issued_at ? `Émise le ${formatDate(i.issued_at as string)}` : "Non émise",
+              status: INVOICE_STATUS_LABELS[i.status as InvoiceStatus] ?? (i.status as string),
+              tone: INVOICE_STATUS_TONE[i.status as InvoiceStatus] ?? "neutral",
+            }))}
+            empty="Aucune facture."
+          />
         </Section>
       </div>
 
@@ -255,6 +349,51 @@ export default async function CustomerPage({ params }: PageProps<"/crm/clients/[
         </Card>
       </section>
     </div>
+  );
+}
+
+/**
+ * Trois listes de documents, une seule mise en forme.
+ *
+ * Chacune est courte par nature — un client a rarement plus de quelques
+ * devis — donc pas de pagination : la valeur est de tout voir d'un
+ * coup depuis la fiche, plutôt que d'aller filtrer trois écrans.
+ */
+function DocumentList({
+  items,
+  empty,
+}: {
+  items: {
+    id: string;
+    href: string;
+    label: string;
+    detail: string;
+    status: string;
+    tone: BadgeTone;
+  }[];
+  empty: string;
+}) {
+  if (items.length === 0) {
+    return <p className="px-4 py-5 text-center text-sm text-ink-faint">{empty}</p>;
+  }
+
+  return (
+    <ul className="divide-y divide-line">
+      {items.map((item) => (
+        <li key={item.id}>
+          <Link
+            href={item.href}
+            className="flex items-center gap-2 px-4 py-2.5 transition-colors hover:bg-canvas"
+          >
+            <span className="min-w-0 flex-1">
+              <span className="tabular block text-xs text-ink-faint">{item.label}</span>
+              <span className="block truncate text-sm">{item.detail}</span>
+            </span>
+            <Badge tone={item.tone}>{item.status}</Badge>
+          </Link>
+        </li>
+      ))}
+    </ul>
   );
 }
 
