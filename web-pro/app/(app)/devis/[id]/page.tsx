@@ -11,6 +11,7 @@ import {
 import { QuoteEditor } from "./QuoteEditor";
 import { StatusBar } from "./StatusBar";
 import { ToProjectBar } from "./ToProjectBar";
+import { ToInvoiceBar } from "./ToInvoiceBar";
 
 /**
  * §11E — la fiche d'un devis.
@@ -41,7 +42,7 @@ export default async function QuotePage({ params }: PageProps<"/devis/[id]">) {
 
   const [
     { data: sections }, { data: lines }, { data: totals }, { data: revisions },
-    { data: project }, catalog,
+    { data: project }, { data: invoice }, catalog,
   ] = await Promise.all([
       supabase.from("quote_sections").select("*").eq("quote_id", id).order("position"),
       supabase.from("quote_lines").select("*").eq("quote_id", id).order("position"),
@@ -57,10 +58,18 @@ export default async function QuotePage({ params }: PageProps<"/devis/[id]">) {
         .eq("quote_id", id)
         .is("archived_at", null)
         .maybeSingle(),
+      supabase
+        .from("invoices")
+        .select("id, number, status")
+        .eq("quote_id", id)
+        .is("archived_at", null)
+        .neq("status", "cancelled")
+        .maybeSingle(),
       listCatalog(),
     ]);
 
   const existingProject = project as { id: string; number: string } | null;
+  const existingInvoice = invoice as { id: string; number: string | null; status: string } | null;
 
   const customer = quote.crm_customers;
   const editable = isEditable(quote.status);
@@ -113,7 +122,20 @@ export default async function QuotePage({ params }: PageProps<"/devis/[id]">) {
         pas commandés.
       */}
       {quote.status === "accepted" && (
-        <ToProjectBar quoteId={quote.id} existingProject={existingProject} />
+        <>
+          <ToProjectBar quoteId={quote.id} existingProject={existingProject} />
+          {/*
+            Le pont vers la facture manquait à l'écran : la fonction
+            existait en base depuis le Milestone 10, sans bouton pour
+            l'appeler.
+          */}
+          <ToInvoiceBar
+            quoteId={quote.id}
+            existingInvoice={existingInvoice}
+            totalCents={(totals?.total_excluding_vat_cents as number) ?? 0}
+            globalDiscountPercent={quote.global_discount_percent}
+          />
+        </>
       )}
 
       {!editable && (

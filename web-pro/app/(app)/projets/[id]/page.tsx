@@ -14,6 +14,7 @@ import { ProjectHeader } from "./ProjectHeader";
 import { Phases } from "./Phases";
 import { CostTracking } from "./CostTracking";
 import { Photos } from "./Photos";
+import { ToInvoiceBar } from "./ToInvoiceBar";
 
 /**
  * §11F — la fiche d'un chantier.
@@ -44,6 +45,7 @@ export default async function ProjectPage({ params }: PageProps<"/projets/[id]">
   const [
     { data: phases }, { data: tasks }, { data: resources },
     { data: costs }, { data: summary }, { data: labor }, { data: suppliers }, photos,
+    { data: invoice },
   ] = await Promise.all([
     supabase.from("project_phases").select("*").eq("project_id", id).order("position"),
     supabase.from("project_tasks").select("*").eq("project_id", id).order("position"),
@@ -53,6 +55,13 @@ export default async function ProjectPage({ params }: PageProps<"/projets/[id]">
     supabase.from("project_labor_from_time").select("*").eq("project_id", id).maybeSingle(),
     supabase.from("suppliers").select("id, name").is("archived_at", null).order("name"),
     listProjectPhotos(id),
+    supabase
+      .from("invoices")
+      .select("id, number")
+      .eq("project_id", id)
+      .is("archived_at", null)
+      .neq("status", "cancelled")
+      .maybeSingle(),
   ]);
 
   const allPhases = (phases ?? []) as ProjectPhase[];
@@ -105,6 +114,15 @@ export default async function ProjectPage({ params }: PageProps<"/projets/[id]">
       </div>
 
       <ProjectHeader project={project} />
+
+      <ToInvoiceBar
+        projectId={id}
+        quote={project.quotes}
+        existingInvoice={invoice as { id: string; number: string | null } | null}
+        status={project.status}
+        plannedCents={planned}
+        actualCents={actual}
+      />
 
       {/*
         Avancement et dépense côte à côte, jamais l'un déduit de l'autre.

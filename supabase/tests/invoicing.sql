@@ -272,6 +272,61 @@ from public.cash_flow_entries
 where organization_id = (select v from ids where k='org') and direction = 'out';
 
 -- ============================================================
+-- Du devis à la facture
+-- ============================================================
+-- Le pont existait en base depuis le début de ce milestone, mais aucun
+-- bouton ne l’appelait — signalé à l’usage. Ces tests vérifient ce que
+-- le bouton déclenche.
+
+insert into ids select 'devis', gen_random_uuid();
+insert into public.quotes (id, organization_id, customer_id, number, title, status, global_discount_percent)
+select (select v from ids where k='devis'), (select v from ids where k='org'),
+       (select v from ids where k='client'),
+       public.next_quote_number((select v from ids where k='org')),
+       'Jardin complet', 'accepted', 10;
+
+insert into public.quote_lines
+  (organization_id, quote_id, description, unit, quantity,
+   unit_cost_cents, unit_sale_price_cents, vat_rate, position)
+select (select v from ids where k='org'), (select v from ids where k='devis'),
+       'Terrasse', 'm2', 10, 3000, 10000, 20, 0;
+
+insert into ids select 'factureDevis', public.create_invoice_from_quote((select v from ids where k='devis'));
+
+insert into res
+select 'La facture reprend les lignes du devis', '1', count(*)::text
+from public.invoice_lines where invoice_id = (select v from ids where k='factureDevis');
+
+-- 10 x 100,00 = 1 000,00, moins 10 % de remise globale = 900,00 HT.
+-- La remise est répercutée sur le prix unitaire : une facture n’a pas
+-- de remise globale, et la perdre changerait le montant accepté.
+insert into res
+select 'La remise globale du devis est répercutée', '90000',
+       total_excluding_vat_cents::text
+from public.invoice_totals where invoice_id = (select v from ids where k='factureDevis');
+
+insert into res
+select 'On facture le PRIX DE VENTE, pas le coût', 'oui',
+       case when (select total_excluding_vat_cents from public.invoice_totals
+                  where invoice_id = (select v from ids where k='factureDevis')) > 30000
+            then 'oui' else 'NON — facturé au prix d''achat' end;
+
+insert into res
+select 'La facture reste rattachée à son devis', 'oui',
+       case when quote_id = (select v from ids where k='devis') then 'oui' else 'non' end
+from public.invoices where id = (select v from ids where k='factureDevis');
+
+insert into res
+select 'Refacturer le même devis rend la même facture', 'identique',
+       case when public.create_invoice_from_quote((select v from ids where k='devis'))
+                 = (select v from ids where k='factureDevis')
+            then 'identique' else 'DOUBLON' end;
+
+insert into res
+select 'Et il n''y a toujours qu''une facture pour ce devis', '1', count(*)::text
+from public.invoices where quote_id = (select v from ids where k='devis');
+
+-- ============================================================
 -- Isolement
 -- ============================================================
 reset role;

@@ -362,3 +362,68 @@ export async function refreshOverdue(): Promise<number> {
   });
   return (data as number) ?? 0;
 }
+
+/**
+ * Facturer un chantier.
+ *
+ * Un chantier terminé se facture au DEVIS qui l'a fait naître, pas à ce
+ * qu'il a coûté : les ressources d'un chantier sont au prix d'achat, et
+ * facturer à ce prix-là reviendrait à travailler gratuitement. C'est
+ * exactement l'inverse de la règle du Milestone 6, et pour la même
+ * raison — coût et prix de vente ne se confondent jamais.
+ *
+ * Sans devis, on ne peut inventer aucun montant : la facture est créée
+ * vide, rattachée au chantier et à son client, et l'écran dit pourquoi.
+ */
+export async function invoiceFromProject(formData: FormData) {
+  const organization = await requireOrganization();
+  const projectId = String(formData.get("project_id") ?? "");
+  if (!projectId) return;
+
+  const supabase = await createClient();
+  const { data: project } = await supabase
+    .from("projects")
+    .select("id, customer_id, quote_id, name")
+    .eq("id", projectId)
+    .maybeSingle();
+  if (!project) return;
+
+  // Une facture déjà rattachée à ce chantier : on y retourne plutôt que
+  // d'en fabriquer une seconde.
+  const { data: existing } = await supabase
+    .from("invoices")
+    .select("id")
+    .eq("project_id", projectId)
+    .is("archived_at", null)
+    .neq("status", "cancelled")
+    .maybeSingle();
+  if (existing) redirect(`/factures/${existing.id}`);
+
+  if (project.quote_id) {
+    const { data, error } = await supabase.rpc("create_invoice_from_quote", {
+      p_quote_id: project.quote_id,
+    });
+    if (error) throw new Error(error.message);
+    revalidatePath("/factures");
+    revalidatePath(`/projets/${projectId}`);
+    redirect(`/factures/${data as string}`);
+  }
+
+  const { data: user } = await supabase.auth.getUser();
+  const { data, error } = await supabase
+    .from("invoices")
+    .insert({
+      organization_id: organization.organizationId,
+      customer_id: project.customer_id,
+      project_id: projectId,
+      introduction: project.name,
+      created_by: user.user?.id ?? null,
+    })
+    .select("id")
+    .single();
+  if (error) throw new Error(error.message);
+
+  revalidatePath("/factures");
+  revalidatePath(`/projets/${projectId}`);
+  redirect(`/factures/${data.id}`);
+}
