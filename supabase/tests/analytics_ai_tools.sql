@@ -264,6 +264,58 @@ select 'Sans devis envoyé, la conversion est inconnue — pas 0 %', 'NULL',
                    (select v from ids where k='org'),
                    current_date - 3650, current_date - 3600)), 'NULL');
 
+-- ------------------------------------------------------------
+-- Un chantier que personne n'a estimé
+-- ------------------------------------------------------------
+-- L'efficacité main-d'œuvre n'y est pas de 0 % : elle est INCONNUE.
+-- Zéro se lirait « équipe catastrophique » là où la vérité est qu'il
+-- n'y a rien à comparer. Cas trouvé en exécutant la fonction sur des
+-- données réelles, où beaucoup de chantiers n'ont aucune ressource
+-- prévue — le jeu de test, lui, en prévoyait toujours.
+reset role;
+select set_config('request.jwt.claims',
+  json_build_object('sub','ddddddd1-0000-4000-8000-0000000000d1')::text, true);
+insert into ids select 'orgVide', public.create_professional_organization('Sans Estimation','landscaper');
+set local role authenticated;
+
+insert into ids select 'clientVide', gen_random_uuid();
+insert into public.crm_customers (id, organization_id, lifecycle_stage, display_name)
+select (select v from ids where k='clientVide'), (select v from ids where k='orgVide'),
+       'customer', 'Client pressé';
+
+insert into ids select 'empVide', gen_random_uuid();
+insert into public.employees (id, organization_id, first_name, last_name, hourly_cost_cents)
+select (select v from ids where k='empVide'), (select v from ids where k='orgVide'),
+       'Sam', 'Terrain', 2500;
+
+insert into ids select 'p3', gen_random_uuid();
+insert into public.projects (id, organization_id, customer_id, number, name,
+                             status, actual_start_on, actual_end_on)
+select (select v from ids where k='p3'), (select v from ids where k='orgVide'),
+       (select v from ids where k='clientVide'),
+       public.next_project_number((select v from ids where k='orgVide')),
+       'Chantier jamais estimé', 'completed', current_date - 6, current_date - 2;
+
+-- Des heures réelles, aucune heure prévue.
+insert into public.time_entries
+  (organization_id, employee_id, project_id, worked_on, hours, hourly_cost_cents, kind, validated)
+select (select v from ids where k='orgVide'), (select v from ids where k='empVide'),
+       (select v from ids where k='p3'), current_date - 4, 5, 2500, 'work', true;
+
+insert into res
+select 'Sans heures prévues, l''efficacité est inconnue — pas 0 %', 'NULL',
+       coalesce((select labor_efficiency_percent::text
+                 from public.pro_analytics_landscaper(
+                   (select v from ids where k='orgVide'), current_date - 30, current_date)), 'NULL');
+
+-- Les heures réelles, elles, restent comptées : c'est bien l'absence de
+-- COMPARAISON qu'on signale, pas l'absence de travail.
+insert into res
+select 'Mais les heures pointées sont bien là', '5.00',
+       (select labor_actual_hours::text
+        from public.pro_analytics_landscaper(
+          (select v from ids where k='orgVide'), current_date - 30, current_date));
+
 -- ============================================================
 -- §11T — les KPI de la pépinière
 -- ============================================================
