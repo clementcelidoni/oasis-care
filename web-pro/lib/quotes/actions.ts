@@ -4,6 +4,7 @@ import { revalidatePath } from "next/cache";
 import { redirect } from "next/navigation";
 import { createClient } from "@/lib/supabase/server";
 import { requireOrganization } from "@/lib/auth/organization";
+import { recordAudit } from "@/lib/audit/record";
 import {
   inputToCents, parseQuantity, COST_KIND_FROM_ITEM_TYPE,
   type QuoteStatus, type CatalogItemType,
@@ -94,6 +95,7 @@ export async function updateQuote(formData: FormData) {
  * Aucun courriel n'est émis — voir l'en-tête du fichier.
  */
 export async function setQuoteStatus(formData: FormData) {
+  const organization = await requireOrganization();
   const quoteId = String(formData.get("quote_id") ?? "");
   const status = String(formData.get("status") ?? "") as QuoteStatus;
   if (!quoteId || !status) return;
@@ -108,6 +110,14 @@ export async function setQuoteStatus(formData: FormData) {
   const supabase = await createClient();
   const { error } = await supabase.from("quotes").update(patch).eq("id", quoteId);
   if (error) throw new Error(error.message);
+
+  // Trois basculements se tracent : l'envoi et la décision du client.
+  // Les autres changements de statut sont du travail interne.
+  const audited = { sent: "quoteSent", accepted: "quoteAccepted", rejected: "quoteRejected" } as const;
+  const action = audited[status as keyof typeof audited];
+  if (action) {
+    await recordAudit(organization.organizationId, action, "quote", quoteId, { status });
+  }
 
   revalidatePath(`/devis/${quoteId}`);
   revalidatePath("/devis");

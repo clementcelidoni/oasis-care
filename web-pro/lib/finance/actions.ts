@@ -4,6 +4,7 @@ import { revalidatePath } from "next/cache";
 import { redirect } from "next/navigation";
 import { createClient } from "@/lib/supabase/server";
 import { requireOrganization } from "@/lib/auth/organization";
+import { recordAudit } from "@/lib/audit/record";
 import { inputToCents, parseQuantity } from "@/lib/quotes/types";
 
 /**
@@ -143,30 +144,51 @@ export async function deleteInvoiceLine(formData: FormData) {
  * Rien n'est envoyé. L'utilisateur transmet la facture lui-même.
  */
 export async function issueInvoice(formData: FormData) {
+  const organization = await requireOrganization();
   const id = String(formData.get("invoice_id") ?? "");
   if (!id) return;
 
   const supabase = await createClient();
-  const { error } = await supabase.rpc("issue_invoice", {
+  const { data: number, error } = await supabase.rpc("issue_invoice", {
     p_invoice_id: id,
     p_due_in_days: Math.round(parseQuantity(String(formData.get("due_in_days") ?? "30"))) || 30,
   });
   if (error) throw new Error(error.message);
+
+  // §SECURITY « audit actions critiques ». L'émission est le moment où
+  // une facture devient un document opposable : c'est celui qu'il faut
+  // pouvoir dater et attribuer.
+  await recordAudit(organization.organizationId, "invoiceIssued", "invoice", id, {
+    number: number as string,
+  });
 
   revalidatePath(`/factures/${id}`);
   revalidatePath("/factures");
 }
 
 export async function cancelInvoice(formData: FormData) {
+  const organization = await requireOrganization();
   const id = String(formData.get("invoice_id") ?? "");
   if (!id) return;
 
   const supabase = await createClient();
+  const { data: before } = await supabase
+    .from("invoices")
+    .select("number, status")
+    .eq("id", id)
+    .maybeSingle();
+
   const { error } = await supabase
     .from("invoices")
     .update({ status: "cancelled", updated_at: new Date().toISOString() })
     .eq("id", id);
   if (error) throw new Error(error.message);
+
+  await recordAudit(
+    organization.organizationId, "invoiceCancelled", "invoice", id,
+    { status: "cancelled" },
+    (before ?? undefined) as Record<string, unknown> | undefined,
+  );
 
   revalidatePath(`/factures/${id}`);
   revalidatePath("/factures");
@@ -288,6 +310,11 @@ export async function recordPayment(formData: FormData) {
     p_amount_cents: amount,
   });
   if (allocationError) throw new Error(allocationError.message);
+
+  await recordAudit(organization.organizationId, "paymentRecorded", "invoice", invoiceId, {
+    amount_cents: amount,
+    payment_id: payment.id,
+  });
 
   revalidatePath(`/factures/${invoiceId}`);
   revalidatePath("/factures");

@@ -229,6 +229,11 @@ export function clientInvoiceTotals(
 /**
  * Les statuts, dits au client.
  *
+ * Les clés sont celles des contraintes `check` de la base — vérifiées
+ * dans le catalogue, pas devinées. Une clé à côté ne casse rien : elle
+ * fait retomber l'écran sur la valeur brute, et le client lit
+ * « rejected » en anglais sur son devis.
+ *
  * Ce ne sont pas les libellés internes. « Relancé » se dit à
  * l'entreprise ; au client on dit « À régler », parce qu'il sait déjà
  * qu'on l'a relancé.
@@ -237,33 +242,35 @@ export const CLIENT_QUOTE_STATUS_LABELS: Record<string, string> = {
   sent: "À examiner",
   viewed: "À examiner",
   accepted: "Accepté",
-  refused: "Refusé",
+  rejected: "Refusé",
   expired: "Expiré",
+  cancelled: "Annulé",
 };
 
 export const CLIENT_QUOTE_STATUS_TONE: Record<string, BadgeTone> = {
   sent: "info",
   viewed: "info",
   accepted: "positive",
-  refused: "critical",
+  rejected: "critical",
   expired: "neutral",
+  cancelled: "neutral",
 };
 
 export const CLIENT_INVOICE_STATUS_LABELS: Record<string, string> = {
   issued: "À régler",
-  sent: "À régler",
   partiallyPaid: "Partiellement réglée",
   paid: "Réglée",
-  late: "En retard",
+  overdue: "En retard",
+  credited: "Avoir émis",
   cancelled: "Annulée",
 };
 
 export const CLIENT_INVOICE_STATUS_TONE: Record<string, BadgeTone> = {
   issued: "info",
-  sent: "info",
   partiallyPaid: "warning",
   paid: "positive",
-  late: "critical",
+  overdue: "critical",
+  credited: "neutral",
   cancelled: "neutral",
 };
 

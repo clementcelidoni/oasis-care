@@ -3,6 +3,7 @@
 import { revalidatePath } from "next/cache";
 import { createClient } from "@/lib/supabase/server";
 import { requireOrganization } from "@/lib/auth/organization";
+import { recordAudit } from "@/lib/audit/record";
 
 /**
  * §11S côté PROFESSIONNEL — inviter, livrer, révoquer.
@@ -26,7 +27,7 @@ import { requireOrganization } from "@/lib/auth/organization";
  * professionnel le transmet comme il transmet déjà ses devis.
  */
 export async function inviteClient(formData: FormData) {
-  await requireOrganization();
+  const organization = await requireOrganization();
 
   const customerId = String(formData.get("customer_id") ?? "");
   const email = String(formData.get("email") ?? "").trim();
@@ -38,6 +39,13 @@ export async function inviteClient(formData: FormData) {
     p_email: email,
   });
   if (error) throw new Error(error.message);
+
+  // Le jeton lui-même ne va PAS dans le journal : il ouvre l'accès aux
+  // documents du client, et un journal lisible par toute l'équipe n'est
+  // pas l'endroit où le ranger.
+  await recordAudit(organization.organizationId, "portalInvited", "customer", customerId, {
+    email,
+  });
 
   revalidatePath(`/crm/clients/${customerId}`);
 }
@@ -73,7 +81,7 @@ export async function cancelInvitation(formData: FormData) {
  * l'inverse de ce que « livrer » veut dire.
  */
 export async function revokePortalAccess(formData: FormData) {
-  await requireOrganization();
+  const organization = await requireOrganization();
 
   const accessId = String(formData.get("access_id") ?? "");
   const customerId = String(formData.get("customer_id") ?? "");
@@ -85,6 +93,10 @@ export async function revokePortalAccess(formData: FormData) {
     .update({ revoked_at: new Date().toISOString() })
     .eq("id", accessId);
   if (error) throw new Error(error.message);
+
+  await recordAudit(organization.organizationId, "portalRevoked", "customer", customerId, {
+    access_id: accessId,
+  });
 
   revalidatePath(`/crm/clients/${customerId}`);
 }
@@ -102,7 +114,7 @@ export async function revokePortalAccess(formData: FormData) {
  * CONSERVE".
  */
 export async function deliverGarden(formData: FormData) {
-  await requireOrganization();
+  const organization = await requireOrganization();
 
   const gardenId = String(formData.get("garden_id") ?? "");
   const customerId = String(formData.get("customer_id") ?? "");
@@ -114,6 +126,12 @@ export async function deliverGarden(formData: FormData) {
     p_customer_id: customerId,
   });
   if (error) throw new Error(error.message);
+
+  // La livraison fait CHANGER LE JARDIN DE PROPRIÉTAIRE. C'est
+  // l'opération la moins réversible du produit : elle mérite sa ligne.
+  await recordAudit(organization.organizationId, "gardenDelivered", "garden", gardenId, {
+    customer_id: customerId,
+  });
 
   revalidatePath(`/crm/clients/${customerId}`);
   // Le jardin a quitté l'espace de l'organisation : la liste du Digital

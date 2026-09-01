@@ -9,6 +9,7 @@ import {
 } from "@/lib/auth/permissions";
 import { OrganizationForm } from "./OrganizationForm";
 import { IdentityForm, type OrganizationIdentity } from "./IdentityForm";
+import { AuditLog, type AuditEvent } from "./AuditLog";
 
 /**
  * Organisation, membres et droits — la partie visible de ce que
@@ -24,7 +25,7 @@ export default async function SettingsPage() {
   if (!organization) return null;
 
   const supabase = await createClient();
-  const [{ data: members }, { data: identity }] = await Promise.all([
+  const [{ data: members }, { data: identity }, { data: auditEvents }] = await Promise.all([
     supabase
       .from("organization_members")
       .select("id, role, created_at, user_id")
@@ -37,6 +38,11 @@ export default async function SettingsPage() {
       )
       .eq("id", organization.organizationId)
       .maybeSingle(),
+    supabase
+      .from("audit_events")
+      .select("id, action, entity_type, entity_id, new_value, source, occurred_at")
+      .order("occurred_at", { ascending: false })
+      .limit(50),
   ]);
 
   const canEditIdentity = organization.permissions.includes("organization.manageUsers");
@@ -95,6 +101,10 @@ export default async function SettingsPage() {
           base.
         </p>
       </Card>
+
+      <div className="mb-4">
+        <AuditLog events={(auditEvents ?? []) as AuditEvent[]} />
+      </div>
 
       <Card className="p-5">
         <h2 className="mb-1 text-sm font-semibold">Vos droits</h2>
