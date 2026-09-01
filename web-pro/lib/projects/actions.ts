@@ -4,7 +4,9 @@ import { revalidatePath } from "next/cache";
 import { redirect } from "next/navigation";
 import { createClient } from "@/lib/supabase/server";
 import { getActiveOrganization, requireOrganization } from "@/lib/auth/organization";
-import { inputToCents, parseQuantity } from "@/lib/quotes/types";
+import {
+  inputToCents, parseQuantity, parseQuantityOr,
+} from "@/lib/quotes/types";
 import { DEFAULT_PHASES } from "./types";
 
 /**
@@ -273,7 +275,7 @@ export async function addCost(formData: FormData) {
     kind: text(formData, "kind") ?? "other",
     description,
     unit: text(formData, "unit") ?? "u",
-    quantity: parseQuantity(String(formData.get("quantity") ?? "1")) || 1,
+    quantity: parseQuantityOr(String(formData.get("quantity") ?? "1"), 1),
     unit_cost_cents: inputToCents(String(formData.get("unit_cost") ?? "0")),
     incurred_on: text(formData, "incurred_on") ?? new Date().toISOString().slice(0, 10),
     invoice_reference: text(formData, "invoice_reference"),

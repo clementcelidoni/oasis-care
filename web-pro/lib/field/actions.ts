@@ -4,7 +4,9 @@ import { revalidatePath } from "next/cache";
 import { redirect } from "next/navigation";
 import { createClient } from "@/lib/supabase/server";
 import { requireOrganization } from "@/lib/auth/organization";
-import { inputToCents, parseQuantity } from "@/lib/quotes/types";
+import {
+  inputToCents, parseQuantity, parseQuantityOr,
+} from "@/lib/quotes/types";
 import { keepScheduleOrdered } from "./types";
 
 /**
@@ -373,7 +375,7 @@ export async function addInterventionMaterial(formData: FormData) {
     organization_id: organization.organizationId,
     intervention_id: interventionId,
     description,
-    quantity: parseQuantity(String(formData.get("quantity") ?? "1")) || 1,
+    quantity: parseQuantityOr(String(formData.get("quantity") ?? "1"), 1),
     unit: text(formData, "unit") ?? "u",
   });
   if (error) throw new Error(error.message);

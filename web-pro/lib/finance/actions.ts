@@ -5,7 +5,9 @@ import { redirect } from "next/navigation";
 import { createClient } from "@/lib/supabase/server";
 import { requireOrganization } from "@/lib/auth/organization";
 import { recordAudit } from "@/lib/audit/record";
-import { inputToCents, parseQuantity } from "@/lib/quotes/types";
+import {
+  inputToCents, parseQuantity, parseQuantityOr, parseVatRate,
+} from "@/lib/quotes/types";
 
 /**
  * §11O facturation, §DÉPENSES / TRÉSORERIE.
@@ -113,9 +115,9 @@ export async function addInvoiceLine(formData: FormData) {
     position: (last?.position ?? -1) + 1,
     description,
     unit: text(formData, "unit") ?? "u",
-    quantity: parseQuantity(String(formData.get("quantity") ?? "1")) || 1,
+    quantity: parseQuantityOr(String(formData.get("quantity") ?? "1"), 1),
     unit_price_cents: inputToCents(String(formData.get("unit_price") ?? "0")),
-    vat_rate: parseQuantity(String(formData.get("vat_rate") ?? "20")) || 20,
+    vat_rate: parseVatRate(String(formData.get("vat_rate") ?? "20")),
   });
   if (error) throw new Error(error.message);
 
@@ -253,7 +255,7 @@ export async function createCreditNote(formData: FormData) {
     description,
     quantity: 1,
     unit_price_cents: amount,
-    vat_rate: parseQuantity(String(formData.get("vat_rate") ?? "20")) || 20,
+    vat_rate: parseVatRate(String(formData.get("vat_rate") ?? "20")),
   });
   if (lineError) throw new Error(lineError.message);
 

@@ -161,10 +161,52 @@ export function inputToCents(value: string): number {
   return Math.round(euros * 100);
 }
 
-export function parseQuantity(value: string): number {
+/**
+ * Un nombre saisi à la française, ou `null` si ce n'en est pas un.
+ *
+ * La distinction entre « zéro » et « illisible » est tout l'objet de
+ * cette fonction, et elle a coûté cher : les Server Actions écrivaient
+ * `parseQuantity(saisie) || 20` pour se prémunir d'une saisie
+ * incompréhensible. Mais `0 || 20` vaut 20. Un artisan en franchise en
+ * base de TVA qui choisissait « 0 % » dans la liste — la liste la
+ * PROPOSE — voyait sa facture émise à 20 %, sans le moindre message.
+ *
+ * Six endroits faisaient ça, sur les devis, les factures, le catalogue
+ * et les commandes. Le repli doit s'appliquer à ce qui n'est PAS un
+ * nombre, jamais à un nombre qui vaut zéro.
+ */
+export function parseNumber(value: string): number | null {
   const normalised = value.replace(/\s/g, "").replace(",", ".");
   const n = Number.parseFloat(normalised);
-  return Number.isFinite(n) ? n : 0;
+  return Number.isFinite(n) ? n : null;
+}
+
+export function parseQuantity(value: string): number {
+  return parseNumber(value) ?? 0;
+}
+
+/**
+ * Une quantité, avec un repli si la saisie est illisible.
+ *
+ * Les nombres NÉGATIFS passent : une ligne de facture à quantité
+ * négative est une remise ou une reprise, et c'est légitime. Seule une
+ * saisie qui n'est pas un nombre retombe sur le repli.
+ */
+export function parseQuantityOr(value: string, fallback: number): number {
+  return parseNumber(value) ?? fallback;
+}
+
+/**
+ * Un taux de TVA.
+ *
+ * Zéro est un taux valable — franchise en base, autoliquidation,
+ * exportation. Un taux NÉGATIF n'existe pas : il retombe sur le repli,
+ * comme une saisie illisible.
+ */
+export function parseVatRate(value: string, fallback = 20): number {
+  const rate = parseNumber(value);
+  if (rate === null || rate < 0) return fallback;
+  return rate;
 }
 
 const PERCENT = new Intl.NumberFormat("fr-FR", { maximumFractionDigits: 1 });

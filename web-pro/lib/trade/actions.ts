@@ -4,7 +4,9 @@ import { revalidatePath } from "next/cache";
 import { redirect } from "next/navigation";
 import { createClient } from "@/lib/supabase/server";
 import { requireOrganization } from "@/lib/auth/organization";
-import { inputToCents, parseQuantity } from "@/lib/quotes/types";
+import {
+  inputToCents, parseQuantity, parseQuantityOr, parseVatRate,
+} from "@/lib/quotes/types";
 
 /**
  * §11M achats, §11N commandes clients.
@@ -170,9 +172,9 @@ export async function addPurchaseLine(formData: FormData) {
     position: (last?.position ?? -1) + 1,
     description,
     unit: text(formData, "unit") ?? "u",
-    quantity: parseQuantity(String(formData.get("quantity") ?? "1")) || 1,
+    quantity: parseQuantityOr(String(formData.get("quantity") ?? "1"), 1),
     unit_cost_cents: inputToCents(String(formData.get("unit_cost") ?? "0")),
-    vat_rate: parseQuantity(String(formData.get("vat_rate") ?? "20")) || 20,
+    vat_rate: parseVatRate(String(formData.get("vat_rate") ?? "20")),
     is_plant: isPlant,
     // Renseignés seulement pour une ligne de végétaux : ils servent à
     // fabriquer le lot à la réception sans tout ressaisir.
@@ -327,7 +329,7 @@ export async function addSalesLine(formData: FormData) {
   const description = text(formData, "description");
   if (!orderId || !description) return;
 
-  const quantity = parseQuantity(String(formData.get("quantity") ?? "1")) || 1;
+  const quantity = parseQuantityOr(String(formData.get("quantity") ?? "1"), 1);
   const lotId = text(formData, "lot_id");
   const supabase = await createClient();
 
@@ -361,7 +363,7 @@ export async function addSalesLine(formData: FormData) {
     unit: text(formData, "unit") ?? "u",
     quantity,
     unit_sale_price_cents: inputToCents(String(formData.get("unit_sale_price") ?? "0")),
-    vat_rate: parseQuantity(String(formData.get("vat_rate") ?? "20")) || 20,
+    vat_rate: parseVatRate(String(formData.get("vat_rate") ?? "20")),
   });
   if (error) throw new Error(error.message);
 

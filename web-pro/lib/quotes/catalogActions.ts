@@ -3,7 +3,9 @@
 import { revalidatePath } from "next/cache";
 import { createClient } from "@/lib/supabase/server";
 import { getActiveOrganization, requireOrganization } from "@/lib/auth/organization";
-import { inputToCents, parseQuantity, type CatalogItem } from "./types";
+import {
+  inputToCents, type CatalogItem, parseVatRate,
+} from "./types";
 
 /**
  * §11D — bibliothèque de prix.
@@ -143,7 +145,7 @@ export async function createCatalogItem(formData: FormData) {
         p_catalog_item_id: data.id,
         p_purchase_price_cents: inputToCents(String(formData.get("purchase_price") ?? "0")),
         p_sale_price_cents: inputToCents(sale),
-        p_vat_rate: parseQuantity(String(formData.get("vat_rate") ?? "20")) || 20,
+        p_vat_rate: parseVatRate(String(formData.get("vat_rate") ?? "20")),
       });
     }
   }
@@ -164,7 +166,7 @@ export async function setCatalogPrice(formData: FormData) {
     p_catalog_item_id: catalogItemId,
     p_purchase_price_cents: inputToCents(String(formData.get("purchase_price") ?? "0")),
     p_sale_price_cents: inputToCents(String(formData.get("sale_price") ?? "0")),
-    p_vat_rate: parseQuantity(String(formData.get("vat_rate") ?? "20")) || 20,
+    p_vat_rate: parseVatRate(String(formData.get("vat_rate") ?? "20")),
   });
   if (error) throw new Error(error.message);
 

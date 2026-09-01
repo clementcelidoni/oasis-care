@@ -6,8 +6,7 @@ import { createClient } from "@/lib/supabase/server";
 import { requireOrganization } from "@/lib/auth/organization";
 import { recordAudit } from "@/lib/audit/record";
 import {
-  inputToCents, parseQuantity, COST_KIND_FROM_ITEM_TYPE,
-  type QuoteStatus, type CatalogItemType,
+  inputToCents, parseQuantity, COST_KIND_FROM_ITEM_TYPE, type QuoteStatus, type CatalogItemType, parseQuantityOr, parseVatRate,
 } from "./types";
 
 /**
@@ -253,7 +252,7 @@ export async function addLine(formData: FormData) {
     position: (last?.position ?? -1) + 1,
     description,
     unit,
-    quantity: parseQuantity(String(formData.get("quantity") ?? "1")) || 1,
+    quantity: parseQuantityOr(String(formData.get("quantity") ?? "1"), 1),
     unit_cost_cents: costCents,
     unit_sale_price_cents: saleCents,
     vat_rate: vatRate,
@@ -281,7 +280,7 @@ export async function updateLine(formData: FormData) {
   if (formData.has("unit_sale_price")) {
     patch.unit_sale_price_cents = inputToCents(String(formData.get("unit_sale_price") ?? "0"));
   }
-  if (formData.has("vat_rate")) patch.vat_rate = parseQuantity(String(formData.get("vat_rate") ?? "20"));
+  if (formData.has("vat_rate")) patch.vat_rate = parseVatRate(String(formData.get("vat_rate") ?? "20"));
   if (formData.has("discount_percent")) {
     const raw = parseQuantity(String(formData.get("discount_percent") ?? "0"));
     patch.discount_percent = Math.min(100, Math.max(0, raw));
