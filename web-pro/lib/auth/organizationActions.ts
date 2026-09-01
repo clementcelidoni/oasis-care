@@ -2,7 +2,9 @@
 
 import { revalidatePath } from "next/cache";
 import { createClient } from "@/lib/supabase/server";
-import { requireOrganization } from "./organization";
+import { cookies } from "next/headers";
+import { redirect } from "next/navigation";
+import { requireOrganization, ACTIVE_ORGANIZATION_COOKIE } from "./organization";
 import { BUSINESS_TYPES, type BusinessType } from "./permissions";
 
 /**
@@ -101,4 +103,32 @@ export async function updateOrganizationIdentity(formData: FormData) {
   // L'entête change sur chaque devis et chaque facture déjà émis.
   revalidatePath("/devis", "layout");
   revalidatePath("/factures", "layout");
+}
+
+/**
+ * §13 COMPANY SWITCHER — basculer d'entreprise.
+ *
+ * Le cookie ne fait qu'exprimer une PRÉFÉRENCE : `getActiveOrganization`
+ * la confronte aux appartenances réelles avant de la suivre. Poser le
+ * cookie d'une entreprise dont on n'est pas membre ne donne donc accès
+ * à rien — on retombe sur la sienne, et RLS refuserait de toute façon.
+ */
+export async function switchOrganization(formData: FormData) {
+  const organizationId = String(formData.get("organization_id") ?? "");
+  if (!organizationId) return;
+
+  const store = await cookies();
+  store.set(ACTIVE_ORGANIZATION_COOKIE, organizationId, {
+    path: "/",
+    maxAge: 60 * 60 * 24 * 365,
+    sameSite: "lax",
+    httpOnly: true,
+  });
+
+  // Toute l'application dépend de l'entreprise active : le menu, les
+  // permissions, chaque écran. On invalide la mise en page entière.
+  revalidatePath("/", "layout");
+  // Et on repart de l'accueil : la page en cours parle peut-être d'un
+  // devis de l'autre entreprise, qui vient de devenir un 404.
+  redirect("/");
 }

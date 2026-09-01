@@ -1,37 +1,69 @@
 import type { BusinessType, Permission } from "@/lib/auth/permissions";
+import type { IconName } from "@/components/shell/Icon";
 
 /**
- * §"NAVIGATION WEB" — the full desktop navigation, with the rule that
- * follows it: "Masquer intelligemment les modules inutiles selon type
- * d'entreprise, rôle, permissions."
+ * §5 SIDEBAR — la navigation, en SECTIONS.
  *
- * A section with no `permission` is visible to any member. A section
- * with no `businessTypes` suits every kind of company.
+ * L'ancienne version était une liste plate de quinze entrées, dont
+ * certaines portaient des sous-entrées. §5 demande autre chose : des
+ * groupes nommés (PRINCIPAL, CRM, PROJETS, NURSERY, GESTION, ANALYSE,
+ * ENTREPRISE) qui donnent une carte mentale du produit dès le premier
+ * regard. Quinze liens à la file se lisent un par un ; sept groupes se
+ * balayent.
  *
- * Sections whose module does not exist yet are marked `milestone`, so
- * the sidebar can show them as coming rather than linking to a 404 —
- * see `isAvailable`. Showing the shape of the product early is useful;
- * pretending a page exists is not.
+ * La règle de masquage ne change pas — §"Masquer intelligemment les
+ * modules inutiles selon type d'entreprise, rôle, permissions" — et
+ * §43 en ajoute une : l'entreprise peut éteindre elle-même un module
+ * dont elle ne se sert pas. Ces trois filtres se cumulent, et aucun
+ * n'est une protection : c'est RLS qui refuse les données.
  */
+
 /**
  * Pour un module que la spec DÉCRIT sans le PROGRAMMER.
  *
- * Le plan du document s'arrête à douze milestones ; §11P (matériel),
- * §11Q (contrats) et §11R (documents) n'y figurent dans aucun. Leur
- * donner un numéro les allumerait le jour où ce milestone sort, sur des
- * pages qui n'existent pas — c'est exactement le 404 rencontré au
- * Milestone 8.
+ * Leur donner un numéro les allumerait le jour où ce milestone sort,
+ * sur des pages qui n'existent pas — c'est exactement le 404 rencontré
+ * au Milestone 8.
  */
 export const UNSCHEDULED = 99;
+
+/**
+ * Les écrans livrés par la refonte UX elle-même. Numéro à part des
+ * douze milestones du plan initial : ils sont tous sortis, et cette
+ * amélioration est un chantier distinct.
+ */
+export const REFONTE = 13;
+
+/** Les modules qu'une entreprise peut éteindre — §43. */
+export const TOGGLEABLE_MODULES = [
+  "crm", "projects", "nursery", "biolab", "invoicing", "equipment",
+] as const;
+export type ModuleKey = (typeof TOGGLEABLE_MODULES)[number];
+
+export const MODULE_LABELS: Record<ModuleKey, string> = {
+  crm: "CRM",
+  projects: "Chantiers",
+  nursery: "Pépinière",
+  biolab: "BioLab",
+  invoicing: "Facturation",
+  equipment: "Matériel",
+};
 
 export type NavItem = {
   label: string;
   href: string;
+  icon: IconName;
   permission?: Permission;
   businessTypes?: BusinessType[];
-  /** Milestone that delivers this section (see the Phase 11 spec). */
+  /** Le module §43 auquel ce lien appartient, s'il est débrayable. */
+  module?: ModuleKey;
+  /** Le jalon qui livre cet écran. */
   milestone: number;
-  children?: NavItem[];
+};
+
+export type NavGroup = {
+  label: string;
+  items: NavItem[];
 };
 
 const NURSERY_TYPES: BusinessType[] = [
@@ -47,111 +79,109 @@ const LANDSCAPE_TYPES: BusinessType[] = [
   "other",
 ];
 
-export const NAVIGATION: NavItem[] = [
-  { label: "Tableau de bord", href: "/", milestone: 1 },
+export const NAVIGATION: NavGroup[] = [
+  {
+    label: "Principal",
+    items: [{ label: "Tableau de bord", href: "/", icon: "dashboard", milestone: 1 }],
+  },
   {
     label: "CRM",
-    href: "/crm",
-    permission: "clients.read",
-    milestone: 2,
-    children: [
-      { label: "Prospects", href: "/crm/prospects", permission: "clients.read", milestone: 2 },
-      { label: "Clients", href: "/crm/clients", permission: "clients.read", milestone: 2 },
-      { label: "Opportunités", href: "/crm/opportunites", permission: "clients.read", milestone: 2 },
+    items: [
+      { label: "Clients", href: "/crm/clients", icon: "clients", permission: "clients.read", module: "crm", milestone: 2 },
+      { label: "Prospects", href: "/crm/prospects", icon: "prospects", permission: "clients.read", module: "crm", milestone: 2 },
+      { label: "Opportunités", href: "/crm/opportunites", icon: "analytics", permission: "clients.read", module: "crm", milestone: 2 },
     ],
   },
   {
     label: "Projets",
-    href: "/projets",
-    permission: "projects.read",
-    businessTypes: LANDSCAPE_TYPES,
-    milestone: 6,
-    children: [
-      // « Chantiers » n'est pas une sous-page : c'est /projets lui-même.
-      // Deux adresses pour la même liste ne feraient qu'égarer.
-      { label: "Visites", href: "/projets/visites", permission: "projects.read", milestone: 7 },
-      { label: "Interventions", href: "/projets/interventions", permission: "projects.read", milestone: 7 },
-      // La conception, c'est le Digital Twin, livré au Milestone 3.
-      // Une page « Conception » vide à côté serait une fausse promesse.
-      { label: "Conception", href: "/digital-twin", permission: "digitalTwin.edit", milestone: 3 },
+    items: [
+      { label: "Chantiers", href: "/projets", icon: "projects", permission: "projects.read", businessTypes: LANDSCAPE_TYPES, module: "projects", milestone: 6 },
+      { label: "Digital Twin", href: "/digital-twin", icon: "twin", permission: "digitalTwin.edit", milestone: 3 },
+      { label: "Devis", href: "/devis", icon: "quote", permission: "quotes.read", milestone: 5 },
+      { label: "Bibliothèque de prix", href: "/catalogue", icon: "lots", permission: "quotes.read", milestone: 5 },
+      { label: "Planning", href: "/planning", icon: "planning", permission: "projects.read", module: "projects", milestone: 7 },
+      { label: "Interventions", href: "/projets/interventions", icon: "interventions", permission: "projects.read", module: "projects", milestone: 7 },
+      { label: "Visites", href: "/projets/visites", icon: "locations", permission: "projects.read", module: "projects", milestone: 7 },
+      { label: "Équipes terrain", href: "/equipes", icon: "team", permission: "projects.manage", module: "projects", milestone: 7 },
     ],
   },
-  { label: "Digital Twin", href: "/digital-twin", permission: "digitalTwin.edit", milestone: 3 },
-  {
-    label: "Devis",
-    href: "/devis",
-    permission: "quotes.read",
-    milestone: 5,
-    children: [
-      { label: "Devis", href: "/devis", permission: "quotes.read", milestone: 5 },
-      { label: "Bibliothèque de prix", href: "/catalogue", permission: "quotes.read", milestone: 5 },
-    ],
-  },
-  { label: "Planning", href: "/planning", permission: "projects.read", milestone: 7 },
-  { label: "Équipes", href: "/equipes", permission: "projects.manage", milestone: 7 },
   {
     label: "Pépinière",
-    href: "/pepiniere",
-    permission: "nursery.stock.manage",
-    businessTypes: NURSERY_TYPES,
-    milestone: 8,
-    children: [
-      // « Lots » n'est pas une sous-page : c'est /pepiniere lui-même,
-      // comme « Chantiers » est /projets. Deux adresses pour la même
-      // liste ne font qu'égarer.
-      { label: "Tableau de bord", href: "/pepiniere", permission: "nursery.stock.manage", milestone: 8 },
-      { label: "Production", href: "/pepiniere/production", permission: "nursery.stock.manage", milestone: 8 },
-      { label: "Emplacements", href: "/pepiniere/emplacements", permission: "nursery.stock.manage", milestone: 8 },
-      { label: "Stock", href: "/pepiniere/stock", permission: "nursery.stock.manage", milestone: 8 },
-      { label: "Santé", href: "/pepiniere/sante", permission: "nursery.stock.manage", milestone: 8 },
-      { label: "Commandes", href: "/pepiniere/commandes", permission: "nursery.stock.manage", milestone: 9 },
+    items: [
+      { label: "Tableau de bord", href: "/pepiniere", icon: "nursery", permission: "nursery.stock.manage", businessTypes: NURSERY_TYPES, module: "nursery", milestone: 8 },
+      { label: "Production", href: "/pepiniere/production", icon: "production", permission: "nursery.stock.manage", businessTypes: NURSERY_TYPES, module: "nursery", milestone: 8 },
+      { label: "Lots", href: "/pepiniere/lots", icon: "lots", permission: "nursery.stock.manage", businessTypes: NURSERY_TYPES, module: "nursery", milestone: REFONTE },
+      { label: "Stocks", href: "/pepiniere/stock", icon: "stock", permission: "nursery.stock.manage", businessTypes: NURSERY_TYPES, module: "nursery", milestone: 8 },
+      { label: "Emplacements", href: "/pepiniere/emplacements", icon: "locations", permission: "nursery.stock.manage", businessTypes: NURSERY_TYPES, module: "nursery", milestone: 8 },
+      { label: "Santé", href: "/pepiniere/sante", icon: "help", permission: "nursery.stock.manage", businessTypes: NURSERY_TYPES, module: "nursery", milestone: 8 },
+      { label: "Commandes", href: "/pepiniere/commandes", icon: "orders", permission: "nursery.stock.manage", businessTypes: NURSERY_TYPES, module: "nursery", milestone: 9 },
     ],
   },
-  { label: "Achats", href: "/achats", permission: "invoice.create", milestone: 9 },
-  { label: "Fournisseurs", href: "/fournisseurs", permission: "invoice.create", milestone: 9 },
-  // Le stock VIVANT est celui de la pépinière, et il a sa propre page.
-  // Celui-ci est l'autre : pots, substrat, paillage, consommables —
-  // ce qui entre par une commande fournisseur, donc au Milestone 9.
-  // Deux entrées nommées « Stocks » se seraient confondues.
-  // Repoussé encore : le Milestone 9 livre les COMMANDES de fournitures,
-  // pas un inventaire des consommables. La liste du milestone ne le
-  // demande pas, et une page vide vaudrait moins qu’une promesse datée.
-  { label: "Stock matériaux", href: "/stocks", permission: "nursery.stock.manage", milestone: UNSCHEDULED },
-  { label: "Factures", href: "/factures", permission: "invoice.create", milestone: 10 },
-  // §11P, §11Q et §11R décrivent ces modules, mais le plan de
-  // milestones du document ne les programme nulle part. UNSCHEDULED les
-  // laisse visibles comme « à venir » plutôt que de leur inventer une
-  // date qu'aucune ligne de la spec ne donne.
-  { label: "Contrats", href: "/contrats", permission: "projects.read", milestone: UNSCHEDULED },
-  { label: "Matériel", href: "/materiel", permission: "projects.manage", milestone: UNSCHEDULED },
-  { label: "Documents", href: "/documents", permission: "projects.read", milestone: UNSCHEDULED },
-  // §11T porte les deux d'un seul tenant — « tableaux de bord
-  // analytiques » et « outils IA sur des données structurées
-  // stables » — et le plan les livre ensemble au douzième milestone.
-  // Analytics portait 11 par anticipation ; le onzième s'est révélé
-  // être le portail client.
-  { label: "Analytics", href: "/analytics", permission: "projects.read", milestone: 12 },
-  { label: "Oasis AI", href: "/oasis-ai", milestone: 12 },
-  { label: "Paramètres", href: "/parametres", milestone: 1 },
+  {
+    label: "Gestion",
+    items: [
+      { label: "Factures", href: "/factures", icon: "invoice", permission: "invoice.create", module: "invoicing", milestone: 10 },
+      { label: "Achats", href: "/achats", icon: "purchase", permission: "invoice.create", milestone: 9 },
+      { label: "Fournisseurs", href: "/fournisseurs", icon: "supplier", permission: "invoice.create", milestone: 9 },
+      // §5 les liste, aucun milestone ne les programme. UNSCHEDULED les
+      // laisse visibles comme « à venir » plutôt que de leur inventer
+      // une date qu'aucune ligne de la spec ne donne.
+      { label: "Matériel", href: "/materiel", icon: "equipment", permission: "projects.manage", module: "equipment", milestone: UNSCHEDULED },
+      { label: "Documents", href: "/documents", icon: "document", permission: "projects.read", milestone: UNSCHEDULED },
+    ],
+  },
+  {
+    label: "Analyse",
+    items: [
+      { label: "Analytics", href: "/analytics", icon: "analytics", permission: "projects.read", milestone: 12 },
+      { label: "Oasis AI", href: "/oasis-ai", icon: "ai", milestone: 12 },
+    ],
+  },
+  {
+    label: "Entreprise",
+    items: [
+      { label: "Ma société", href: "/entreprise", icon: "company", milestone: REFONTE },
+      { label: "Équipe", href: "/entreprise/equipe", icon: "team", milestone: REFONTE },
+      { label: "Abonnement", href: "/entreprise/abonnement", icon: "subscription", milestone: REFONTE },
+      { label: "Paramètres", href: "/parametres", icon: "settings", milestone: 1 },
+    ],
+  },
 ];
 
 /** Milestones already delivered. Everything above this is shown as coming. */
-export const DELIVERED_THROUGH_MILESTONE = 12;
+export const DELIVERED_THROUGH_MILESTONE = REFONTE;
 
 export function isAvailable(item: NavItem): boolean {
   return item.milestone <= DELIVERED_THROUGH_MILESTONE;
 }
 
+/** Tous les liens, groupes aplatis — pour les contrôles et la recherche. */
+export function allNavItems(groups: NavGroup[] = NAVIGATION): NavItem[] {
+  return groups.flatMap((group) => group.items);
+}
+
+/**
+ * Ce que CE compte voit.
+ *
+ * Trois filtres qui se cumulent, et un groupe vidé de tous ses liens
+ * disparaît — une section « PÉPINIÈRE » sans rien dessous ferait
+ * croire à un écran cassé.
+ *
+ * `disabledModules` vient de §43 : l'entreprise éteint ce dont elle ne
+ * se sert pas. Ça ne remplace pas les entitlements, et ça ne protège
+ * rien : c'est du rangement.
+ */
 export function visibleNavigation(
   businessType: BusinessType,
   permissions: Permission[],
-): NavItem[] {
+  disabledModules: ModuleKey[] = [],
+): NavGroup[] {
   const allowed = (item: NavItem) =>
     (!item.permission || permissions.includes(item.permission)) &&
-    (!item.businessTypes || item.businessTypes.includes(businessType));
+    (!item.businessTypes || item.businessTypes.includes(businessType)) &&
+    (!item.module || !disabledModules.includes(item.module));
 
-  return NAVIGATION.filter(allowed).map((item) => ({
-    ...item,
-    children: item.children?.filter(allowed),
-  }));
+  return NAVIGATION.map((group) => ({ ...group, items: group.items.filter(allowed) })).filter(
+    (group) => group.items.length > 0,
+  );
 }

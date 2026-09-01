@@ -1,4 +1,5 @@
 import { redirect } from "next/navigation";
+import { cookies } from "next/headers";
 import { createClient, getCurrentUser } from "@/lib/supabase/server";
 import type { BusinessType, Role } from "@/lib/auth/permissions";
 import { permissionsForRole, type Permission } from "@/lib/auth/permissions";
@@ -61,19 +62,37 @@ export async function getUserOrganizations(): Promise<OrganizationContext[]> {
     .sort((a, b) => a.name.localeCompare(b.name, "fr"));
 }
 
+/** §13 COMPANY SWITCHER — où l'on retient l'entreprise choisie. */
+export const ACTIVE_ORGANIZATION_COOKIE = "oasis_org";
+
 /**
  * The organization to show. `preferredId` comes from a cookie or a URL;
  * it is validated against the user's real memberships rather than
  * trusted, so asking for someone else's organization id simply falls
  * back to your own first one.
+ *
+ * §13 : sans argument, on lit le cookie posé par le sélecteur
+ * d'entreprise. C'est délibérément ICI et non dans l'appelant — tous
+ * les écrans et toutes les Server Actions passent par cette fonction,
+ * et une bascule qui ne changerait que la barre latérale sans changer
+ * les données serait pire que pas de bascule du tout.
  */
 export async function getActiveOrganization(
   preferredId?: string,
 ): Promise<OrganizationContext | null> {
   const organizations = await getUserOrganizations();
   if (organizations.length === 0) return null;
-  if (preferredId) {
-    const match = organizations.find((o) => o.organizationId === preferredId);
+
+  let wanted = preferredId;
+  if (!wanted) {
+    const store = await cookies();
+    wanted = store.get(ACTIVE_ORGANIZATION_COOKIE)?.value;
+  }
+
+  if (wanted) {
+    // Validé contre les appartenances réelles : demander l'entreprise
+    // d'un autre ne fait que retomber sur la sienne.
+    const match = organizations.find((o) => o.organizationId === wanted);
     if (match) return match;
   }
   return organizations[0];

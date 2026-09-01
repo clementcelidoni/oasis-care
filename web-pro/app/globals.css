@@ -1,26 +1,37 @@
 @import "tailwindcss";
 
 /*
- * Oasis Care Pro — identité visuelle.
+ * Oasis Care Pro — le système de design.
  *
  * §UX : « Ne pas produire une interface générique d'ERP gris avec 50
  * tableaux partout. » L'identité reste moderne, haut de gamme, végétale,
  * claire et très visuelle.
+ *
+ * §1 PHILOSOPHIE UX : « Réduire la densité visuelle. Afficher moins
+ * d'informations simultanément. » Ce fichier fixe les moyens de le
+ * tenir — une échelle typographique franche, des rayons et des ombres
+ * qui séparent les plans, et un rythme d'espacement qui laisse
+ * respirer. Les composants s'y accrochent ; aucun d'eux ne redéfinit
+ * une couleur ou une taille dans son coin.
  *
  * Les neutres sont volontairement teintés de vert : un gris parfaitement
  * neutre à côté d'un accent végétal a toujours l'air d'un gris par
  * défaut, pas d'un gris choisi.
  */
 :root {
-  --canvas: #f7f8f6;
+  --canvas: #f6f8f6;
   --surface: #ffffff;
   --surface-raised: #fbfcfa;
+  /* Le fond des zones enfoncées : champs de recherche, pistes de
+     progression, cellules d'en-tête. Distinct de `canvas`, qui est le
+     fond de la page. */
+  --surface-sunken: #eef2ee;
 
   --ink: #10201a;
   --ink-soft: #46584f;
   --ink-faint: #7c8b83;
 
-  --line: #e2e8e3;
+  --line: #e4eae5;
   --line-strong: #cbd6cf;
 
   /* Accent : un vert forêt profond, pas le vert « validation ». */
@@ -31,18 +42,52 @@
 
   /* Couleurs sémantiques, distinctes de l'accent (§ information design). */
   --positive: #1b7f5a;
+  --positive-wash: #e6f3ec;
   --warning: #8a5a0e;
   --warning-wash: #f7efdd;
   --critical: #a03b31;
   --critical-wash: #f9e7e4;
   --info: #245f7e;
   --info-wash: #e3eef4;
+
+  /* ----------------------------------------------------------------
+     §36 TYPOGRAPHIE — la hiérarchie, écrite une fois.
+     ----------------------------------------------------------------
+     Les tailles de la spec, en rem pour que le zoom navigateur (§47)
+     les emporte avec lui. Un `px` en dur résisterait au réglage de
+     taille de police du système, ce qui est exactement ce qu'un
+     utilisateur malvoyant vient chercher là. */
+  --text-page: 2rem;      /* 32px — titre de page */
+  --text-section: 1.375rem; /* 22px — titre de section */
+  --text-card: 1.0625rem; /* 17px — titre de carte */
+  --text-body: 0.9375rem; /* 15px — texte courant */
+  --text-secondary: 0.8125rem; /* 13px — secondaire */
+
+  /* ----------------------------------------------------------------
+     Rayons et ombres
+     ----------------------------------------------------------------
+     Trois plans, pas plus : la page, la carte posée dessus, et ce qui
+     flotte au-dessus des deux (menus, tiroirs, palette). Une quatrième
+     ombre ne se distinguerait plus des autres et ne ferait qu'ajouter
+     du bruit. */
+  --radius-card: 0.875rem;
+  --radius-control: 0.625rem;
+  --radius-pill: 999px;
+
+  --shadow-card: 0 1px 2px rgb(16 32 26 / 0.04);
+  --shadow-raised: 0 4px 16px -4px rgb(16 32 26 / 0.10), 0 1px 3px rgb(16 32 26 / 0.05);
+  --shadow-float: 0 24px 48px -12px rgb(16 32 26 / 0.22), 0 4px 12px rgb(16 32 26 / 0.08);
+
+  --header-height: 3.5rem;
+  --sidebar-width: 15.5rem;
+  --sidebar-width-compact: 3.75rem;
 }
 
 @theme inline {
   --color-canvas: var(--canvas);
   --color-surface: var(--surface);
   --color-surface-raised: var(--surface-raised);
+  --color-surface-sunken: var(--surface-sunken);
 
   --color-ink: var(--ink);
   --color-ink-soft: var(--ink-soft);
@@ -57,12 +102,26 @@
   --color-accent-ink: var(--accent-ink);
 
   --color-positive: var(--positive);
+  --color-positive-wash: var(--positive-wash);
   --color-warning: var(--warning);
   --color-warning-wash: var(--warning-wash);
   --color-critical: var(--critical);
   --color-critical-wash: var(--critical-wash);
   --color-info: var(--info);
   --color-info-wash: var(--info-wash);
+
+  --text-page: var(--text-page);
+  --text-section: var(--text-section);
+  --text-card: var(--text-card);
+  --text-body: var(--text-body);
+  --text-secondary: var(--text-secondary);
+
+  --radius-card: var(--radius-card);
+  --radius-control: var(--radius-control);
+
+  --shadow-card: var(--shadow-card);
+  --shadow-raised: var(--shadow-raised);
+  --shadow-float: var(--shadow-float);
 
   --font-sans: var(--font-geist-sans);
   --font-mono: var(--font-geist-mono);
@@ -72,6 +131,7 @@ body {
   background: var(--canvas);
   color: var(--ink);
   font-family: var(--font-geist-sans), ui-sans-serif, system-ui, sans-serif;
+  font-size: var(--text-body);
   -webkit-font-smoothing: antialiased;
 }
 
@@ -81,10 +141,61 @@ body {
   font-variant-numeric: tabular-nums;
 }
 
+/* Une majuscule d'étiquette sans interlettrage se lit mal ; c'est le
+   seul endroit du produit où on écrit en capitales. */
+.eyebrow {
+  font-size: 0.6875rem;
+  font-weight: 500;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--ink-faint);
+}
+
 :focus-visible {
   outline: 2px solid var(--accent);
   outline-offset: 2px;
   border-radius: 3px;
+}
+
+/* §47 ACCESSIBILITÉ — « clavier ». Un lien d'évitement invisible tant
+   qu'on ne l'atteint pas au clavier : sans lui, chaque page impose de
+   traverser toute la navigation avant d'arriver au contenu. */
+.skip-link {
+  position: absolute;
+  left: 0.5rem;
+  top: -4rem;
+  z-index: 100;
+  border-radius: var(--radius-control);
+  background: var(--accent);
+  color: var(--accent-ink);
+  padding: 0.5rem 0.875rem;
+  font-size: var(--text-secondary);
+  font-weight: 500;
+  transition: top 120ms ease;
+}
+.skip-link:focus {
+  top: 0.5rem;
+}
+
+/* §33 LOADING STATES — « skeletons, placeholders, transitions. Éviter
+   spinners partout. » Un squelette dit OÙ le contenu va apparaître ;
+   un spinner ne dit rien. */
+@keyframes oasis-pulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.45; }
+}
+.skeleton {
+  background: var(--surface-sunken);
+  border-radius: var(--radius-control);
+  animation: oasis-pulse 1.6s ease-in-out infinite;
+}
+
+@keyframes oasis-rise {
+  from { opacity: 0; transform: translateY(6px); }
+  to { opacity: 1; transform: none; }
+}
+.rise {
+  animation: oasis-rise 160ms ease-out;
 }
 
 @media (prefers-reduced-motion: reduce) {
@@ -92,7 +203,13 @@ body {
   *::before,
   *::after {
     animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
     transition-duration: 0.01ms !important;
+  }
+  /* Un squelette qui ne clignote plus doit rester distinguable du
+     contenu : sans l'animation, seule la teinte le signale. */
+  .skeleton {
+    opacity: 0.7;
   }
 }
 
