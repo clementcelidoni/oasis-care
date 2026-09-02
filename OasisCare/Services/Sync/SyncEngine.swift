@@ -5258,6 +5258,25 @@ final class SyncEngine: ObservableObject {
                 existing.zIndex = row.zIndex
                 existing.label = row.label
                 existing.canopyDiameterMeters = row.canopyDiameterMeters
+                // TOUS LES CHAMPS, pas seulement la géométrie.
+                //
+                // Cette branche en appliquait sept sur quatorze. Un
+                // arroseur réglé sur le web — rayon, angles, débit — ne
+                // descendait donc jamais sur un téléphone qui
+                // connaissait déjà l'objet : il affichait une couverture
+                // d'arrosage inventée, puis la réécrivait par-dessus la
+                // vraie au push suivant. Même chose pour le
+                // rattachement d'un objet à une plante réelle, et pour
+                // la hauteur d'une structure.
+                existing.linkedEntityId = row.linkedEntityId
+                existing.linkedEntityKind = row.linkedEntityKind
+                existing.estimatedAdultCanopyDiameterMeters = row.estimatedAdultCanopyDiameterMeters
+                existing.sprinklerRadiusMeters = row.sprinklerRadiusMeters
+                existing.sprinklerStartAngleDegrees = row.sprinklerStartAngleDegrees
+                existing.sprinklerEndAngleDegrees = row.sprinklerEndAngleDegrees
+                existing.sprinklerFlowRateLitersPerHour = row.sprinklerFlowRateLitersPerHour
+                existing.structureHeightMeters = row.structureHeightMeters
+                existing.estimatedYearsToMaturity = row.estimatedYearsToMaturity
                 existing.updatedAt = row.updatedAt
             } else {
                 let garden = row.gardenId.flatMap { localGardens[$0] }
@@ -5277,10 +5296,57 @@ final class SyncEngine: ObservableObject {
                 object.linkedEntityKind = row.linkedEntityKind
                 object.canopyDiameterMeters = row.canopyDiameterMeters
                 object.estimatedAdultCanopyDiameterMeters = row.estimatedAdultCanopyDiameterMeters
+                object.sprinklerRadiusMeters = row.sprinklerRadiusMeters
+                object.sprinklerStartAngleDegrees = row.sprinklerStartAngleDegrees
+                object.sprinklerEndAngleDegrees = row.sprinklerEndAngleDegrees
+                object.sprinklerFlowRateLitersPerHour = row.sprinklerFlowRateLitersPerHour
+                object.structureHeightMeters = row.structureHeightMeters
+                object.estimatedYearsToMaturity = row.estimatedYearsToMaturity
                 object.syncStatus = .synced
                 object.updatedAt = row.updatedAt
                 context.insert(object)
                 localObjects[row.id] = object
+            }
+        }
+
+        // 4 bis. Réseau d'irrigation.
+        //
+        // `restoreFromCloudIfNeeded` descendait déjà les tuyaux sur un
+        // appareil vierge ; ce passage-ci les oubliait. Un réseau
+        // dessiné sur le web n'atteignait donc jamais un téléphone qui
+        // contenait déjà des données — exactement le trou que
+        // `pullDigitalTwin` a été écrit pour boucher, sur une entité de
+        // plus.
+        let remotePipes: [IrrigationPipeRow] = try await AuthService.client
+            .from("irrigation_pipes").select().is("deleted_at", value: nil).execute().value
+        var localPipes = Dictionary(
+            uniqueKeysWithValues: (try context.fetch(FetchDescriptor<IrrigationPipe>())).map { ($0.id, $0) }
+        )
+        var seenPipeIDs: Set<UUID> = []
+        for row in remotePipes {
+            seenPipeIDs.insert(row.id)
+            if let existing = localPipes[row.id] {
+                guard existing.syncStatus == .synced else { continue }
+                existing.points = row.points
+                existing.diameterMM = row.diameterMM
+                existing.material = row.material
+                existing.lineType = row.lineType
+                existing.startNodeObjectId = row.startNodeObjectId
+                existing.endNodeObjectId = row.endNodeObjectId
+                existing.updatedAt = row.updatedAt
+            } else {
+                let garden = row.gardenId.flatMap { localGardens[$0] }
+                let pipe = IrrigationPipe(
+                    garden: garden, lineType: row.lineType, diameterMM: row.diameterMM,
+                    material: row.material, points: row.points
+                )
+                pipe.id = row.id
+                pipe.startNodeObjectId = row.startNodeObjectId
+                pipe.endNodeObjectId = row.endNodeObjectId
+                pipe.syncStatus = .synced
+                pipe.updatedAt = row.updatedAt
+                context.insert(pipe)
+                localPipes[row.id] = pipe
             }
         }
 
@@ -5297,6 +5363,9 @@ final class SyncEngine: ObservableObject {
         // supprimer serait détruire le travail de l'utilisateur.
         for (id, area) in localAreas where !seenAreaIDs.contains(id) && area.syncStatus == .synced {
             context.delete(area)
+        }
+        for (id, pipe) in localPipes where !seenPipeIDs.contains(id) && pipe.syncStatus == .synced {
+            context.delete(pipe)
         }
         for (id, object) in localObjects where !seenObjectIDs.contains(id) && object.syncStatus == .synced {
             context.delete(object)
