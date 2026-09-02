@@ -1,0 +1,12 @@
+{
+  "version": "0.0.1",
+  "configurations": [
+    {
+      "name": "oasis-care-pro-web",
+      "runtimeExecutable": "npm",
+      "runtimeArgs": ["run", "dev", "--prefix", "web-pro"],
+      "port": 3000,
+      "autoPort": false
+    }
+  ]
+}

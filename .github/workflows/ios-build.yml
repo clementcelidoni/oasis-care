@@ -2,6 +2,13 @@ name: iOS Build
 
 on:
   push:
+    # Phase 11 added web-pro/, a Next.js app that this workflow cannot
+    # build and does not affect. Without this filter every web-only
+    # commit would spend ~10 minutes on a macOS runner to rebuild an
+    # unchanged iOS app.
+    paths-ignore:
+      - "web-pro/**"
+      - "**/*.md"
   workflow_dispatch:
 
 jobs:

@@ -11,6 +11,25 @@ final class Garden: Syncable {
     var syncStatus: SyncStatus?
     var updatedAt: Date?
 
+    /// L'espace de travail auquel ce jardin appartient CÔTÉ SERVEUR.
+    ///
+    /// Phase 11 a créé un second espace pour le même compte : l'espace
+    /// personnel, où l'iPhone écrit depuis toujours, et celui de
+    /// l'entreprise, créé par `create_professional_organization`.
+    /// `pullDigitalTwin` fait descendre les jardins des DEUX.
+    ///
+    /// Sans cette propriété, `pushGardens` réestampillait chaque jardin
+    /// modifié avec l'espace du compte : renommer sur le téléphone un
+    /// jardin client le faisait quitter l'entreprise, et il disparaissait
+    /// pour tous les salariés. Le jardin garde donc son espace d'origine,
+    /// et seuls les jardins créés ici reçoivent l'espace personnel.
+    ///
+    /// Valeur par défaut en ligne, et pas seulement dans `init` : sans
+    /// elle la migration automatique de SwiftData ne voit pas la
+    /// propriété, et les installations existantes ne peuvent plus ouvrir
+    /// leur base — la régression de la Phase 4B.
+    var remoteWorkspaceID: UUID? = nil
+
     /// Spec §16 — optional, manual entry or "use my location" (never
     /// requested automatically). weatherEnabled gates whether the
     /// dashboard tries to show a weather card for this garden at all,
