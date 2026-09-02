@@ -24,7 +24,15 @@ export type AuditAction =
   | "paymentRecorded"
   | "gardenDelivered"
   | "portalInvited"
-  | "portalRevoked";
+  | "portalRevoked"
+  // §14 ÉQUIPE. Donner à quelqu'un le rôle d'administrateur, ou lui
+  // couper l'accès, change ce qu'il peut lire et écrire dans toute
+  // l'entreprise. C'est une « action critique » au même titre qu'une
+  // facture émise — et c'est celle dont on voudra la date et l'auteur
+  // le jour où quelqu'un demandera « qui lui a donné ce droit ».
+  | "memberInvited"
+  | "memberRoleChanged"
+  | "memberAccessChanged";
 
 export async function recordAudit(
   organizationId: string,

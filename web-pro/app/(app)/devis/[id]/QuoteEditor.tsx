@@ -19,7 +19,7 @@ import {
  * l'utilisateur ne s'en aperçoit qu'en rouvrant le devis.
  */
 export function QuoteEditor({
-  quote, sections, lines, totals, catalog, editable,
+  quote, sections, lines, totals, catalog, editable, clientMode = false,
 }: {
   quote: Quote;
   sections: QuoteSection[];
@@ -27,6 +27,20 @@ export function QuoteEditor({
   totals: QuoteTotals;
   catalog: CatalogItem[];
   editable: boolean;
+  /**
+   * §39 MODE CLIENT — « Masquer : coûts internes ; marge ; notes ;
+   * informations confidentielles. »
+   *
+   * L'écran qu'on retourne vers le client, assis en face. Ce n'est pas
+   * le devis imprimé — celui-là existe déjà et se remet en main propre.
+   * C'est le même écran de travail, débarrassé de ce qui ne le regarde
+   * pas, pour dérouler le chiffrage à voix haute sans exposer sa marge.
+   *
+   * Le masquage se fait au RENDU, pas en CSS : une colonne cachée par
+   * une classe reste dans le HTML, et il suffit d'un clic droit pour
+   * l'y lire.
+   */
+  clientMode?: boolean;
 }) {
   // Les lignes sans section forment un bloc à part, en tête : elles
   // existent dès qu'on ajoute une ligne avant d'avoir créé un poste.
@@ -48,6 +62,7 @@ export function QuoteEditor({
           <SectionBlock
             quote={quote} title="Sans poste" sectionId={null}
             lines={loose} sections={sections} catalog={catalog} editable={editable}
+            clientMode={clientMode}
           />
         )}
 
@@ -61,6 +76,7 @@ export function QuoteEditor({
             sections={sections}
             catalog={catalog}
             editable={editable}
+            clientMode={clientMode}
           />
         ))}
 
@@ -90,13 +106,13 @@ export function QuoteEditor({
         )}
       </div>
 
-      <Totals quote={quote} totals={totals} editable={editable} />
+      <Totals quote={quote} totals={totals} editable={editable} clientMode={clientMode} />
     </div>
   );
 }
 
 function SectionBlock({
-  quote, title, sectionId, lines, sections, catalog, editable,
+  quote, title, sectionId, lines, sections, catalog, editable, clientMode = false,
 }: {
   quote: Quote;
   title: string;
@@ -105,6 +121,7 @@ function SectionBlock({
   sections: QuoteSection[];
   catalog: CatalogItem[];
   editable: boolean;
+  clientMode?: boolean;
 }) {
   const subtotal = lines.reduce((sum, l) => sum + l.sale_total_cents, 0);
 
@@ -158,7 +175,9 @@ function SectionBlock({
                 <th className="py-1.5 pl-4 pr-2 font-medium">Désignation</th>
                 <th className="w-20 px-2 py-1.5 text-right font-medium">Qté</th>
                 <th className="w-16 px-2 py-1.5 font-medium">Unité</th>
-                <th className="w-24 px-2 py-1.5 text-right font-medium">Achat</th>
+                {!clientMode && (
+                  <th className="w-24 px-2 py-1.5 text-right font-medium">Achat</th>
+                )}
                 <th className="w-24 px-2 py-1.5 text-right font-medium">Vente</th>
                 <th className="w-16 px-2 py-1.5 text-right font-medium">TVA</th>
                 <th className="w-16 px-2 py-1.5 text-right font-medium">Rem.</th>
@@ -168,7 +187,7 @@ function SectionBlock({
             </thead>
             <tbody>
               {lines.map((line) => (
-                <LineRow key={line.id} line={line} editable={editable} />
+                <LineRow key={line.id} line={line} editable={editable} clientMode={clientMode} />
               ))}
             </tbody>
           </table>
@@ -190,23 +209,39 @@ function SectionBlock({
  * pour un prix à quatre chiffres, et afficherait des totaux
  * intermédiaires absurdes pendant la saisie.
  */
-function LineRow({ line, editable }: { line: QuoteLine; editable: boolean }) {
+function LineRow({
+  line, editable, clientMode = false,
+}: {
+  line: QuoteLine;
+  editable: boolean;
+  clientMode?: boolean;
+}) {
   const margin = line.sale_total_cents - line.cost_total_cents;
 
-  if (!editable) {
+  // La page force déjà `editable={false}` en mode client. On le refait
+  // ici, et ce n'est pas de la superstition : la branche éditable
+  // contient un CHAMP DE SAISIE portant le prix d'achat. Si un jour
+  // quelqu'un monte cet éditeur en mode client sans couper l'édition,
+  // le coût réapparaîtrait dans un input — la pire des fuites, puisque
+  // sa valeur est aussi dans le HTML.
+  if (!editable || clientMode) {
     return (
       <tr className="border-b border-line last:border-0">
         <td className="py-2 pl-4 pr-2">{line.description}</td>
         <td className="px-2 py-2 text-right tabular">{formatQuantity(line.quantity)}</td>
         <td className="px-2 py-2 text-ink-soft">{line.unit}</td>
-        <td className="px-2 py-2 text-right tabular text-ink-soft">{formatCents(line.unit_cost_cents)}</td>
+        {!clientMode && (
+          <td className="px-2 py-2 text-right tabular text-ink-soft">
+            {formatCents(line.unit_cost_cents)}
+          </td>
+        )}
         <td className="px-2 py-2 text-right tabular">{formatCents(line.unit_sale_price_cents)}</td>
         <td className="px-2 py-2 text-right tabular text-ink-soft">{line.vat_rate} %</td>
         <td className="px-2 py-2 text-right tabular text-ink-soft">
           {line.discount_percent > 0 ? `${line.discount_percent} %` : "—"}
         </td>
         <td className="px-2 py-2 text-right tabular font-medium">{formatCents(line.sale_total_cents)}</td>
-        <td />
+        {!clientMode && <td />}
       </tr>
     );
   }
@@ -382,38 +417,48 @@ function AddLineForm({
 
 /** §RENTABILITÉ — « Coût estimé / Prix HT / Marge € / Marge % », puis TVA et TTC. */
 function Totals({
-  quote, totals, editable,
+  quote, totals, editable, clientMode = false,
 }: {
   quote: Quote;
   totals: QuoteTotals;
   editable: boolean;
+  clientMode?: boolean;
 }) {
   return (
     <aside className="lg:sticky lg:top-6">
       <div className="rounded-lg border border-line bg-surface p-4">
         <h2 className="mb-3 text-xs font-semibold uppercase tracking-wide text-ink-faint">
-          Rentabilité
+          {clientMode ? "Votre devis" : "Rentabilité"}
         </h2>
 
-        <Row label="Coût estimé" value={formatCents(totals.total_cost_cents)} muted />
+        {/* §39 — le coût, la marge et le taux de marque ne sont pas
+            rendus du tout en mode client. Et l'avertissement « vendu à
+            perte » non plus : il annonce la marge sans la chiffrer. */}
+        {!clientMode && (
+          <Row label="Coût estimé" value={formatCents(totals.total_cost_cents)} muted />
+        )}
         <Row label="Total HT" value={formatCents(totals.total_excluding_vat_cents)} strong />
-        <Row
-          label="Marge"
-          value={formatCents(totals.margin_cents)}
-          tone={marginTone(totals.margin_cents)}
-        />
-        <Row
-          label="Taux de marque"
-          value={formatPercent(totals.margin_percent)}
-          tone={marginTone(totals.margin_cents)}
-        />
+        {!clientMode && (
+          <>
+            <Row
+              label="Marge"
+              value={formatCents(totals.margin_cents)}
+              tone={marginTone(totals.margin_cents)}
+            />
+            <Row
+              label="Taux de marque"
+              value={formatPercent(totals.margin_percent)}
+              tone={marginTone(totals.margin_cents)}
+            />
+          </>
+        )}
 
         <div className="my-3 border-t border-line" />
 
         <Row label="TVA" value={formatCents(totals.total_vat_cents)} muted />
         <Row label="Total TTC" value={formatCents(totals.total_including_vat_cents)} strong />
 
-        {totals.margin_cents < 0 && (
+        {!clientMode && totals.margin_cents < 0 && (
           <p className="mt-3 rounded bg-critical-wash px-2 py-1.5 text-[11px] text-critical">
             Ce devis est vendu à perte : le coût dépasse le prix de vente.
           </p>

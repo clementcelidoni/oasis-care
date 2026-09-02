@@ -35,6 +35,9 @@ const ACTION_LABELS: Record<string, string> = {
   gardenDelivered: "Jardin livré au client",
   portalInvited: "Client invité au portail",
   portalRevoked: "Accès au portail fermé",
+  memberInvited: "Membre invité",
+  memberRoleChanged: "Rôle modifié",
+  memberAccessChanged: "Accès au logiciel modifié",
 };
 
 const SOURCE_LABELS: Record<string, string> = {

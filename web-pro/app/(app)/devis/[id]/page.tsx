@@ -22,9 +22,24 @@ import { ToInvoiceBar } from "./ToInvoiceBar";
  * des données déjà prêtes, ce qui lui évite une cascade de requêtes au
  * chargement.
  */
-export default async function QuotePage({ params }: PageProps<"/devis/[id]">) {
+export default async function QuotePage({
+  params,
+  searchParams,
+}: PageProps<"/devis/[id]">) {
   const { id } = await params;
   const supabase = await createClient();
+
+  /**
+   * §39 MODE CLIENT — « Mode présentation client. Masquer : coûts
+   * internes ; marge ; notes ; informations confidentielles. »
+   *
+   * L'état vit dans l'URL et non dans un `useState`, pour une raison
+   * précise : on retourne l'écran vers quelqu'un. Un rechargement, une
+   * touche F5, un retour arrière — n'importe lequel de ces gestes
+   * rallumerait les marges devant le client si le mode ne tenait qu'en
+   * mémoire.
+   */
+  const clientMode = (await searchParams).client === "1";
 
   const { data } = await supabase
     .from("quotes")
@@ -104,6 +119,16 @@ export default async function QuotePage({ params }: PageProps<"/devis/[id]">) {
             {QUOTE_STATUS_LABELS[quote.status]}
           </Badge>
           <Link
+            href={clientMode ? `/devis/${id}` : `/devis/${id}?client=1`}
+            className={`rounded-lg px-3 py-1.5 text-sm font-medium ${
+              clientMode
+                ? "bg-accent text-accent-ink"
+                : "border border-line-strong text-ink-soft hover:border-accent hover:text-accent"
+            }`}
+          >
+            {clientMode ? "Quitter le mode client" : "Mode présentation client"}
+          </Link>
+          <Link
             href={`/devis/${id}/imprimer`}
             target="_blank"
             className="rounded-lg border border-line-strong px-3 py-1.5 text-sm font-medium text-ink-soft hover:border-accent hover:text-accent"
@@ -113,7 +138,25 @@ export default async function QuotePage({ params }: PageProps<"/devis/[id]">) {
         </div>
       </div>
 
-      <StatusBar quote={quote} />
+      {/* Un mode qui cache des chiffres doit SE VOIR, sans quoi on le
+          laisse allumé et on croit sa marge tombée à zéro. La bande
+          traverse l'écran et le bouton de sortie est à un clic. */}
+      {clientMode && (
+        <div className="mb-5 flex flex-wrap items-center justify-between gap-3 rounded-lg border border-accent/30 bg-accent-wash px-4 py-2.5">
+          <p className="text-sm text-accent">
+            <strong>Mode présentation client.</strong> Les coûts d&apos;achat, la marge
+            et vos notes internes sont masqués — vous pouvez retourner l&apos;écran.
+          </p>
+          <Link
+            href={`/devis/${id}`}
+            className="shrink-0 text-sm font-medium text-accent underline"
+          >
+            Revenir à la vue de travail
+          </Link>
+        </div>
+      )}
+
+      {!clientMode && <StatusBar quote={quote} />}
 
       {/*
         §DEVIS ACCEPTÉ — « Bouton : Transformer en projet. »
@@ -121,7 +164,10 @@ export default async function QuotePage({ params }: PageProps<"/devis/[id]">) {
         un brouillon inviterait à démarrer des travaux que le client n'a
         pas commandés.
       */}
-      {quote.status === "accepted" && (
+      {/* Transformer en chantier, facturer : des gestes internes. Les
+          montrer au client l'inviterait à se demander pourquoi on parle
+          déjà de facture. */}
+      {!clientMode && quote.status === "accepted" && (
         <>
           <ToProjectBar quoteId={quote.id} existingProject={existingProject} />
           {/*
@@ -153,10 +199,13 @@ export default async function QuotePage({ params }: PageProps<"/devis/[id]">) {
         lines={(lines ?? []) as QuoteLine[]}
         totals={(totals ?? EMPTY_TOTALS) as QuoteTotals}
         catalog={catalog}
-        editable={editable}
+        editable={clientMode ? false : editable}
+        clientMode={clientMode}
       />
 
-      {(revisions ?? []).length > 0 && (
+      {/* L'historique des versions raconte les allers-retours de
+          chiffrage : ce n'est pas une information pour le client. */}
+      {!clientMode && (revisions ?? []).length > 0 && (
         <section className="mt-8">
           <h2 className="mb-2 text-xs font-semibold uppercase tracking-wide text-ink-faint">
             Versions enregistrées

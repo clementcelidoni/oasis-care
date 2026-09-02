@@ -9,6 +9,7 @@ import {
   ACTIVE_ORGANIZATION_COOKIE,
 } from "@/lib/auth/organization";
 import { ROLES, type Role } from "@/lib/auth/permissions";
+import { recordAudit } from "@/lib/audit/record";
 
 /**
  * §14 ÉQUIPE — « Inviter un membre », « Modifier rôle », « Désactiver
@@ -99,6 +100,17 @@ export async function updateMemberRole(formData: FormData) {
     .eq("organization_id", organization.organizationId);
   if (error) throw new Error(error.message);
 
+  // L'ancien rôle ET le nouveau : un journal qui ne dirait que le
+  // nouveau ne permettrait pas de savoir ce qu'on a retiré.
+  await recordAudit(
+    organization.organizationId,
+    "memberRoleChanged",
+    "organization_member",
+    memberId,
+    { role: nextRole },
+    { role: member.role },
+  );
+
   // Le rôle gouverne le menu latéral et la moitié des boutons du
   // produit : c'est toute la mise en page qu'il faut réinvalider, pas
   // seulement cet écran.
@@ -150,6 +162,15 @@ export async function setMemberAccess(formData: FormData) {
     .eq("id", memberId)
     .eq("organization_id", organization.organizationId);
   if (error) throw new Error(error.message);
+
+  await recordAudit(
+    organization.organizationId,
+    "memberAccessChanged",
+    "organization_member",
+    memberId,
+    { archived: !active },
+    { archived: member.archived_at !== null },
+  );
 
   revalidatePath("/", "layout");
   redirect(`${TEAM_PATH}?message=${active ? "acces-retabli" : "acces-desactive"}`);
@@ -243,6 +264,19 @@ export async function inviteMember(
     invited_by: user?.id ?? null,
   });
   if (error) return { status: "error", message: error.message };
+
+  // L'adresse invitée est une donnée personnelle, mais elle est le sujet
+  // même de l'événement : sans elle, la ligne ne dit pas QUI a été
+  // invité. Le JETON, lui, n'y figure pas — il ouvre l'accès à
+  // l'entreprise, et un journal que toute l'équipe peut lire n'est pas
+  // l'endroit où le ranger.
+  await recordAudit(
+    organization.organizationId,
+    "memberInvited",
+    "organization_invitation",
+    null,
+    { email, role },
+  );
 
   revalidatePath(TEAM_PATH);
   return { status: "done", email };
