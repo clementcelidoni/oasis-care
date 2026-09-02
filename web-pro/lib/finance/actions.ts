@@ -4,6 +4,7 @@ import { revalidatePath } from "next/cache";
 import { redirect } from "next/navigation";
 import { createClient } from "@/lib/supabase/server";
 import { requireOrganization } from "@/lib/auth/organization";
+import { flash } from "@/lib/ui/flash";
 import { recordAudit } from "@/lib/audit/record";
 import {
   inputToCents, parseQuantity, parseQuantityOr, parseVatRate,
@@ -311,7 +312,28 @@ export async function recordPayment(formData: FormData) {
     p_invoice_id: invoiceId,
     p_amount_cents: amount,
   });
-  if (allocationError) throw new Error(allocationError.message);
+
+  if (allocationError) {
+    // LA LIGNE DE RÈGLEMENT REPART AVEC L'ÉCHEC.
+    //
+    // `allocate_payment` refuse une affectation qui dépasse le reste
+    // dû. Sans ce retrait, la ligne restait dans `payments`, non
+    // affectée — et `cash_flow_entries`, qui lit cette table
+    // directement, comptait de l'argent jamais reçu. La trésorerie et
+    // l'export vers l'expert-comptable s'en trouvaient gonflés, sans
+    // qu'aucune facture ne le montre.
+    //
+    // Deux écritures sans transaction : c'est ce que PostgREST permet.
+    // On compense donc, comme on retire un fichier dont la ligne n'a
+    // pas pu être créée.
+    await supabase.from("payments").delete().eq("id", payment.id);
+
+    // Le message vient de la fonction et il est en français métier —
+    // « Le règlement dépasse le reste dû ». Le montrer tel quel vaut
+    // mieux que la page d'erreur du framework.
+    await flash("error", allocationError.message);
+    return;
+  }
 
   await recordAudit(organization.organizationId, "paymentRecorded", "invoice", invoiceId, {
     amount_cents: amount,

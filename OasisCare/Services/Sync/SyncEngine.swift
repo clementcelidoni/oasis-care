@@ -217,6 +217,20 @@ final class SyncEngine: ObservableObject {
         try await AuthService.client.storage.from(Self.photoBucket).download(path: path)
     }
 
+    /// L'espace de travail PERSONNEL du compte.
+    ///
+    /// Il y en avait un seul jusqu'à la Phase 11 ;
+    /// `create_professional_organization` en crée un second, dont le
+    /// compte est aussi membre. `limit(1)` sans filtre ni tri rendait
+    /// donc l'un ou l'autre selon l'ordre physique des lignes — et cet
+    /// identifiant sert à estampiller tout ce que le téléphone envoie.
+    ///
+    /// Dans un sens, les plantes et les carnets privés basculaient dans
+    /// l'espace de l'entreprise et devenaient lisibles par tout salarié.
+    /// Dans l'autre, les jardins clients quittaient l'entreprise.
+    ///
+    /// On demande donc explicitement le personnel, avec un tri qui rend
+    /// le résultat reproductible même si un jour il y en avait deux.
     private func fetchWorkspaceID() async throws -> UUID {
         struct WorkspaceRow: Decodable {
             var id: UUID
@@ -224,6 +238,8 @@ final class SyncEngine: ObservableObject {
         let rows: [WorkspaceRow] = try await AuthService.client
             .from("workspaces")
             .select("id")
+            .eq("is_personal", value: true)
+            .order("created_at", ascending: true)
             .limit(1)
             .execute()
             .value
@@ -275,6 +291,10 @@ final class SyncEngine: ObservableObject {
             garden.preferredMapMode = row.preferredMapMode ?? .oasisPlan
             garden.syncStatus = .synced
             garden.updatedAt = row.updatedAt
+            // Sur un appareil neuf aussi : sans cette ligne, le premier
+            // envoi renverrait tous les jardins de l'entreprise dans
+            // l'espace personnel du salarié qui vient d'installer l'app.
+            garden.remoteWorkspaceID = row.workspaceId
             context.insert(garden)
             gardensByID[row.id] = garden
         }
@@ -1204,6 +1224,7 @@ final class SyncEngine: ObservableObject {
 
     private struct GardenRow: Decodable {
         var id: UUID
+        var workspaceId: UUID
         var name: String
         var address: String?
         var notes: String
@@ -1217,6 +1238,7 @@ final class SyncEngine: ObservableObject {
 
         enum CodingKeys: String, CodingKey {
             case id, name, address, notes
+            case workspaceId = "workspace_id"
             case dateCreated = "date_created"
             case latitude, longitude
             case locationName = "location_name"
@@ -2614,7 +2636,12 @@ final class SyncEngine: ObservableObject {
         guard !pending.isEmpty else { return }
         let dtos = pending.map {
             GardenDTO(
-                id: $0.id, workspaceId: workspaceID, name: $0.name, address: $0.address,
+                // L'ESPACE D'ORIGINE D'ABORD. Un jardin descendu de
+                // l'espace de l'entreprise doit y retourner ; seul un
+                // jardin créé sur ce téléphone n'en a pas encore et
+                // reçoit l'espace personnel.
+                id: $0.id, workspaceId: $0.remoteWorkspaceID ?? workspaceID,
+                name: $0.name, address: $0.address,
                 notes: $0.notes, dateCreated: $0.dateCreated, latitude: $0.latitude, longitude: $0.longitude,
                 locationName: $0.locationName, weatherEnabled: $0.weatherEnabled,
                 preferredMapMode: $0.preferredMapMode, updatedAt: $0.updatedAt ?? .now
@@ -5136,6 +5163,11 @@ final class SyncEngine: ObservableObject {
                 existing.longitude = row.longitude
                 existing.locationName = row.locationName
                 existing.updatedAt = row.updatedAt
+                // Recalé à chaque passage : une livraison de jardin
+                // (§JARDIN PRO → PARTICULIER) le fait changer d'espace
+                // côté serveur, et le téléphone doit suivre plutôt que
+                // de le renvoyer d'où il vient.
+                existing.remoteWorkspaceID = row.workspaceId
             } else {
                 let garden = Garden(
                     name: row.name, address: row.address, notes: row.notes,
@@ -5149,6 +5181,7 @@ final class SyncEngine: ObservableObject {
                 garden.preferredMapMode = row.preferredMapMode ?? .oasisPlan
                 garden.syncStatus = .synced
                 garden.updatedAt = row.updatedAt
+                garden.remoteWorkspaceID = row.workspaceId
                 context.insert(garden)
                 localGardens[row.id] = garden
             }
