@@ -69,7 +69,11 @@ export default async function LocationsPage() {
         />
       ) : (
         <div className="overflow-hidden rounded-lg border border-line bg-surface">
-          <table className="w-full text-sm">
+          {/* Même raison qu'ailleurs : la bordure arrondie garde
+              `overflow-hidden`, le défilement horizontal vit dans le div
+              intérieur. */}
+          <div className="overflow-x-auto">
+          <table className="w-full min-w-[620px] text-sm">
             <thead>
               <tr className="border-b border-line text-left text-[11px] uppercase tracking-wide text-ink-faint">
                 <th className="py-2 pl-4 pr-2 font-medium">Emplacement</th>
@@ -131,6 +135,7 @@ export default async function LocationsPage() {
               })}
             </tbody>
           </table>
+          </div>
         </div>
       )}
     </div>

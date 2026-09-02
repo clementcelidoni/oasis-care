@@ -117,6 +117,7 @@ export default async function CatalogPage({ searchParams }: PageProps<"/catalogu
                       <td className="py-1.5 pr-4 text-right">
                         <ConfirmDialog
                           triggerLabel="✕"
+                          triggerTitle={`Retirer ${item.name} de la bibliothèque`}
                           triggerVariant="ghost"
                           title={`Retirer « ${item.name} » ?`}
                           message="L'article disparaît de la bibliothèque de prix. Les devis qui le citent déjà ne changent pas : leurs montants ont été enregistrés au moment du chiffrage."

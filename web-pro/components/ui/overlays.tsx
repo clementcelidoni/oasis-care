@@ -65,6 +65,7 @@ function backdropClose(
 
 export function Modal({
   triggerLabel,
+  triggerTitle,
   triggerVariant = "secondary",
   title,
   description,
@@ -72,6 +73,13 @@ export function Modal({
   width = "28rem",
 }: {
   triggerLabel: ReactNode;
+  /**
+   * Le nom ACCESSIBLE du déclencheur, quand son contenu visible est un
+   * symbole. « ✕, bouton » ne dit rien à un lecteur d’écran, et il y en
+   * a un par ligne dans une liste — §47 demande de tester au lecteur
+   * d’écran, pas seulement au clavier.
+   */
+  triggerTitle?: string;
   triggerVariant?: ButtonVariant;
   title: string;
   description?: string;
@@ -86,6 +94,8 @@ export function Modal({
       <button
         type="button"
         onClick={() => setOpen(true)}
+        aria-label={triggerTitle}
+        title={triggerTitle}
         className={`${TRIGGER_BASE} ${TRIGGER_VARIANT[triggerVariant]}`}
       >
         {triggerLabel}
@@ -133,6 +143,7 @@ export function Modal({
  */
 export function Drawer({
   triggerLabel,
+  triggerTitle,
   triggerVariant = "ghost",
   title,
   description,
@@ -140,6 +151,13 @@ export function Drawer({
   width = "26rem",
 }: {
   triggerLabel: ReactNode;
+  /**
+   * Le nom ACCESSIBLE du déclencheur, quand son contenu visible est un
+   * symbole. « ✕, bouton » ne dit rien à un lecteur d’écran, et il y en
+   * a un par ligne dans une liste — §47 demande de tester au lecteur
+   * d’écran, pas seulement au clavier.
+   */
+  triggerTitle?: string;
   triggerVariant?: ButtonVariant;
   title: string;
   description?: string;
@@ -154,6 +172,8 @@ export function Drawer({
       <button
         type="button"
         onClick={() => setOpen(true)}
+        aria-label={triggerTitle}
+        title={triggerTitle}
         className={`${TRIGGER_BASE} ${TRIGGER_VARIANT[triggerVariant]}`}
       >
         {triggerLabel}
@@ -203,6 +223,7 @@ export function Drawer({
  */
 export function ConfirmDialog({
   triggerLabel,
+  triggerTitle,
   triggerVariant = "secondary",
   title,
   message,
@@ -212,6 +233,13 @@ export function ConfirmDialog({
   hidden,
 }: {
   triggerLabel: ReactNode;
+  /**
+   * Le nom ACCESSIBLE du déclencheur, quand son contenu visible est un
+   * symbole. « ✕, bouton » ne dit rien à un lecteur d’écran, et il y en
+   * a un par ligne dans une liste — §47 demande de tester au lecteur
+   * d’écran, pas seulement au clavier.
+   */
+  triggerTitle?: string;
   triggerVariant?: ButtonVariant;
   title: string;
   message: string;
@@ -229,6 +257,8 @@ export function ConfirmDialog({
       <button
         type="button"
         onClick={() => setOpen(true)}
+        aria-label={triggerTitle}
+        title={triggerTitle}
         className={`${TRIGGER_BASE} ${TRIGGER_VARIANT[triggerVariant]}`}
       >
         {triggerLabel}

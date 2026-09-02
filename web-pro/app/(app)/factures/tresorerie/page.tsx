@@ -65,7 +65,12 @@ export default async function CashFlowPage() {
 
       {months.length > 0 && (
         <section className="mb-6 overflow-hidden rounded-lg border border-line bg-surface">
-          <table className="w-full text-sm">
+          {/* Le div qui défile, à l'intérieur de la bordure arrondie :
+              `overflow-hidden` seul COUPERAIT la colonne « Net » sur un
+              écran étroit, sans barre de défilement pour aller la
+              chercher. */}
+          <div className="overflow-x-auto">
+          <table className="w-full min-w-[520px] text-sm">
             <thead>
               <tr className="border-b border-line text-left text-[11px] uppercase tracking-wide text-ink-faint">
                 <th className="py-2 pl-4 pr-2 font-medium">Mois</th>
@@ -103,6 +108,7 @@ export default async function CashFlowPage() {
               ))}
             </tbody>
           </table>
+          </div>
         </section>
       )}
 
