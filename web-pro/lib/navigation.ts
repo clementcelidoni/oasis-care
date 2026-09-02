@@ -49,6 +49,21 @@ export const MODULE_LABELS: Record<ModuleKey, string> = {
   equipment: "Matériel",
 };
 
+/**
+ * LA PERMISSION D'UNE ENTRÉE EST CELLE QUI OUVRE SA TABLE PRINCIPALE.
+ *
+ * Pas celle qui semble décrire le module. « Commandes » sous
+ * « Pépinière » se lit avec `quotes.read`, parce qu'une commande client
+ * est une VENTE — même quand ce qu'on vend sort de la serre. Se fier au
+ * nom du groupe donnait une entrée visible, une liste vide, aucune
+ * erreur, et un numéro de document consommé à chaque essai de création.
+ *
+ * En cas de doute, la vérité est dans `pg_policies`, pas dans
+ * l'intuition :
+ *
+ *     select tablename, qual from pg_policies
+ *      where schemaname = 'public' and tablename = 'suppliers';
+ */
 export type NavItem = {
   label: string;
   href: string;
@@ -114,7 +129,14 @@ export const NAVIGATION: NavGroup[] = [
       { label: "Stocks", href: "/pepiniere/stock", icon: "stock", permission: "nursery.stock.manage", businessTypes: NURSERY_TYPES, module: "nursery", milestone: 8 },
       { label: "Emplacements", href: "/pepiniere/emplacements", icon: "locations", permission: "nursery.stock.manage", businessTypes: NURSERY_TYPES, module: "nursery", milestone: 8 },
       { label: "Santé", href: "/pepiniere/sante", icon: "help", permission: "nursery.stock.manage", businessTypes: NURSERY_TYPES, module: "nursery", milestone: 8 },
-      { label: "Commandes", href: "/pepiniere/commandes", icon: "orders", permission: "nursery.stock.manage", businessTypes: NURSERY_TYPES, module: "nursery", milestone: 9 },
+      // `sales_orders` est protégée par `quotes.read`, pas par
+      // `nursery.stock.manage` : c'est une VENTE, même quand ce qu'on
+      // vend sort de la pépinière. Avec l'ancienne permission, un
+      // responsable pépinière voyait l'entrée, ouvrait une liste vide
+      // sans message, et brûlait un numéro de commande à chaque
+      // tentative de création — le compteur s'incrémente avant que
+      // l'insertion échoue.
+      { label: "Commandes", href: "/pepiniere/commandes", icon: "orders", permission: "quotes.read", businessTypes: NURSERY_TYPES, module: "nursery", milestone: 9 },
     ],
   },
   {
@@ -122,7 +144,11 @@ export const NAVIGATION: NavGroup[] = [
     items: [
       { label: "Factures", href: "/factures", icon: "invoice", permission: "invoice.create", module: "invoicing", milestone: 10 },
       { label: "Achats", href: "/achats", icon: "purchase", permission: "invoice.create", milestone: 9 },
-      { label: "Fournisseurs", href: "/fournisseurs", icon: "supplier", permission: "invoice.create", milestone: 9 },
+      // Même correction : `suppliers` se lit avec `quotes.read` et
+      // s'écrit avec `quotes.edit`. La comptabilité, qui a
+      // `invoice.create` sans les droits sur les devis, voyait un
+      // annuaire fournisseurs vide.
+      { label: "Fournisseurs", href: "/fournisseurs", icon: "supplier", permission: "quotes.read", milestone: 9 },
       // §5 les liste, aucun milestone ne les programme. UNSCHEDULED les
       // laisse visibles comme « à venir » plutôt que de leur inventer
       // une date qu'aucune ligne de la spec ne donne.

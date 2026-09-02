@@ -47,7 +47,7 @@ export default async function PortalInvoicePage({
   ]);
 
   const allLines = (lines ?? []) as ClientInvoiceLine[];
-  const totals = clientInvoiceTotals(allLines);
+  const totals = clientInvoiceTotals(allLines, f.global_discount_percent ?? 0);
   const b = balance as ClientInvoiceBalance | null;
   const company = companies.find((c) => c.id === f.organization_id) ?? companies[0];
 
@@ -133,6 +133,24 @@ export default async function PortalInvoicePage({
       <section className="mt-6 flex justify-end">
         <table className="min-w-72 text-sm">
           <tbody>
+            {/* La remise commerciale reprise du devis accepté. Sans
+                cette ligne, le total serait inférieur à la somme des
+                lignes au-dessus, sans explication — et c'est le client
+                qui poserait la question. */}
+            {f.global_discount_percent > 0 && (
+              <tr>
+                <td className="py-1 pr-6 text-ink-soft">
+                  Remise commerciale {f.global_discount_percent} %
+                </td>
+                <td className="tabular py-1 text-right">
+                  −
+                  {formatCents(
+                    allLines.reduce((sum, l) => sum + l.total_cents, 0) -
+                      totals.totalExcludingVatCents,
+                  )}
+                </td>
+              </tr>
+            )}
             <tr className="border-t border-line">
               <td className="py-1.5 pr-6 font-medium">Total HT</td>
               <td className="tabular py-1.5 text-right font-medium">

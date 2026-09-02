@@ -3,6 +3,7 @@ import { createClient } from "@/lib/supabase/server";
 import { formatDate } from "@/lib/crm/types";
 import { formatCents, formatQuantity } from "@/lib/quotes/types";
 import { EMPTY_BALANCE, type InvoiceLine, type InvoiceBalance } from "@/lib/finance/types";
+import { clientInvoiceTotals } from "@/lib/portal/types";
 import { PrintButton } from "@/app/(app)/devis/[id]/imprimer/PrintButton";
 
 /**
@@ -36,8 +37,14 @@ export default async function PrintInvoicePage({
     supabase.from("invoice_balance").select("*").eq("invoice_id", id).maybeSingle(),
     supabase
       .from("business_organizations")
+      // L’ENTÊTE EST CELLE DU DOCUMENT, pas d’une organisation prise
+      // au hasard. `limit(1)` sans filtre laissait la RLS rendre toutes
+      // les organisations du compte et Postgres choisir la première du
+      // tas : un utilisateur membre de deux entreprises — §13 le prévoit
+      // explicitement — imprimait un document au SIRET et à l’adresse de
+      // l’autre.
       .select("name, legal_name, legal_form, siret, vat_number, rcs_city, address_line1, address_line2, postal_code, city, email, phone, insurance_details")
-      .limit(1)
+      .eq("id", invoice.organization_id)
       .maybeSingle(),
   ]);
 
@@ -45,9 +52,19 @@ export default async function PrintInvoicePage({
   const b = (balance ?? EMPTY_BALANCE) as InvoiceBalance;
   const customer = invoice.crm_customers as Record<string, string | null> | null;
 
-  const totalHT = allLines.reduce((s, l) => s + l.total_cents, 0);
-  const byRate = new Map<number, number>();
-  for (const l of allLines) byRate.set(l.vat_rate, (byRate.get(l.vat_rate) ?? 0) + l.total_cents);
+  // LA MÊME FONCTION QUE LA BASE ET QUE LE PORTAIL.
+  //
+  // Cette page calculait sa propre ventilation — par ligne, sans la
+  // remise globale — puis affichait le total TTC venu de la base, qui
+  // se calcule par taux ET avec la remise. Les deux ne tombaient pas
+  // d'accord : le document ne faisait pas son propre total, sous les
+  // yeux du client.
+  //
+  // `clientInvoiceTotals` reproduit exactement `invoice_totals`, et
+  // c'est le même code qui sert au devis imprimé et au portail. Trois
+  // écrans, une formule.
+  const brutHT = allLines.reduce((sum, l) => sum + l.total_cents, 0);
+  const totals = clientInvoiceTotals(allLines, invoice.global_discount_percent ?? 0);
 
   return (
     <div className="mx-auto max-w-3xl bg-surface px-10 py-10 print:max-w-none print:px-0 print:py-0">
@@ -149,15 +166,29 @@ export default async function PrintInvoicePage({
       <section className="mt-6 flex justify-end">
         <table className="min-w-72 text-sm">
           <tbody>
+            {invoice.global_discount_percent > 0 && (
+              <tr>
+                <td className="py-1 pr-6 text-ink-soft">
+                  Remise commerciale {invoice.global_discount_percent} %
+                </td>
+                <td className="tabular py-1 text-right">
+                  −{formatCents(brutHT - totals.totalExcludingVatCents)}
+                </td>
+              </tr>
+            )}
             <tr className="border-t border-line">
               <td className="py-1.5 pr-6 font-medium">Total HT</td>
-              <td className="tabular py-1.5 text-right font-medium">{formatCents(totalHT)}</td>
+              <td className="tabular py-1.5 text-right font-medium">
+                {formatCents(totals.totalExcludingVatCents)}
+              </td>
             </tr>
-            {[...byRate.entries()].sort((a, b2) => b2[0] - a[0]).map(([rate, base]) => (
-              <tr key={rate}>
-                <td className="py-1 pr-6 text-ink-soft">TVA {rate} % sur {formatCents(base)}</td>
+            {totals.byRate.map((entry) => (
+              <tr key={entry.rate}>
+                <td className="py-1 pr-6 text-ink-soft">
+                  TVA {entry.rate} % sur {formatCents(entry.baseCents)}
+                </td>
                 <td className="tabular py-1 text-right text-ink-soft">
-                  {formatCents(Math.round((base * rate) / 100))}
+                  {formatCents(entry.vatCents)}
                 </td>
               </tr>
             ))}

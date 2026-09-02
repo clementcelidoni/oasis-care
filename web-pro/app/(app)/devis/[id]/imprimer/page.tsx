@@ -44,8 +44,14 @@ export default async function PrintQuotePage({ params }: PageProps<"/devis/[id]/
       supabase.from("quote_totals").select("*").eq("quote_id", id).maybeSingle(),
       supabase
         .from("business_organizations")
+        // L’ENTÊTE EST CELLE DU DOCUMENT, pas d’une organisation prise
+        // au hasard. `limit(1)` sans filtre laissait la RLS rendre toutes
+        // les organisations du compte et Postgres choisir la première du
+        // tas : un utilisateur membre de deux entreprises — §13 le prévoit
+        // explicitement — imprimait un document au SIRET et à l’adresse de
+        // l’autre.
         .select("name, legal_name, legal_form, siret, vat_number, rcs_city, address_line1, address_line2, postal_code, city, email, phone, insurance_details")
-        .limit(1)
+        .eq("id", quote.organization_id)
         .maybeSingle(),
     ]);
 

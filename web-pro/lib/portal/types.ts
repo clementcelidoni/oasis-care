@@ -82,6 +82,8 @@ export type ClientInvoice = {
   due_on: string | null;
   introduction: string | null;
   terms: string | null;
+  /** Reprise du devis accepté. Migration 0065. */
+  global_discount_percent: number;
 };
 
 export type ClientInvoiceLine = {
@@ -212,13 +214,22 @@ export function clientQuoteTotals(
   };
 }
 
-/** Les factures, elles, ont leur solde en base — `client_invoice_balance`. */
+/**
+ * Les factures ont leur SOLDE en base — `client_invoice_balance` — mais
+ * pas leur ventilation par taux : c'est le portail qui la recompose.
+ *
+ * La remise globale doit donc entrer dans le calcul. Sans elle, le
+ * détail par taux affiché au client ne ferait pas le total affiché
+ * juste en dessous, et c'est lui qui verrait la contradiction en
+ * premier.
+ */
 export function clientInvoiceTotals(
   lines: Pick<ClientInvoiceLine, "vat_rate" | "total_cents">[],
+  globalDiscountPercent = 0,
 ): PortalTotals {
   return clientQuoteTotals(
     lines.map((l) => ({ vat_rate: l.vat_rate, sale_total_cents: l.total_cents })),
-    0,
+    globalDiscountPercent,
   );
 }
 
