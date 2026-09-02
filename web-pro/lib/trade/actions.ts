@@ -4,6 +4,7 @@ import { revalidatePath } from "next/cache";
 import { redirect } from "next/navigation";
 import { createClient } from "@/lib/supabase/server";
 import { requireOrganization } from "@/lib/auth/organization";
+import { flash } from "@/lib/ui/flash";
 import {
   inputToCents, parseQuantity, parseQuantityOr, parseVatRate,
 } from "@/lib/quotes/types";
@@ -382,6 +383,34 @@ export async function deleteSalesLine(formData: FormData) {
     .select("lot_id, quantity")
     .eq("id", lineId)
     .maybeSingle();
+  if (!line) return;
+
+  /**
+   * LA GARDE EST ICI, PAS SEULEMENT À L'ÉCRAN.
+   *
+   * `SalesLines.tsx` ne montre la croix que si rien n'a été livré.
+   * C'était la seule protection : masquer un bouton n'empêche ni un
+   * envoi fabriqué, ni la course ordinaire — deux personnes sur la même
+   * commande, l'une livre pendant que l'autre a la page ouverte depuis
+   * dix minutes.
+   *
+   * Supprimer une ligne partiellement livrée libérerait la TOTALITÉ de
+   * la réservation, y compris la part déjà sortie de la pépinière : le
+   * stock disponible se mettrait à compter des plantes qui sont chez le
+   * client.
+   */
+  const { count: deliveredLines } = await supabase
+    .from("delivery_lines")
+    .select("id", { count: "exact", head: true })
+    .eq("sales_order_line_id", lineId);
+
+  if ((deliveredLines ?? 0) > 0) {
+    await flash(
+      "error",
+      "Cette ligne a déjà été livrée en tout ou partie : elle ne peut plus être supprimée. Passez par un avoir ou un retour.",
+    );
+    return;
+  }
 
   await supabase.from("sales_order_lines").delete().eq("id", lineId);
 

@@ -1,10 +1,11 @@
 import Link from "next/link";
-import { PageHeader, Card, EmptyState } from "@/components/ui";
+import { PageHeader, Card, EmptyState, ConfirmDialog } from "@/components/ui";
 import { listCatalog } from "@/lib/quotes/catalogActions";
 import {
   CATALOG_ITEM_TYPES, CATALOG_ITEM_TYPE_LABELS, formatCents, formatPercent,
 } from "@/lib/quotes/types";
 import { NewItemForm } from "./NewItemForm";
+import { archiveCatalogItem } from "@/lib/quotes/catalogActions";
 import { PriceCell } from "./PriceCell";
 
 /**
@@ -70,7 +71,8 @@ export default async function CatalogPage({ searchParams }: PageProps<"/catalogu
                   <th className="w-28 px-2 py-2 text-right font-medium">Achat</th>
                   <th className="w-28 px-2 py-2 text-right font-medium">Vente HT</th>
                   <th className="w-16 px-2 py-2 text-right font-medium">TVA</th>
-                  <th className="w-20 py-2 pr-4 text-right font-medium">Marque</th>
+                  <th className="w-20 px-2 py-2 text-right font-medium">Marque</th>
+                  <th className="w-10 py-2 pr-4" />
                 </tr>
               </thead>
               <tbody>
@@ -96,11 +98,32 @@ export default async function CatalogPage({ searchParams }: PageProps<"/catalogu
                         <PriceCell item={item} />
                       </td>
                       <td
-                        className={`tabular py-1.5 pr-4 text-right ${
+                        className={`tabular px-2 py-1.5 text-right ${
                           margin !== null && margin < 0 ? "text-critical" : "text-ink-soft"
                         }`}
                       >
                         {item.sale_price_cents === null ? "—" : formatPercent(margin)}
+                      </td>
+                      {/* RETIRER UN ARTICLE — l'action existait depuis le
+                          Milestone 5, sans aucun bouton pour l'appeler :
+                          un article entré par erreur restait dans la
+                          bibliothèque pour toujours.
+
+                          Elle ARCHIVE, elle ne supprime pas. Les devis
+                          qui citent cet article gardent leur référence,
+                          et leurs montants ne bougent pas — ils sont
+                          photographiés sur la ligne au moment du
+                          chiffrage. */}
+                      <td className="py-1.5 pr-4 text-right">
+                        <ConfirmDialog
+                          triggerLabel="✕"
+                          triggerVariant="ghost"
+                          title={`Retirer « ${item.name} » ?`}
+                          message="L'article disparaît de la bibliothèque de prix. Les devis qui le citent déjà ne changent pas : leurs montants ont été enregistrés au moment du chiffrage."
+                          confirmLabel="Retirer de la bibliothèque"
+                          action={archiveCatalogItem}
+                          hidden={{ catalog_item_id: item.id }}
+                        />
                       </td>
                     </tr>
                   );

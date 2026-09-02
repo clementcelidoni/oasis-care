@@ -60,7 +60,22 @@ export default async function OasisAIPage() {
           </span>
         </div>
 
-        {total === 0 ? (
+        {daily.failed ? (
+          /* « Rien à signaler » serait un mensonge rassurant : la liste
+             n'a pas pu être établie, et elle porte sur des factures en
+             retard et des interventions du jour. On le dit. */
+          <Card className="border-warning/30 bg-warning-wash px-4 py-6 text-center">
+            <p className="text-sm font-medium text-warning">
+              Impossible d&apos;établir vos priorités du jour.
+            </p>
+            <p className="mt-1 text-xs text-warning">
+              Ce n&apos;est pas « rien à signaler » : la liste n&apos;a pas pu être
+              calculée. Rechargez la page ; si le message revient, vos
+              interventions et vos factures restent consultables depuis leurs
+              écrans.
+            </p>
+          </Card>
+        ) : total === 0 ? (
           <Card className="px-4 py-6 text-center">
             <p className="text-sm font-medium">Rien ne réclame votre attention aujourd&apos;hui.</p>
             <p className="mt-1 text-xs text-ink-soft">

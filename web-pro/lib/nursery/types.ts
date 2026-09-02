@@ -149,6 +149,12 @@ export type StockRow = {
   reserved: number;
   quarantine: number;
   in_production: number;
+  /**
+   * Commandé au fournisseur et pas encore reçu — la sixième mesure de
+   * §STOCK VIVANT. La vue `nursery_stock` la rend depuis la migration
+   * 0053 ; l'écran continuait d'annoncer qu'elle « arriverait ».
+   */
+  expected: number;
 };
 
 export type Movement = {

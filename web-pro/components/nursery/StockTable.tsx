@@ -16,7 +16,8 @@ export function StockTable({ rows }: { rows: StockRow[] }) {
             <th className="w-24 px-2 py-2 text-right font-medium">Disponible</th>
             <th className="w-24 px-2 py-2 text-right font-medium">Réservé</th>
             <th className="w-24 px-2 py-2 text-right font-medium">Quarantaine</th>
-            <th className="w-28 py-2 pr-4 text-right font-medium">En production</th>
+            <th className="w-28 px-2 py-2 text-right font-medium">En production</th>
+            <th className="w-24 py-2 pr-4 text-right font-medium">Attendu</th>
           </tr>
         </thead>
         <tbody>
@@ -35,8 +36,14 @@ export function StockTable({ rows }: { rows: StockRow[] }) {
               <td className={`tabular px-2 py-1.5 text-right ${row.quarantine > 0 ? "text-critical" : "text-ink-faint"}`}>
                 {row.quarantine > 0 ? formatCount(row.quarantine) : "—"}
               </td>
-              <td className="tabular py-1.5 pr-4 text-right text-ink-soft">
+              <td className="tabular px-2 py-1.5 text-right text-ink-soft">
                 {row.in_production > 0 ? formatCount(row.in_production) : "—"}
+              </td>
+              {/* « Attendu » n'est pas du stock : c'est une promesse de
+                  fournisseur. Teinté différemment pour qu'on ne le
+                  confonde pas avec du disponible en lisant vite. */}
+              <td className="tabular py-1.5 pr-4 text-right text-info">
+                {row.expected > 0 ? formatCount(row.expected) : "—"}
               </td>
             </tr>
           ))}
