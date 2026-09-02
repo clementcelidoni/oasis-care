@@ -3,6 +3,7 @@
 import { revalidatePath } from "next/cache";
 import { createClient } from "@/lib/supabase/server";
 import { requireOrganization } from "@/lib/auth/organization";
+import { flash } from "@/lib/ui/flash";
 import { BUSINESS_TYPES, type BusinessType } from "@/lib/auth/permissions";
 import { TOGGLEABLE_MODULES, type ModuleKey } from "@/lib/navigation";
 
@@ -78,6 +79,7 @@ export async function updateCompanyProfile(formData: FormData) {
     .eq("id", organization.organizationId);
   if (error) throw new Error(error.message);
 
+  await flash("success", "Fiche de l'entreprise enregistrée.");
   // L'activité gouverne le menu, et le nom s'affiche dans la barre
   // latérale : c'est toute la mise en page qu'il faut réinvalider.
   revalidatePath("/", "layout");
@@ -106,6 +108,7 @@ export async function updateCompanyAdministration(formData: FormData) {
     .eq("id", organization.organizationId);
   if (error) throw new Error(error.message);
 
+  await flash("success", "Assurances et agréments enregistrés.");
   revalidatePath("/entreprise");
   revalidatePath("/devis", "layout");
   revalidatePath("/factures", "layout");
@@ -176,6 +179,7 @@ export async function uploadCompanyLogo(formData: FormData) {
     await supabase.storage.from("organization-logos").remove([before.logo_path]);
   }
 
+  await flash("success", "Logo mis à jour.");
   revalidatePath("/", "layout");
   return { ok: true };
 }
@@ -229,6 +233,12 @@ export async function updateModules(formData: FormData) {
     .eq("id", organization.organizationId);
   if (error) throw new Error(error.message);
 
+  await flash(
+    "success",
+    disabled.length === 0
+      ? "Tous les modules sont affichés."
+      : `${disabled.length} module${disabled.length > 1 ? "s" : ""} masqué${disabled.length > 1 ? "s" : ""} dans le menu.`,
+  );
   revalidatePath("/", "layout");
 }
 
@@ -274,6 +284,7 @@ export async function uploadCompanyDocument(formData: FormData) {
     return { ok: false, error: error.message };
   }
 
+  await flash("success", "Document ajouté.");
   revalidatePath("/entreprise/documents");
   return { ok: true };
 }

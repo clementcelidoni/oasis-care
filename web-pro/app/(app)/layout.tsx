@@ -9,6 +9,8 @@ import { loadQuickLists } from "@/lib/search/actions";
 import { visibleNavigation, type ModuleKey } from "@/lib/navigation";
 import { Sidebar } from "@/components/shell/Sidebar";
 import { Header } from "@/components/shell/Header";
+import { Toast } from "@/components/shell/Toast";
+import { readFlash } from "@/lib/ui/flash";
 
 /**
  * §2 STRUCTURE GÉNÉRALE — « Créer une vraie interface desktop » :
@@ -41,7 +43,7 @@ export default async function AppLayout({ children }: LayoutProps<"/">) {
   if (!organization) redirect((await hasPortalAccess()) ? "/portail" : "/bienvenue");
 
   const supabase = await createClient();
-  const [{ data: profile }, organizations, quick, cookieStore, { data: unread }] =
+  const [{ data: profile }, organizations, quick, cookieStore, { data: unread }, pendingFlash] =
     await Promise.all([
       supabase
         .from("business_organizations")
@@ -54,6 +56,7 @@ export default async function AppLayout({ children }: LayoutProps<"/">) {
       supabase.rpc("unread_notification_count", {
         p_organization_id: organization.organizationId,
       }),
+      readFlash(),
     ]);
 
   const logoUrl = profile?.logo_path
@@ -117,6 +120,12 @@ export default async function AppLayout({ children }: LayoutProps<"/">) {
           {children}
         </main>
       </div>
+
+      {/* §34 — le retour d'une action, quelle que soit la page. Le
+          message arrive par un cookie posé par la Server Action, ce qui
+          le fait survivre à une redirection : « Devis créé » s'affiche
+          sur la fiche du devis, pas sur la page qu'on vient de quitter. */}
+      <Toast flash={pendingFlash} />
     </div>
   );
 }

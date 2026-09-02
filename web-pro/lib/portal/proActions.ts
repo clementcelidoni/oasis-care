@@ -3,6 +3,7 @@
 import { revalidatePath } from "next/cache";
 import { createClient } from "@/lib/supabase/server";
 import { requireOrganization } from "@/lib/auth/organization";
+import { flash } from "@/lib/ui/flash";
 import { recordAudit } from "@/lib/audit/record";
 
 /**
@@ -47,6 +48,10 @@ export async function inviteClient(formData: FormData) {
     email,
   });
 
+  // Le lien n'est PAS envoyé — Oasis Care Pro n'a pas de service
+  // d'e-mail. Le dire ici évite qu'on attende un message qui ne
+  // partira jamais.
+  await flash("success", "Invitation créée. Copiez le lien et envoyez-le à votre client.");
   revalidatePath(`/crm/clients/${customerId}`);
 }
 
@@ -98,6 +103,7 @@ export async function revokePortalAccess(formData: FormData) {
     access_id: accessId,
   });
 
+  await flash("success", "Accès au portail fermé. Les jardins déjà livrés restent au client.");
   revalidatePath(`/crm/clients/${customerId}`);
 }
 
@@ -132,6 +138,13 @@ export async function deliverGarden(formData: FormData) {
   await recordAudit(organization.organizationId, "gardenDelivered", "garden", gardenId, {
     customer_id: customerId,
   });
+
+  // L'opération la moins réversible du produit : le jardin a changé de
+  // propriétaire. Le dire, et dire ce qu'on garde.
+  await flash(
+    "success",
+    "Jardin livré. Il est maintenant dans l'application du client ; vos devis et vos coûts restent chez vous.",
+  );
 
   revalidatePath(`/crm/clients/${customerId}`);
   // Le jardin a quitté l'espace de l'organisation : la liste du Digital
