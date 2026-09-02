@@ -47,6 +47,16 @@ struct GardenCoordinateSystem: Codable, Equatable {
     /// Plan rotation relative to true north, in radians — lets the
     /// local X/Y axes align to the property's own boundary instead of
     /// forcing north-up when that's not how the user drew it.
+    ///
+    /// ATTENTION, DÉPENDANCE NON ÉVIDENTE : ce champ vaut 0 partout et
+    /// n'est persisté dans aucune colonne — l'axe +Y du plan EST donc le
+    /// nord vrai aujourd'hui, et c'est ce qui permet à
+    /// `GardenMapObject.rotationRadians` d'être un AZIMUT au sens plein
+    /// du terme (un cap boussole). Le jour où ce champ serait renseigné,
+    /// l'azimut d'un objet cesserait d'être un cap vrai : il faudrait le
+    /// COMPOSER avec cette rotation, des deux côtés — iPhone ET web —
+    /// avant de l'afficher ou de le comparer à l'azimut du soleil. Ne
+    /// pas activer ce champ sans reprendre la convention d'angle.
     var rotationRadians: Double = 0
 
     /// WGS84 mean meters-per-degree-latitude — a standard geodesy

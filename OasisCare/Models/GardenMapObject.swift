@@ -25,6 +25,32 @@ final class GardenMapObject: Syncable {
     var garden: Garden?
     var objectType: GardenObjectType
     var position: GardenCoordinate
+    /// AZIMUT — le CAP BOUSSOLE de l'axe local +Y de l'objet, c'est-à-
+    /// dire le HAUT de son empreinte (et de son pictogramme).
+    ///
+    ///   • unité   : RADIANS ; les deux interfaces saisissent des DEGRÉS
+    ///   • origine : 0 = NORD
+    ///   • sens    : croissant dans le sens HORAIRE sur un plan nord en
+    ///               haut — nord 0°, est 90°, sud 180°, ouest 270°
+    ///
+    /// À 0° l'objet est droit : sa largeur court d'ouest en est, sa
+    /// hauteur du sud vers le nord. À 90° son haut pointe vers l'EST —
+    /// un mur de 4 m × 0,20 m y est donc couché nord-sud. Tourner
+    /// l'objet vers la droite à l'écran fait MONTER le nombre.
+    ///
+    /// Même convention, au signe et au zéro près, que la colonne
+    /// `garden_map_objects.rotation_radians` et que le web
+    /// (web-pro/lib/twin/geometry.ts). L'application se fait en un seul
+    /// endroit : `GardenMapCamera.screenRotationRadians(forAzimuthRadians:)`.
+    /// La valeur est normalisée dans [0, 2π[ par
+    /// `GardenMapEngine.rotateObject`.
+    ///
+    /// ATTENTION : `sprinklerStartAngleDegrees` /
+    /// `sprinklerEndAngleDegrees`, dix lignes plus bas dans ce même
+    /// modèle, suivent la convention OPPOSÉE — degrés, 0 = EST, sens
+    /// ANTIHORAIRE. Deux conventions d'angle contraires cohabitent donc
+    /// ici, et c'est volontaire : aucun code de rotation ne lit les
+    /// angles d'arroseur.
     var rotationRadians: Double
     var widthMeters: Double
     var heightMeters: Double

@@ -708,9 +708,13 @@ export function TwinEditor({
         const center = toScreen(object.position);
         const r = radius * camera.pixelsPerMeter;
 
-        // Les angles sont donnés dans le repère du monde (0 = est,
-        // sens trigonométrique). Le canvas tourne dans l'autre sens
-        // parce que son axe y descend : d'où les signes inversés.
+        // Les angles d'arroseur sont une AUTRE convention que l'azimut
+        // des objets, et c'est volontaire : degrés, 0 = est, sens
+        // TRIGONOMÉTRIQUE (le repère du monde). Le canvas tourne dans
+        // l'autre sens parce que son axe y descend : d'où les signes
+        // inversés ici. Ne pas les retourner « par sympathie » avec
+        // l'azimut — il faudrait aussi reprendre le sens de balayage de
+        // l'arc, côté iOS et dans la fonction Edge qui les produit.
         ctx.beginPath();
         ctx.moveTo(center.x, center.y);
         ctx.arc(center.x, center.y, r, (-end * Math.PI) / 180, (-start * Math.PI) / 180);
@@ -1679,8 +1683,18 @@ function Properties({
             onChange={(v) => onPatchObject(object.id, { widthMeters: v })} />
           <NumberRow label="Hauteur (m)" value={object.heightMeters} min={0.05}
             onChange={(v) => onPatchObject(object.id, { heightMeters: v })} />
-          <NumberRow label="Rotation (°)" value={(object.rotationRadians * 180) / Math.PI}
-            onChange={(v) => onPatchObject(object.id, { rotationRadians: (v * Math.PI) / 180 })} />
+          {/* AZIMUT — 0 = nord, croissant dans le sens HORAIRE sur un
+              plan nord en haut : nord 0°, est 90°, sud 180°, ouest 270°.
+              Saisi en DEGRÉS entiers, stocké en RADIANS ; c'est la seule
+              conversion du trajet. Le champ est normalisé dans [0, 360[
+              parce que rien d'autre ne le borne — ni la colonne, qui n'a
+              pas de contrainte CHECK, ni le patch. Géométrie : encadré
+              « CONVENTION D'ANGLE » de lib/twin/geometry.ts. */}
+          <NumberRow label="Azimut (°) — 0 = nord, 90 = est" step={1}
+            value={(object.rotationRadians * 180) / Math.PI}
+            onChange={(v) => onPatchObject(object.id, {
+              rotationRadians: (normalizeDegrees(v) * Math.PI) / 180,
+            })} />
           {VEGETATION.has(object.objectType) && (
             <NumberRow label="Couronne (m)" value={object.canopyDiameterMeters ?? object.widthMeters} min={0.1}
               onChange={(v) => onPatchObject(object.id, { canopyDiameterMeters: v })} />
@@ -1896,7 +1910,12 @@ function SprinklerFields({
         </div>
       </div>
 
-      <NumberRow label="Orientation (°)" value={start}
+      {/* AUTRE convention que l'azimut de l'objet, et volontairement
+          conservée : degrés, 0 = EST, sens ANTIHORAIRE. Laisser deux
+          zéros différents et deux sens opposés dans le même panneau
+          sans le dire est exactement la condition qui a produit la
+          divergence de rotation ; le libellé le dit donc. */}
+      <NumberRow label="Orientation (°) — 0 = est, antihoraire" value={start}
         onChange={(v) => onPatchObject(object.id, {
           sprinklerStartAngleDegrees: v,
           sprinklerEndAngleDegrees: v + sector,
@@ -2216,14 +2235,25 @@ function PlantLink({
   );
 }
 
+/**
+ * Ramène un angle en degrés dans [0, 360[ — 370 devient 10, −30 devient
+ * 330. Sans cela, « nord 0, est 90, sud 180, ouest 270 » cesse d'être
+ * vrai dès qu'on compare deux valeurs : rien d'autre ne borne cet
+ * angle, ni la colonne SQL ni le reste de l'éditeur.
+ */
+function normalizeDegrees(degrees: number): number {
+  if (!Number.isFinite(degrees)) return 0;
+  return ((degrees % 360) + 360) % 360;
+}
+
 function NumberRow({
-  label, value, onChange, min,
-}: { label: string; value: number; onChange: (v: number) => void; min?: number }) {
+  label, value, onChange, min, step = 0.1,
+}: { label: string; value: number; onChange: (v: number) => void; min?: number; step?: number }) {
   return (
     <label className="flex items-center justify-between gap-2">
       <span className="text-[11px] text-ink-faint">{label}</span>
       <input
-        type="number" step="0.1" min={min}
+        type="number" step={step} min={min}
         value={Number.isFinite(value) ? Math.round(value * 100) / 100 : 0}
         onChange={(e) => {
           const v = Number(e.target.value);

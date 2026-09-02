@@ -481,17 +481,6 @@ struct OasisPlanView: View {
         }
     }
 
-    /// Spec Phase 6F — "dans une première version : utiliser les objets
-    /// possédant une hauteur... calculer une approximation. Indiquer
-    /// clairement : Simulation estimée." Each shadow is a single thick
-    /// line pointing away from the sun, length = height / tan(elevation)
-    /// (capped so a low sun near sunrise/sunset can't produce an
-    /// absurdly long line) — a deliberately simple approximation, not a
-    /// precise silhouette polygon, matching the spec's own framing.
-    /// Azimuth (compass, 0°=N clockwise) is converted to
-    /// GardenCoordinate's math convention (0°=E counter-clockwise) here,
-    /// the same conversion pattern used for every other angle in this
-    /// file, before the direction is used.
     /// Spec Phase 6K — the imported/calibrated/aligned background plan
     /// the user traces over. Rotation combines the image's own
     /// alignment rotation with the camera's current rotation so the
@@ -500,6 +489,13 @@ struct OasisPlanView: View {
     /// the image's *position*; this applies the same rotation to its
     /// own orientation using the identical clockwise-positive
     /// convention that function's own doc comment establishes.
+    ///
+    /// AZIMUT — c'est la même convention que celle des objets, et le
+    /// plan y est arrivé LE PREMIER : radians, 0 = nord, croissant dans
+    /// le sens horaire. Voir
+    /// `GardenMapCamera.screenRotationRadians(forAzimuthRadians:)` et
+    /// l'encadré « CONVENTION D'ANGLE » de web-pro/lib/twin/geometry.ts.
+    /// Ce `+` est le bon signe : ne pas le retourner.
     private func drawPlanImage(in context: GraphicsContext, size: CGSize, camera: GardenMapCamera) {
         guard let planImage = engine.garden.planImage, planImage.isVisible,
               let metersPerPixel = planImage.metersPerPixel,
@@ -545,6 +541,34 @@ struct OasisPlanView: View {
         imageContext.draw(Image(uiImage: background.image), in: rect)
     }
 
+    /// Spec Phase 6F — "dans une première version : utiliser les objets
+    /// possédant une hauteur... calculer une approximation. Indiquer
+    /// clairement : Simulation estimée." Each shadow is a single thick
+    /// line pointing away from the sun, length = height / tan(elevation)
+    /// (capped so a low sun near sunrise/sunset can't produce an
+    /// absurdly long line) — a deliberately simple approximation, not a
+    /// precise silhouette polygon, matching the spec's own framing.
+    /// Azimuth (compass, 0°=N clockwise) is converted to
+    /// GardenCoordinate's math convention (0°=E counter-clockwise) here,
+    /// before the direction is used.
+    ///
+    /// CORRECTION (unification de l'azimut) — ce bloc était posé
+    /// au-dessus de `drawPlanImage`, deux fonctions plus haut, alors
+    /// qu'il décrit CELLE-CI ; un lecteur attribuait donc la
+    /// documentation des ombres au dessin du plan importé, dont la
+    /// convention d'angle est justement différente. Et il affirmait que
+    /// la conversion « 90 − azimut » était « la même que pour tous les
+    /// autres angles de ce fichier » : c'est FAUX. Elle n'a lieu que
+    /// pour le SOLEIL, ici et dans SunExposureService.isShadowed. Le
+    /// plan importé (`drawPlanImage`) et les objets
+    /// (`GardenObjectMarkerView`) travaillent en espace écran, sans
+    /// aucune conversion — et ils sont désormais en AZIMUT eux aussi.
+    ///
+    /// LIMITE ASSUMÉE : l'ombre ne lit pas `rotationRadians`. Elle est
+    /// un trait d'épaisseur `widthMeters`, donc un mur tourné projette
+    /// la même ombre qu'un mur droit. Maintenant que l'empreinte
+    /// rectangulaire est dessinée, l'écart se voit ; le corriger est une
+    /// autre passe.
     private func drawShadows(in context: GraphicsContext, size: CGSize, camera: GardenMapCamera) {
         guard engine.isShowingShadows, let latitude = engine.garden.latitude else { return }
         let sunPosition = SunExposureService.sunPosition(latitude: latitude, date: engine.sunSimulationDate, hour: engine.sunSimulationHour)
@@ -553,8 +577,14 @@ struct OasisPlanView: View {
         let shadowCasters = engine.garden.mapObjects.filter { $0.objectType.castsShadow && $0.structureHeightMeters != nil }
         guard !shadowCasters.isEmpty else { return }
 
-        let mathAngleDegrees = 90 - sunPosition.azimuthDegrees
-        let shadowDirectionRadians = (mathAngleDegrees + 180) * .pi / 180
+        // La conversion « azimut boussole → direction de l'ombre » est
+        // désormais portée par SunExposureService, et par lui seul :
+        // elle était écrite ici À L'IDENTIQUE, et deux copies d'une même
+        // formule d'angle sont précisément ce qui a fini par diverger
+        // ailleurs dans ce fichier.
+        let shadowDirectionRadians = SunExposureService.shadowDirectionRadians(
+            sunAzimuthDegrees: sunPosition.azimuthDegrees
+        )
         let elevationRadians = max(sunPosition.elevationDegrees, 1) * .pi / 180
 
         for object in shadowCasters {
@@ -1376,8 +1406,11 @@ struct OasisPlanView: View {
 }
 
 /// Spec Phase 6C — "représenter tronc + houppier" for vegetation, sized
-/// from canopyDiameterMeters when known; every other object type is a
-/// simple icon badge. A thicker accent ring marks the selected object.
+/// from canopyDiameterMeters when known; round types (see
+/// GardenObjectType.isRoundOnPlan) are an icon badge, and everything
+/// else — mur, terrasse, allée… — is drawn at its REAL width × height
+/// footprint, the way the web editor has always drawn it. A thicker
+/// accent ring, following the object's own shape, marks the selection.
 /// Spec Phase 6E — the Houppiers layer toggles the canopy circle off
 /// (falling back to a plain marker) independently of whether the
 /// vegetation object shows at all; the Santé layer, when on and this
@@ -1402,16 +1435,44 @@ private struct GardenObjectMarkerView: View {
         Group {
             if object.objectType.isVegetation && showCanopy {
                 vegetationView
+            } else if object.objectType.isRoundOnPlan {
+                roundIconView
             } else {
-                iconView
+                footprintView
             }
         }
-        .rotationEffect(.radians(object.rotationRadians))
-        .overlay(
-            Circle()
-                .stroke(Color.accentColor, lineWidth: isSelected ? 3 : 0)
-                .padding(-4)
-        )
+        // Une empreinte très étroite — un mur de 20 cm de large — reste
+        // dessinée juste mais devient impossible à viser du doigt. La
+        // zone tactile reçoit donc un plancher, posé AVANT la rotation
+        // pour qu'elle tourne avec l'objet. Elle n'agrandit pas le
+        // dessin.
+        .frame(minWidth: 28, minHeight: 28)
+        .contentShape(Rectangle())
+        // AZIMUT — la convention est appliquée ici, et à un seul
+        // endroit : `camera.screenRotationRadians(forAzimuthRadians:)`,
+        // dont le commentaire porte l'énoncé complet (RADIANS,
+        // 0 = NORD, sens HORAIRE ; nord 0°, est 90°, sud 180°,
+        // ouest 270°). Aucune inversion de signe ici :
+        // `.rotationEffect` travaille en espace écran, où le positif est
+        // déjà horaire.
+        //
+        // C'est aussi cette fonction qui ajoute `camera.rotationRadians`,
+        // que cette vue oubliait : la POSITION de l'objet le subissait
+        // déjà (`camera.screenPoint`) et le plan importé l'ajoute bien
+        // (`drawPlanImage`). Sans ce terme, pivoter la carte à deux
+        // doigts déplaçait les objets sans les tourner — l'azimut
+        // affiché cessait alors d'être un cap, et les deux applications
+        // redivergeaient malgré le correctif web.
+        .rotationEffect(.radians(camera.screenRotationRadians(forAzimuthRadians: object.rotationRadians)))
+    }
+
+    /// L'anneau de sélection suit la FORME de l'objet. C'était un
+    /// `Circle()` en dur : autour d'un mur, il montrait une sélection
+    /// qui n'avait pas la forme de ce qui était sélectionné.
+    private func selectionRing<S: Shape>(_ shape: S) -> some View {
+        shape
+            .stroke(Color.accentColor, lineWidth: isSelected ? 3 : 0)
+            .padding(-4)
     }
 
     private var vegetationView: some View {
@@ -1425,14 +1486,54 @@ private struct GardenObjectMarkerView: View {
                 .fill(Color.brown)
                 .frame(width: 8, height: 8)
         }
+        .overlay(selectionRing(Circle()))
     }
 
-    private var iconView: some View {
+    /// La pastille ronde — inchangée — pour les 18 types que le web
+    /// dessine en cercle lui aussi (`GardenObjectType.isRoundOnPlan`,
+    /// miroir de `ROUND_OBJECTS`). Sur un rond, l'azimut ne se voit pas ;
+    /// c'est très exactement pourquoi la divergence de sens entre les
+    /// deux applications a pu passer inaperçue.
+    private var roundIconView: some View {
         let sizePoints = max(camera.points(forMeters: max(object.widthMeters, object.heightMeters)), 20)
         return Image(systemName: object.objectType.icon)
             .font(.system(size: min(sizePoints * 0.5, 22)))
             .foregroundStyle(.white)
             .frame(width: sizePoints, height: sizePoints)
             .background((healthTint ?? Color.accentColor).gradient, in: Circle())
+            .overlay(selectionRing(Circle()))
+    }
+
+    /// L'EMPREINTE RÉELLE largeur × hauteur, pour tout ce qui n'est pas
+    /// rond — mur, clôture, terrasse, allée, escalier, maison, serre…
+    ///
+    /// Elle n'existait pas : tout objet non végétal était un pictogramme
+    /// dans un cercle dimensionné par `max(largeur, hauteur)`, si bien
+    /// qu'un mur de 4 m × 0,10 m s'affichait en pastille de 4 m et que sa
+    /// rotation restait strictement invisible. Le web, lui, dessine
+    /// depuis toujours le rectangle tourné (`rotatedRectCorners`).
+    /// Corriger le seul signe de l'angle n'aurait donc pas suffi à
+    /// rendre les deux plans identiques, qui est la demande.
+    private var footprintView: some View {
+        // Plancher de 3 points par côté, comme le rayon minimal du web
+        // (3 px) : au-delà d'un certain dézoom, un mur cesserait
+        // simplement d'exister à l'écran.
+        let widthPoints = max(camera.points(forMeters: object.widthMeters), 3)
+        let heightPoints = max(camera.points(forMeters: object.heightMeters), 3)
+        let shortSide = min(widthPoints, heightPoints)
+        let shape = RoundedRectangle(cornerRadius: min(3, shortSide / 2), style: .continuous)
+        return shape
+            .fill((healthTint ?? Color.accentColor).gradient)
+            .frame(width: widthPoints, height: heightPoints)
+            .overlay(
+                // Le pictogramme n'apparaît que s'il tient dans
+                // l'empreinte : sur une allée de 20 cm il n'y a pas la
+                // place, et le web n'y dessine d'ailleurs aucune icône.
+                Image(systemName: object.objectType.icon)
+                    .font(.system(size: min(shortSide * 0.55, 22)))
+                    .foregroundStyle(.white)
+                    .opacity(shortSide >= 16 ? 1 : 0)
+            )
+            .overlay(selectionRing(shape))
     }
 }

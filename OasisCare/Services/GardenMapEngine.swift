@@ -486,9 +486,36 @@ final class GardenMapEngine: ObservableObject {
         }
     }
 
+    /// Ramène un AZIMUT dans [0, 2π[ — 370° devient 10°, −30° devient
+    /// 330°.
+    ///
+    /// Rien d'autre ne borne cet angle : la colonne SQL n'a pas de
+    /// contrainte CHECK (migration 0024) et l'éditeur web ne bornait
+    /// rien non plus jusqu'ici. Sans cette normalisation, la règle
+    /// « nord 0, est 90, sud 180, ouest 270 » cesse d'être vraie dès la
+    /// première comparaison de deux valeurs, et deux objets orientés
+    /// pareil peuvent porter deux nombres différents.
+    static func normalizedAzimuth(_ radians: Double) -> Double {
+        guard radians.isFinite else { return 0 }
+        let turn = 2 * Double.pi
+        let remainder = radians.truncatingRemainder(dividingBy: turn)
+        let positive = remainder < 0 ? remainder + turn : remainder
+        // Un reste négatif minuscule (-1e-17) additionné à 2π peut
+        // arrondir à 2π pile et ressortir de l'intervalle : on referme.
+        return positive >= turn ? 0 : positive
+    }
+
+    /// Oriente un objet du plan. `rotationRadians` est un AZIMUT (voir
+    /// `GardenMapObject.rotationRadians` : 0 = nord, horaire, radians)
+    /// et il est normalisé dans [0, 2π[ AVANT d'être écrit — donc avant
+    /// de partir en base et sur les autres appareils.
+    ///
+    /// L'annulation restitue `old` normalisé, et non la valeur brute :
+    /// une valeur héritée hors bornes ne peut pas revenir par la porte
+    /// de derrière.
     func rotateObject(_ object: GardenMapObject, to rotationRadians: Double, context: ModelContext) {
-        let old = object.rotationRadians
-        object.rotationRadians = rotationRadians
+        let old = Self.normalizedAzimuth(object.rotationRadians)
+        object.rotationRadians = Self.normalizedAzimuth(rotationRadians)
         markUpdated(object, context: context)
         undoManager.setActionName("Pivoter")
         undoManager.registerUndo(withTarget: self) { engine in

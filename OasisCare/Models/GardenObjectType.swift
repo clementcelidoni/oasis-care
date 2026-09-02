@@ -109,6 +109,40 @@ enum GardenObjectType: String, Codable, CaseIterable, Identifiable {
         }
     }
 
+    /// Les types dessinés comme une PASTILLE RONDE sur le plan, par
+    /// opposition à ceux qui montrent leur empreinte rectangulaire
+    /// largeur × hauteur (mur, terrasse, allée, maison…).
+    ///
+    /// Cette liste est le miroir EXACT de `ROUND_OBJECTS` côté web
+    /// (web-pro/lib/twin/types.ts) — 18 types sur 30. Elle est nommée
+    /// ici plutôt que recopiée dans la vue précisément pour qu'on la
+    /// retrouve le jour où le catalogue de types évoluera : deux listes
+    /// muettes divergeraient à la première nouvelle valeur. Le
+    /// `switch` est exhaustif, sans `default`, pour que l'ajout d'un
+    /// type ne compile pas tant qu'on n'a pas dit de quel côté il tombe.
+    ///
+    /// Pour un objet rond, l'azimut est par construction invisible ;
+    /// c'est d'ailleurs pour cela que l'inversion de sens entre les deux
+    /// applications a pu passer inaperçue si longtemps.
+    var isRoundOnPlan: Bool {
+        switch self {
+        case .plant, .tree, .palm, .shrub,
+             .rock,
+             .waterSource, .valve, .pump, .sensor, .filter,
+             .sprinkler, .dripEmitter,
+             .light, .electricalPoint,
+             .birdhouse, .insectHotel, .wildlifeWaterPoint, .wildlifeRefuge:
+            return true
+        case .house, .wall, .fence,
+             .terrace, .pool, .pond, .greenhouse,
+             .path, .stairs,
+             .decorativeObject,
+             .pollinatorZone,
+             .custom:
+            return false
+        }
+    }
+
     var defaultWidthMeters: Double {
         switch self {
         case .plant: return 0.4

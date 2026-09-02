@@ -12,8 +12,25 @@ import Foundation
 ///
 /// Azimuth follows compass convention (0°=north, 90°=east, clockwise) —
 /// OasisPlanView's own drawShadows converts to GardenCoordinate's
-/// math convention (0°=east, counter-clockwise) at the point of use,
-/// the same way it already does for every other angle in that file.
+/// math convention (0°=east, counter-clockwise) at the point of use.
+///
+/// CORRECTION (unification de l'azimut) — ce commentaire affirmait
+/// jusqu'ici que c'était « la même conversion que pour tous les autres
+/// angles de ce fichier ». C'était FAUX, et c'est très exactement le
+/// mécanisme qui a produit la divergence de rotation entre les deux
+/// applications : un commentaire qui décrit une cohérence inexistante
+/// dispense le lecteur suivant de vérifier. La conversion « 90 −
+/// azimut » n'a lieu qu'aux DEUX endroits qui parlent du SOLEIL
+/// (`isShadowed` ci-dessous et OasisPlanView.drawShadows) ; le plan
+/// importé et les objets, eux, sont orientés en espace écran sans
+/// aucune conversion — et ils sont désormais en AZIMUT eux aussi
+/// (0 = nord, horaire), voir
+/// `GardenMapCamera.screenRotationRadians(forAzimuthRadians:)`.
+///
+/// À savoir aussi : le soleil et la rotation des objets ne se
+/// rencontrent JAMAIS dans un calcul. `drawShadows` et `isShadowed` ne
+/// lisent que position, hauteur et largeur, jamais `rotationRadians` —
+/// un mur tourné projette donc la même ombre qu'un mur droit.
 enum SunExposureService {
     struct SunPosition {
         var elevationDegrees: Double
@@ -113,18 +130,39 @@ enum SunExposureService {
         return (litHours, level)
     }
 
+    /// AZIMUT SOLAIRE → direction de l'OMBRE, en radians, dans le
+    /// repère `GardenCoordinate` (x vers l'est, y vers le nord ; angle
+    /// mathématique, 0 = est, sens ANTIHORAIRE).
+    ///
+    /// Deux conversions en une : `90 − azimut` passe du cap boussole
+    /// (0 = nord, horaire) à l'angle mathématique, et `+ 180` retourne
+    /// la direction — l'ombre part à l'opposé du soleil.
+    ///
+    /// Cette formule existait DEUX fois, mot pour mot, ici et dans
+    /// `OasisPlanView.drawShadows` ; toute évolution devait penser aux
+    /// deux. Elle n'a plus qu'un seul porteur.
+    ///
+    /// À NE PAS confondre avec l'AZIMUT DES OBJETS du plan
+    /// (`GardenMapObject.rotationRadians`) : c'est un cap boussole lui
+    /// aussi, mais il ne passe jamais par ici — les ombres ne lisent pas
+    /// la rotation des objets, seulement leur position, leur hauteur et
+    /// leur largeur.
+    static func shadowDirectionRadians(sunAzimuthDegrees: Double) -> Double {
+        let mathAngleDegrees = 90 - sunAzimuthDegrees
+        return (mathAngleDegrees + 180) * .pi / 180
+    }
+
     private static func isShadowed(
         _ point: GardenCoordinate, by casters: [(position: GardenCoordinate, heightMeters: Double, widthMeters: Double)], sun: SunPosition
     ) -> Bool {
-        let mathAngleDegrees = 90 - sun.azimuthDegrees
-        let shadowDirectionRadians = (mathAngleDegrees + 180) * .pi / 180
+        let direction = shadowDirectionRadians(sunAzimuthDegrees: sun.azimuthDegrees)
         let elevationRadians = max(sun.elevationDegrees, 1) * .pi / 180
 
         for caster in casters {
             let shadowLength = min(caster.heightMeters / tan(elevationRadians), 60)
             let shadowEnd = GardenCoordinate(
-                xMeters: caster.position.xMeters + shadowLength * cos(shadowDirectionRadians),
-                yMeters: caster.position.yMeters + shadowLength * sin(shadowDirectionRadians)
+                xMeters: caster.position.xMeters + shadowLength * cos(direction),
+                yMeters: caster.position.yMeters + shadowLength * sin(direction)
             )
             let distance = GardenGeometry.distanceFromPoint(point, toSegmentFrom: caster.position, to: shadowEnd)
             if distance <= max(caster.widthMeters / 2, 0.5) {

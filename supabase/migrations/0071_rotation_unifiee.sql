@@ -1,0 +1,100 @@
+-- Oasis Care — CONVENTION D'ANGLE : la rotation des objets du plan est
+-- un AZIMUT, et la colonne le dit enfin.
+--
+-- À exécuter après 0070. Idempotente, purement documentaire :
+-- AUCUNE donnée n'est écrite, aucune structure n'est modifiée. Deux
+-- `comment on column`, rien d'autre.
+--
+-- ============================================================
+-- POURQUOI CE FICHIER EXISTE
+-- ============================================================
+--
+-- Deux applications dessinent le même plan à partir de cette table :
+-- l'éditeur web (web-pro/components/twin/TwinEditor.tsx) et l'iPhone
+-- (OasisCare/Views/Gardens/OasisPlanView.swift). Elles lisaient la même
+-- valeur de `rotation_radians` et la dessinaient EN SENS CONTRAIRE : un
+-- objet posé à +30° sur le web s'affichait à −30° sur le téléphone.
+--
+-- Le défaut a survécu longtemps parce que 18 des 30 types d'objets sont
+-- dessinés en pastille RONDE — sur un arbre ou un arroseur, une
+-- rotation ne se voit pas. Il n'apparaît que sur un mur, une allée, une
+-- terrasse.
+--
+-- La cause racine n'est pas une faute de calcul : c'est un SILENCE À
+-- TROIS VOIX. Le champ Swift, le champ TypeScript et cette colonne
+-- étaient tous les trois nus. Chaque lecteur a donc supposé la
+-- convention qui lui semblait naturelle, et deux d'entre elles étaient
+-- opposées. Le code des deux côtés porte désormais l'énoncé ; ce
+-- commentaire SQL est la troisième voix.
+--
+-- ============================================================
+-- CE QU'IL N'Y A PAS ICI, ET POURQUOI
+-- ============================================================
+--
+-- 1. AUCUN UPDATE. Contrôle refait en lecture seule sur la production
+--    avant d'écrire ce fichier : `garden_map_objects` compte 29 lignes
+--    (15 vivantes, 14 en suppression douce) et pas UNE n'a
+--    `rotation_radians <> 0` — minimum 0, maximum 0.
+--    `garden_plan_images` contient 0 ligne. `digital_twin_revisions`
+--    contient 0 ligne, donc aucun instantané JSON ne peut restituer un
+--    angle figé dans l'ancienne convention.
+--    Un UPDATE toucherait 29 lignes pour les remplacer par elles-mêmes,
+--    ferait remonter leurs `updated_at` et déclencherait une vague de
+--    synchronisation inutile sur les téléphones. Le contrôle à relancer
+--    avant fusion est en bas de ce fichier.
+--
+-- 2. AUCUN RENOMMAGE de colonne, et aucune colonne en degrés. Des
+--    binaires iOS déjà distribués (TestFlight, Phase 12 en production)
+--    poussent `rotation_radians` dans leurs upserts : un renommage
+--    ferait échouer leur synchronisation ENTIÈRE, pas seulement la
+--    rotation. Le nom reste d'ailleurs VRAI — l'unité est bien le
+--    radian ; c'est la convention d'ORIENTATION qui manquait.
+--
+-- 3. AUCUNE CONTRAINTE CHECK sur [0, 2*pi[. Le bornage est fait côté
+--    application (GardenMapEngine.normalizedAzimuth et la saisie web),
+--    de sorte qu'un ancien binaire qui pousserait 370° voie sa
+--    synchronisation aboutir plutôt que d'échouer en bloc sur une
+--    valeur d'angle. À reconsidérer quand tous les appareils auront
+--    basculé.
+
+comment on column public.garden_map_objects.rotation_radians is
+  'AZIMUT : cap boussole de l''axe local +Y de l''objet (le haut de son empreinte, qui est aussi le haut de son pictogramme). 0 = nord, 90 = est, 180 = sud, 270 = ouest, croissant dans le sens HORAIRE sur un plan orienté nord en haut. Stocké en RADIANS ; les deux interfaces saisissent et affichent des degrés dans [0, 360[. À 0 l''objet est droit : sa largeur court d''ouest en est, sa hauteur du sud vers le nord. NE PAS confondre avec sprinkler_start_angle_degrees / sprinkler_end_angle_degrees, qui sont en DEGRÉS, 0 = est, sens ANTIHORAIRE. Détail : encadré CONVENTION D''ANGLE de web-pro/lib/twin/geometry.ts et GardenMapCamera.screenRotationRadians(forAzimuthRadians:).';
+
+comment on column public.garden_plan_images.rotation_radians is
+  'AZIMUT du fond de plan importé, même convention que garden_map_objects.rotation_radians : radians, 0 = nord, croissant dans le sens horaire. Le plan y était déjà conforme avant les objets ; son sens est verrouillé par web-pro/lib/twin/planGeometry.test.ts. Ne pas le retourner.';
+
+-- ============================================================
+-- CONTRÔLE À RELANCER JUSTE AVANT LA FUSION (lecture seule)
+-- ============================================================
+--
+-- Doit rendre 0 partout. Si une seule ligne apparaît, c'est qu'une
+-- rotation a été saisie entre-temps : ne pas fusionner sans avoir
+-- tranché sa provenance. Aucune colonne ne dit quelle plateforme a
+-- écrit une ligne — c'est pourquoi les deux applications doivent être
+-- livrées dans la MÊME release, et pourquoi cette question ne pourra
+-- plus être tranchée correctement le jour où deux conventions
+-- coexisteraient en base.
+--
+--   select count(*) filter (where rotation_radians <> 0) as objets_tournes,
+--          count(*)                                      as objets_total
+--     from public.garden_map_objects;
+--
+--   select count(*)                                      as plans_total,
+--          count(*) filter (where rotation_radians <> 0) as plans_tournes
+--     from public.garden_plan_images;
+--
+--   select count(*) as revisions_total from public.digital_twin_revisions;
+--
+-- SI, et seulement si, le contrôle ramène des objets tournés ET qu'il
+-- est établi qu'ils ont été saisis depuis le WEB avant le correctif —
+-- une valeur saisie sur iPhone est déjà un azimut, la retourner la
+-- casserait — la conversion est un pur changement de signe :
+--
+--   update public.garden_map_objects
+--      set rotation_radians = mod(2*pi() - mod(rotation_radians, 2*pi()), 2*pi())
+--    where rotation_radians <> 0
+--      and id in (/* liste explicite des lignes saisies depuis le web */);
+--
+-- Cette requête est commentée à dessein : elle n'a aujourd'hui aucune
+-- ligne à traiter, et rien en base ne permet de désigner ces lignes
+-- automatiquement.

@@ -11,6 +11,47 @@
  * seul endroit (`worldToScreen` / `screenToWorld`) plutôt que dispersée
  * dans le rendu : c'est le genre d'inversion de signe qui, oubliée une
  * fois, donne un jardin en miroir.
+ *
+ * ===============================================================
+ * CONVENTION D'ANGLE — AZIMUT. Vaut pour les OBJETS ET pour le PLAN
+ * IMPORTÉ, et pour rien d'autre dans ce fichier.
+ * ===============================================================
+ *
+ * Tout `rotationRadians` lu ici est un AZIMUT : le CAP BOUSSOLE de
+ * l'axe local +Y de l'élément — le HAUT de son empreinte.
+ *
+ *   • unité   : RADIANS dans la colonne et dans le code ; les deux
+ *               interfaces saisissent et affichent des DEGRÉS, dans
+ *               [0, 360[. C'est la seule conversion du trajet.
+ *   • origine : 0 = NORD.
+ *   • sens    : croissant dans le sens HORAIRE, sur un plan nord en
+ *               haut. nord 0° · est 90° · sud 180° · ouest 270°.
+ *
+ * Trois vérifications qu'on doit pouvoir faire sans hésiter :
+ *   (1) à 0° l'objet est droit — sa largeur court d'ouest en est, sa
+ *       hauteur du sud vers le nord ;
+ *   (2) tourner l'objet VERS LA DROITE à l'écran fait MONTER le nombre ;
+ *   (3) à 90° le haut de l'objet pointe vers l'EST — un mur de
+ *       4 m × 0,20 m y est donc couché nord-sud.
+ *
+ * Formules, dans le repère monde (x vers l'est, y vers le nord), pour
+ * un azimut a :
+ *       axe local +Y (la hauteur) = ( sin a,  cos a )
+ *       axe local +X (la largeur) = ( cos a, -sin a )
+ *
+ * `rotateClockwise` est LA SEULE matrice autorisée sur cette colonne et
+ * `unrotateClockwise` sa seule réciproque. N'en réécrivez aucune autre :
+ * la matrice trigonométrique habituelle (`x·cos − y·sin`,
+ * `x·sin + y·cos`) envoie le haut de l'objet sur (−sin a, cos a), soit
+ * l'azimut −a. C'est très exactement le défaut que ce fichier a porté
+ * pour les objets — un objet posé à +30° sur le web s'affichait à −30°
+ * sur l'iPhone — pendant que le plan importé, lui, était déjà du bon
+ * côté.
+ *
+ * NE PAS confondre avec les angles d'arroseur
+ * (`sprinklerStartAngleDegrees` / `sprinklerEndAngleDegrees`) : ceux-là
+ * sont une AUTRE convention, conservée volontairement — degrés,
+ * 0 = est, sens ANTIHORAIRE — et aucun code de rotation ne les lit.
  */
 
 export type Point = { xMeters: number; yMeters: number };
@@ -191,6 +232,37 @@ export function snapAngle(from: Point, to: Point, stepDegrees = 45): Point {
 }
 
 // ---------------------------------------------------------------
+// Rotation — l'UNIQUE porteur du signe
+//
+// Une seule paire de fonctions pour les objets ET pour le plan
+// importé. C'est délibéré : tant que ces deux-là sont les seules à
+// écrire un cosinus et un sinus sur cette colonne, les deux familles
+// ne peuvent plus diverger. Voir l'encadré « CONVENTION D'ANGLE » en
+// tête de fichier.
+// ---------------------------------------------------------------
+
+/**
+ * Applique un AZIMUT à un décalage local exprimé en mètres MONDE
+ * (x vers l'est, y vers le nord).
+ *
+ * Le haut de l'élément — le vecteur local (0, 1) — part vers
+ * (sin a, cos a) : c'est le cap `a` compté depuis le NORD dans le sens
+ * HORAIRE, donc la définition même de l'azimut.
+ */
+export function rotateClockwise(ox: number, oy: number, rotationRadians: number) {
+  const cos = Math.cos(rotationRadians);
+  const sin = Math.sin(rotationRadians);
+  return { x: ox * cos + oy * sin, y: -ox * sin + oy * cos };
+}
+
+/** L'inverse exact de `rotateClockwise`. */
+export function unrotateClockwise(dx: number, dy: number, rotationRadians: number) {
+  const cos = Math.cos(rotationRadians);
+  const sin = Math.sin(rotationRadians);
+  return { x: dx * cos - dy * sin, y: dx * sin + dy * cos };
+}
+
+// ---------------------------------------------------------------
 // Tests d'appartenance
 // ---------------------------------------------------------------
 
@@ -212,9 +284,14 @@ export function pointInPolygon(p: Point, polygon: Point[]): boolean {
 /**
  * Point dans un rectangle tourné (un objet placé).
  *
- * On ramène le point dans le repère de l'objet en le tournant de
- * -rotation autour du centre, ce qui transforme le test en un simple
- * encadrement.
+ * `rotationRadians` est un AZIMUT — 0 = nord, horaire, en radians ;
+ * voir l'encadré en tête de fichier. On ramène le point dans le repère
+ * de l'objet, ce qui transforme le test en un simple encadrement.
+ *
+ * `unrotateClockwise`, et non une matrice recopiée : ce test DOIT être
+ * l'inverse exact de `rotatedRectCorners`. Les deux se corrigent
+ * ensemble ou pas du tout — sinon on attrape l'objet là où il n'est pas
+ * dessiné, un défaut plus déroutant que celui qu'on répare.
  */
 export function pointInRotatedRect(
   p: Point,
@@ -223,18 +300,26 @@ export function pointInRotatedRect(
   heightMeters: number,
   rotationRadians: number,
 ): boolean {
-  const dx = p.xMeters - center.xMeters;
-  const dy = p.yMeters - center.yMeters;
-  const cos = Math.cos(-rotationRadians);
-  const sin = Math.sin(-rotationRadians);
-  const localX = dx * cos - dy * sin;
-  const localY = dx * sin + dy * cos;
+  const local = unrotateClockwise(
+    p.xMeters - center.xMeters,
+    p.yMeters - center.yMeters,
+    rotationRadians,
+  );
   return (
-    Math.abs(localX) <= widthMeters / 2 && Math.abs(localY) <= heightMeters / 2
+    Math.abs(local.x) <= widthMeters / 2 && Math.abs(local.y) <= heightMeters / 2
   );
 }
 
-/** Sommets du rectangle tourné, pour le dessin et les poignées. */
+/**
+ * Sommets du rectangle tourné : le dessin, les poignées et le contour
+ * de sélection en dérivent tous, et suivront donc automatiquement.
+ *
+ * `rotationRadians` est un AZIMUT : 0 = NORD, croissant dans le sens
+ * HORAIRE sur un plan nord en haut, en radians (encadré en tête de
+ * fichier). D'où `rotateClockwise` — la même et unique matrice que le
+ * plan importé. La matrice trigonométrique qui se trouvait ici tournait
+ * les objets à l'envers de l'iPhone.
+ */
 export function rotatedRectCorners(
   center: Point,
   widthMeters: number,
@@ -243,17 +328,15 @@ export function rotatedRectCorners(
 ): Point[] {
   const hw = widthMeters / 2;
   const hh = heightMeters / 2;
-  const cos = Math.cos(rotationRadians);
-  const sin = Math.sin(rotationRadians);
   return [
     { x: -hw, y: -hh },
     { x: hw, y: -hh },
     { x: hw, y: hh },
     { x: -hw, y: hh },
-  ].map((c) => ({
-    xMeters: center.xMeters + c.x * cos - c.y * sin,
-    yMeters: center.yMeters + c.x * sin + c.y * cos,
-  }));
+  ].map((c) => {
+    const r = rotateClockwise(c.x, c.y, rotationRadians);
+    return { xMeters: center.xMeters + r.x, yMeters: center.yMeters + r.y };
+  });
 }
 
 /**
@@ -336,7 +419,11 @@ export function formatArea(squareMeters: number): string {
  * centre-là, et `planCenterFromTopLeft` existe précisément pour
  * rattraper une valeur écrite sous l'ancienne convention.
  *
- * ROTATION. Le signe s'établit par le calcul, pas par intuition :
+ * ROTATION : voir l'encadré « CONVENTION D'ANGLE » en tête de fichier.
+ * Le plan importé la suit déjà, et il l'a suivie LE PREMIER — le signe
+ * y avait été établi par le calcul lors d'un correctif antérieur, et
+ * c'est ce raisonnement-là, rangé sous le seul chapitre du plan, qui
+ * avait laissé les objets y échapper :
  *
  *  • iOS additionne la rotation du plan à celle de la caméra dans
  *    l'ESPACE ÉCRAN (`imageContext.rotate(by: camera.rotationRadians +
@@ -354,7 +441,9 @@ export function formatArea(squareMeters: number): string {
  *
  * Conséquence pour les fonctions ci-dessous : dans le repère monde
  * (y vers le haut), une rotation positive est HORAIRE, donc d'angle
- * mathématique `-θ`.
+ * mathématique `-θ`. Le plan est la RÉFÉRENCE et non le retardataire :
+ * ne pas « l'harmoniser » à l'envers. Deux tests verrouillent son sens
+ * (planGeometry.test.ts:135 et 187).
  */
 export type PlanAnchorMode = "center" | "topLeft";
 
@@ -364,27 +453,12 @@ export type PlanPlacement = {
   position: Point;
   widthMeters: number;
   heightMeters: number;
-  /** Positif = horaire à l'écran. Voir l'encadré ci-dessus. */
+  /**
+   * AZIMUT : 0 = nord, croissant dans le sens HORAIRE, en radians.
+   * Voir l'encadré « CONVENTION D'ANGLE » en tête de fichier.
+   */
   rotationRadians: number;
 };
-
-/**
- * Applique au décalage local (en mètres, y vers le haut) la rotation du
- * plan. Un seul endroit porte le signe : c'est ce qui empêche les six
- * fonctions suivantes de diverger.
- */
-function rotateClockwise(ox: number, oy: number, rotationRadians: number) {
-  const cos = Math.cos(rotationRadians);
-  const sin = Math.sin(rotationRadians);
-  return { x: ox * cos + oy * sin, y: -ox * sin + oy * cos };
-}
-
-/** L'inverse exact de `rotateClockwise`. */
-function unrotateClockwise(dx: number, dy: number, rotationRadians: number) {
-  const cos = Math.cos(rotationRadians);
-  const sin = Math.sin(rotationRadians);
-  return { x: dx * cos - dy * sin, y: dx * sin + dy * cos };
-}
 
 /**
  * Centre du plan à partir de la position de son coin haut-gauche —

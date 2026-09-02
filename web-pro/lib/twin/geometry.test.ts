@@ -13,11 +13,15 @@ import {
   pointInPolygon,
   pointInRotatedRect,
   rotatedRectCorners,
+  rotateClockwise,
+  unrotateClockwise,
+  planRectCorners,
   DEFAULT_SNAP,
   distanceToSegment,
   distanceToPolyline,
   type Camera,
   type Viewport,
+  type PlanPlacement,
 } from "./geometry.ts";
 
 const pt = (x: number, y: number) => ({ xMeters: x, yMeters: y });
@@ -186,6 +190,108 @@ test("la rotation conserve les distances au centre", () => {
   const tournes = rotatedRectCorners(centre, 4, 2, 0.7);
   for (let i = 0; i < 4; i++) {
     assert.ok(Math.abs(distance(centre, droits[i]) - distance(centre, tournes[i])) < 1e-9);
+  }
+});
+
+// -----------------------------------------------------------------
+// LE SENS DE LA ROTATION — AZIMUT
+//
+// Les trois tests ci-dessus sont AVEUGLES au signe, et c'est pour cela
+// que la divergence a survécu : le rectangle 4×1 tourné d'un quart de
+// tour est symétrique, les coins non tournés ne font pas intervenir la
+// rotation, et la conservation des distances est vraie dans les deux
+// sens. Ils passaient avant comme après le correctif.
+//
+// Ce qui suit fixe NUMÉRIQUEMENT la convention : azimut, 0 = nord,
+// croissant dans le sens HORAIRE. Un « −θ » rétabli quelque part casse
+// ici, et c'est tout l'objet de ce bloc.
+// -----------------------------------------------------------------
+
+const quasi = (a: number, b: number, message: string) =>
+  assert.ok(Math.abs(a - b) < 1e-9, `${message} — attendu ${b}, obtenu ${a}`);
+
+test("azimut : un point à (1, 0) tourné de +90° arrive à (0, -1)", () => {
+  // (1, 0) est l'axe local +X — la LARGEUR, qui à 0° court vers l'est.
+  // À l'azimut 90° l'objet a pivoté d'un quart de tour vers la droite :
+  // sa largeur pointe donc vers le SUD. La matrice trigonométrique
+  // habituelle donnerait (0, +1), le nord — l'azimut 270°.
+  const r = rotateClockwise(1, 0, Math.PI / 2);
+  quasi(r.x, 0, "x");
+  quasi(r.y, -1, "y");
+});
+
+test("azimut : le haut de l'objet à 90° pointe vers l'EST", () => {
+  // (0, 1) est l'axe local +Y — le HAUT de l'empreinte, celui dont
+  // l'azimut est le cap. C'est la définition même de la convention.
+  const r = rotateClockwise(0, 1, Math.PI / 2);
+  quasi(r.x, 1, "x");
+  quasi(r.y, 0, "y");
+  // 180° = sud, 270° = ouest : la boussole complète.
+  const sud = rotateClockwise(0, 1, Math.PI);
+  quasi(sud.y, -1, "sud");
+  const ouest = rotateClockwise(0, 1, (3 * Math.PI) / 2);
+  quasi(ouest.x, -1, "ouest");
+});
+
+test("un objet 2 m × 1 m à azimut 90° a son coin (+w/2, +h/2) au SUD-est", () => {
+  // La demande de l'utilisateur, écrite en nombres : tourner vers la
+  // droite fait monter le nombre. Le coin avant-droit d'un objet dont
+  // le haut regarde l'est se retrouve au sud-est.
+  const coins = rotatedRectCorners({ xMeters: 0, yMeters: 0 }, 2, 1, Math.PI / 2);
+  const avantDroit = coins[2]; // (+hw, +hh) dans l'ordre de la fonction
+  quasi(avantDroit.xMeters, 0.5, "x du coin");
+  quasi(avantDroit.yMeters, -1, "y du coin");
+});
+
+test("la sélection suit le dessin, y compris pour un angle non symétrique", () => {
+  // 4 m × 1 m à azimut 30° : la longueur part vers le SUD-est. Le point
+  // pris sur cette longueur doit être DEDANS, et son symétrique par
+  // rapport à l'axe est-ouest DEHORS. Avec l'ancien signe, c'était
+  // exactement l'inverse — et l'objet s'attrapait là où il n'était pas
+  // dessiné.
+  const centre = { xMeters: 0, yMeters: 0 };
+  const azimut = Math.PI / 6;
+  const dedans = {
+    xMeters: 1.8 * Math.cos(azimut),
+    yMeters: -1.8 * Math.sin(azimut),
+  };
+  const dehors = { xMeters: dedans.xMeters, yMeters: -dedans.yMeters };
+  assert.equal(pointInRotatedRect(dedans, centre, 4, 1, azimut), true);
+  assert.equal(pointInRotatedRect(dehors, centre, 4, 1, azimut), false);
+});
+
+test("unrotateClockwise est l'inverse exact de rotateClockwise", () => {
+  // C'est ce qui garantit que le test d'appartenance et le dessin ne
+  // pourront pas se désynchroniser.
+  for (const azimut of [0, 0.4, 1.9, -2.3, Math.PI / 2]) {
+    for (const [ox, oy] of [[1, 0], [0, 1], [3.5, -2.25]]) {
+      const r = rotateClockwise(ox, oy, azimut);
+      const retour = unrotateClockwise(r.x, r.y, azimut);
+      quasi(retour.x, ox, `x à ${azimut} rad`);
+      quasi(retour.y, oy, `y à ${azimut} rad`);
+    }
+  }
+});
+
+test("objets et plan importé tournent par la MÊME matrice", () => {
+  // Le plan importé est la référence : son sens a été fixé avant celui
+  // des objets, et deux tests le verrouillent (planGeometry.test.ts).
+  // Si les deux familles se remettaient à diverger, ce test tomberait.
+  const centre = { xMeters: 7, yMeters: -3 };
+  for (const azimut of [0, 0.35, 1.2, -0.8, Math.PI / 2]) {
+    const placement: PlanPlacement = {
+      position: centre, widthMeters: 6, heightMeters: 2.5, rotationRadians: azimut,
+    };
+    const clef = (points: { xMeters: number; yMeters: number }[]) =>
+      points
+        .map((p) => `${p.xMeters.toFixed(9)};${p.yMeters.toFixed(9)}`)
+        .sort()
+        .join(" | ");
+    assert.equal(
+      clef(rotatedRectCorners(centre, 6, 2.5, azimut)),
+      clef(planRectCorners(placement)),
+      `les quatre sommets diffèrent à ${azimut} rad`,
+    );
   }
 });
 

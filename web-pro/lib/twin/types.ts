@@ -145,6 +145,18 @@ export type TwinObject = {
   id: string;
   objectType: ObjectType;
   position: Point;
+  /**
+   * AZIMUT : cap boussole de l'axe local +Y de l'objet (le haut de son
+   * empreinte, qui est aussi le haut de son pictogramme). 0 = nord,
+   * 90 = est, 180 = sud, 270 = ouest, croissant dans le SENS HORAIRE
+   * sur un plan nord en haut. Stocké en RADIANS ; les deux interfaces
+   * l'affichent et le saisissent en DEGRÉS dans [0, 360[.
+   *
+   * NE PAS confondre avec les `sprinkler*AngleDegrees` ci-dessous, qui
+   * sont une autre convention : degrés, 0 = est, sens antihoraire.
+   * Détail de la géométrie : encadré « CONVENTION D'ANGLE » en tête de
+   * `lib/twin/geometry.ts`.
+   */
   rotationRadians: number;
   widthMeters: number;
   heightMeters: number;

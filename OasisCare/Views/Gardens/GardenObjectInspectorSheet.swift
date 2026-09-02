@@ -82,14 +82,24 @@ struct GardenObjectInspectorSheet: View {
                 }
 
                 Section("Position") {
+                    // AZIMUT — le curseur était déjà en degrés entiers
+                    // bornés à [0, 360[, donc déjà conforme ; il lui
+                    // manquait de dire ce que le nombre SIGNIFIE. Le
+                    // repère est rappelé sous le curseur parce que
+                    // « Rotation » ne dit rien du sens, et que les
+                    // angles d'arroseur, plus bas dans cette même fiche,
+                    // en suivent un AUTRE (0 = est, antihoraire).
                     HStack {
-                        Text("Rotation")
+                        Text("Azimut")
                         Slider(value: $rotationDegrees, in: 0...359, step: 1)
                         Text("\(Int(rotationDegrees))°")
                             .monospacedDigit()
                             .foregroundStyle(.secondary)
                             .frame(width: 44, alignment: .trailing)
                     }
+                    Text("0° = nord, 90° = est, 180° = sud, 270° = ouest")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
                 }
 
                 Section("Dimensions") {
@@ -158,6 +168,16 @@ struct GardenObjectInspectorSheet: View {
                             Slider(value: $sprinklerEndAngleDegrees, in: 0...360, step: 5)
                             Text("\(Int(sprinklerEndAngleDegrees))°").monospacedDigit().foregroundStyle(.secondary).frame(width: 40, alignment: .trailing)
                         }
+                        // Ces deux angles suivent une AUTRE convention
+                        // que l'azimut de la section Position, et c'est
+                        // volontaire. Laisser deux zéros différents et
+                        // deux sens opposés dans la même fiche sans le
+                        // dire est exactement la condition qui a produit
+                        // la divergence de rotation entre les deux
+                        // applications.
+                        Text("0° = est, sens antihoraire — repère différent de l'azimut ci-dessus")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
                         HStack {
                             Text("Débit")
                             Spacer()
