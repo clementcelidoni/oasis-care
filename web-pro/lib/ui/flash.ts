@@ -1,5 +1,5 @@
 import { cookies } from "next/headers";
-import { FLASH_COOKIE, type Flash, type FlashTone } from "./flashShared";
+import { FLASH_COOKIE, parseFlash, type Flash, type FlashTone } from "./flashShared";
 
 /**
  * §34 TOASTS / FEEDBACK.
@@ -61,26 +61,15 @@ export async function flash(tone: FlashTone, message: string, action?: Flash["ac
   }
 }
 
-/** Lit le message en attente, sans l'effacer — c'est le client qui efface. */
+/**
+ * Lit le message en attente, sans l’effacer — c’est le client qui
+ * efface, une fois qu’il l’a montré.
+ *
+ * La validation vit dans `flashShared`, où elle est testable : c’est
+ * elle qui peut avaler un message, et un message avalé ne laisse aucune
+ * trace à l’écran.
+ */
 export async function readFlash(): Promise<Flash | null> {
   const store = await cookies();
-  const raw = store.get(FLASH_COOKIE)?.value;
-  if (!raw) return null;
-
-  try {
-    const parsed = JSON.parse(raw) as Flash;
-    if (typeof parsed?.message !== "string" || parsed.message.length === 0) return null;
-    if (parsed.tone !== "success" && parsed.tone !== "error" && parsed.tone !== "info") {
-      return null;
-    }
-    // Un lien de rattrapage ne peut viser que ce site : le message
-    // vient de nous, mais le cookie est lisible et modifiable par le
-    // navigateur, et un lien absolu en ferait une redirection ouverte.
-    if (parsed.action && !parsed.action.href.startsWith("/")) {
-      return { tone: parsed.tone, message: parsed.message };
-    }
-    return parsed;
-  } catch {
-    return null;
-  }
+  return parseFlash(store.get(FLASH_COOKIE)?.value);
 }
