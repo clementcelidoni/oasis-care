@@ -64,6 +64,85 @@ insert into res
 select 'Un enregistrement basé sur l''état actuel ne l''est pas','false',
        ((select v from ts where k='apres') > (select v from ts where k='apres'))::text;
 
+-- ---------- 1 bis. La suppression, que l'horodatage ne voyait pas ----------
+-- L'iPhone supprime EN DUR (`pushPendingDeletions` : `.delete().eq(...)`).
+-- La ligne disparaît, et `max(updated_at)` sur ce qui reste ne bouge
+-- pas — ou DESCEND, si c'était justement la plus récente.
+--
+-- Conséquence observée avant le correctif 0063 : le web chargeait le
+-- plan, l'utilisateur supprimait un arbre sur son téléphone, la
+-- sauvegarde automatique ne détectait aucun conflit et réécrivait son
+-- instantané — qui contenait encore l'arbre. L'arbre revenait, sans
+-- message, indéfiniment.
+
+create temp table vs(k text, v text) on commit drop;
+
+-- Deux objets, dont un ancien : c'est le RÉCENT qu'on supprimera, pour
+-- que le maximum des dates descende au lieu de rester stable.
+insert into ids select 'vieux', gen_random_uuid();
+insert into public.garden_map_objects
+  (id, workspace_id, garden_id, object_type, position_x_meters, position_y_meters,
+   width_meters, height_meters, updated_at)
+select (select v from ids where k='vieux'), (select v from ids where k='ws'),
+       (select v from ids where k='jardin'), 'tree', 1, 1, 2, 2, now() - interval '1 hour';
+
+insert into ids select 'recent', gen_random_uuid();
+insert into public.garden_map_objects
+  (id, workspace_id, garden_id, object_type, position_x_meters, position_y_meters,
+   width_meters, height_meters, updated_at)
+select (select v from ids where k='recent'), (select v from ids where k='ws'),
+       (select v from ids where k='jardin'), 'tree', 9, 9, 2, 2, now() + interval '10 seconds';
+
+insert into ts select 'avantSuppr', public.garden_twin_last_modified((select v from ids where k='jardin'));
+insert into vs select 'avantSuppr', public.garden_twin_version((select v from ids where k='jardin'));
+
+-- La suppression dure, telle que l'iPhone la fait.
+delete from public.garden_map_objects where id = (select v from ids where k='recent');
+
+insert into ts select 'apresSuppr', public.garden_twin_last_modified((select v from ids where k='jardin'));
+insert into vs select 'apresSuppr', public.garden_twin_version((select v from ids where k='jardin'));
+
+-- Le défaut, énoncé : l'ancien repère ne signale rien.
+insert into res
+select 'L''ancien repère ne voit pas la suppression', 'true',
+       ((select v from ts where k='apresSuppr') <= (select v from ts where k='avantSuppr'))::text;
+
+-- Et la correction : le nouveau la voit.
+insert into res
+select 'Le nouveau repère change après une suppression dure', 'true',
+       ((select v from vs where k='apresSuppr') <> (select v from vs where k='avantSuppr'))::text;
+
+-- Il voit aussi les ajouts et les modifications, sans quoi la
+-- correction en aurait cassé une autre.
+insert into vs select 'avantAjout', public.garden_twin_version((select v from ids where k='jardin'));
+insert into public.garden_map_objects
+  (id, workspace_id, garden_id, object_type, position_x_meters, position_y_meters,
+   width_meters, height_meters)
+select gen_random_uuid(), (select v from ids where k='ws'), (select v from ids where k='jardin'),
+       'shrub', 2, 2, 1, 1;
+insert into vs select 'apresAjout', public.garden_twin_version((select v from ids where k='jardin'));
+
+insert into res
+select 'Le nouveau repère change après un ajout', 'true',
+       ((select v from vs where k='apresAjout') <> (select v from vs where k='avantAjout'))::text;
+
+insert into vs select 'avantModif', public.garden_twin_version((select v from ids where k='jardin'));
+update public.garden_map_objects
+   set position_x_meters = 42, updated_at = now() + interval '20 seconds'
+ where id = (select v from ids where k='vieux');
+insert into vs select 'apresModif', public.garden_twin_version((select v from ids where k='jardin'));
+
+insert into res
+select 'Le nouveau repère change après une modification', 'true',
+       ((select v from vs where k='apresModif') <> (select v from vs where k='avantModif'))::text;
+
+-- Et il ne change PAS quand rien ne bouge : un repère qui changerait
+-- tout seul déclencherait un faux conflit à chaque sauvegarde.
+insert into res
+select 'Sans écriture, le repère ne bouge pas', 'true',
+       (public.garden_twin_version((select v from ids where k='jardin'))
+        = (select v from vs where k='apresModif'))::text;
+
 -- ---------- 2. Révisions ----------
 with r as (
   insert into public.digital_twin_revisions (workspace_id, garden_id, label, state, snapshot)

@@ -60,10 +60,10 @@ const MAX_HISTORY = 60;
 
 export function TwinEditor({
   initial,
-  baseModifiedAt,
+  baseVersion,
 }: {
   initial: TwinDocument;
-  baseModifiedAt: string | null;
+  baseVersion: string | null;
 }) {
   const canvasRef = useRef<HTMLCanvasElement>(null);
   const wrapRef = useRef<HTMLDivElement>(null);
@@ -95,7 +95,7 @@ export function TwinEditor({
   const [layers, setLayers] = useState<Record<MapLayer, boolean>>(DEFAULT_LAYERS);
   const [showLayers, setShowLayers] = useState(false);
   const [showQuantities, setShowQuantities] = useState(false);
-  const modifiedAt = useRef<string | null>(baseModifiedAt);
+  const version = useRef<string | null>(baseVersion);
 
   const [camera, setCamera] = useState<Camera>({ centerX: 0, centerY: 0, pixelsPerMeter: 14 });
   const [view, setView] = useState({ width: 800, height: 600 });
@@ -163,11 +163,11 @@ export function TwinEditor({
         deletedObjectIds: deleted.current.objects,
         deletedPipeIds: deleted.current.pipes,
         deletedCableIds: deleted.current.cables,
-        baseModifiedAt: modifiedAt.current,
+        baseVersion: version.current,
       });
       if (result.ok) {
         deleted.current = { areas: [], objects: [], pipes: [], cables: [] };
-        modifiedAt.current = result.modifiedAt ?? modifiedAt.current;
+        version.current = result.version ?? version.current;
         setSaveState("saved");
       } else if (result.conflict) {
         // On garde le travail local intact et on cesse d'enregistrer

@@ -171,16 +171,29 @@ type SavePayload = {
    * Dernière modification connue au moment du chargement. Sert à la
    * détection de conflit — voir `saveTwin`.
    */
-  baseModifiedAt: string | null;
+  baseVersion: string | null;
 };
 
 /**
- * Horodatage de la dernière écriture sur ce jardin, tous appareils
- * confondus. §CONCURRENCY.
+ * Le repère de version du plan, tous appareils confondus. §CONCURRENCY.
+ *
+ * PAS un horodatage, et ça compte. La version précédente comparait
+ * `max(updated_at)`, ce qui voit les modifications et les ajouts mais
+ * PAS les suppressions : l'iPhone supprime en dur, la ligne disparaît,
+ * et le maximum des dates restantes ne bouge pas — ou descend.
+ *
+ * L'enchaînement était : on charge le plan, l'utilisateur supprime un
+ * arbre sur son téléphone, la sauvegarde automatique du web ne voit
+ * aucun conflit et réécrit son instantané — qui contient encore
+ * l'arbre. L'arbre revenait, sans message, indéfiniment.
+ *
+ * `garden_twin_version` (migration 0063) ajoute le NOMBRE DE LIGNES au
+ * repère. C'est une chaîne opaque : on la compare par égalité, jamais
+ * par ordre.
  */
-export async function twinLastModified(gardenId: string): Promise<string | null> {
+export async function twinVersion(gardenId: string): Promise<string | null> {
   const supabase = await createClient();
-  const { data, error } = await supabase.rpc("garden_twin_last_modified", {
+  const { data, error } = await supabase.rpc("garden_twin_version", {
     p_garden_id: gardenId,
   });
   if (error) return null;
@@ -205,7 +218,7 @@ export async function twinLastModified(gardenId: string): Promise<string | null>
  */
 export async function saveTwin(
   payload: SavePayload,
-): Promise<{ ok: boolean; error?: string; conflict?: boolean; modifiedAt?: string | null }> {
+): Promise<{ ok: boolean; error?: string; conflict?: boolean; version?: string | null }> {
   // L'espace vient du jardin, pas de l'organisation active — voir
   // `gardenWorkspaceId`.
   const workspaceId = await gardenWorkspaceId(payload.gardenId);
@@ -217,12 +230,17 @@ export async function saveTwin(
   // §CONCURRENCY — « Ne pas écraser silencieusement le travail d'un
   // autre utilisateur. » Si quelqu'un (ou l'iPhone) a écrit depuis notre
   // chargement, on refuse et on le dit, plutôt que d'aplatir son travail.
-  if (payload.baseModifiedAt) {
-    const { data: current } = await supabase.rpc("garden_twin_last_modified", {
+  //
+  // Comparaison par ÉGALITÉ, pas par ordre : la question est « quelque
+  // chose a-t-il changé », pas « est-ce plus récent ». Une suppression
+  // fait DESCENDRE la date la plus récente, et une horloge en retard
+  // sur un appareil masquerait une écriture.
+  if (payload.baseVersion) {
+    const { data: current } = await supabase.rpc("garden_twin_version", {
       p_garden_id: payload.gardenId,
     });
-    if (current && new Date(current as string) > new Date(payload.baseModifiedAt)) {
-      return { ok: false, conflict: true, modifiedAt: current as string };
+    if (current && (current as string) !== payload.baseVersion) {
+      return { ok: false, conflict: true, version: current as string };
     }
   }
 
@@ -363,10 +381,10 @@ export async function saveTwin(
   }
 
   revalidatePath(`/digital-twin/${payload.gardenId}`);
-  const { data: after } = await supabase.rpc("garden_twin_last_modified", {
+  const { data: after } = await supabase.rpc("garden_twin_version", {
     p_garden_id: payload.gardenId,
   });
-  return { ok: true, modifiedAt: (after as string) ?? now };
+  return { ok: true, version: (after as string) ?? null };
 }
 
 // ---------------------------------------------------------------
