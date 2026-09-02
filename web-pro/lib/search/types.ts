@@ -26,6 +26,13 @@ export const ENTITY_TYPES = [
   "lot", "location",
   "supplier", "purchase_order", "sales_order",
   "employee", "catalog_item",
+  // §22 listait « Documents » parmi les groupes de résultats, mais la
+  // table `public.documents` n'existait pas encore : la branche est
+  // arrivée avec la migration 0068. Sans ce type ici, `global_search`
+  // rendrait des documents que ni la palette ni l'écran de recherche
+  // n'afficheraient — ils sont regroupés par `SEARCH_GROUPS`, et un
+  // type sans groupe est un résultat silencieusement jeté.
+  "document",
 ] as const;
 
 export type EntityType = (typeof ENTITY_TYPES)[number];
@@ -46,6 +53,8 @@ export const SEARCH_GROUPS: { key: string; label: string; types: EntityType[] }[
   { key: "factures", label: "Factures", types: ["invoice"] },
   { key: "twin", label: "Digital Twin", types: ["garden", "garden_area", "garden_object", "plant"] },
   { key: "pepiniere", label: "Pépinière", types: ["lot", "location"] },
+  // §22 nomme « Documents » à cette place exactement, après Nursery.
+  { key: "documents", label: "Documents", types: ["document"] },
   { key: "achats", label: "Achats et commandes", types: ["supplier", "purchase_order", "sales_order"] },
   { key: "entreprise", label: "Équipe et catalogue", types: ["employee", "catalog_item"] },
 ];
@@ -73,6 +82,7 @@ export const ENTITY_LABELS: Record<EntityType, string> = {
   sales_order: "Commande client",
   employee: "Salarié",
   catalog_item: "Article",
+  document: "Document",
 };
 
 /**
@@ -132,6 +142,12 @@ const TYPE_KEYWORDS: Record<string, EntityType[]> = {
   article: ["catalog_item"],
   articles: ["catalog_item"],
   catalogue: ["catalog_item"],
+  // `plan` reste au Digital Twin : c'est le plan du jardin qu'on
+  // cherche neuf fois sur dix, et lui rendre les documents mêlerait
+  // deux choses que rien ne distingue à l'écran.
+  document: ["document"],
+  documents: ["document"],
+  piece: ["document"],
 };
 
 export type ParsedQuery = {

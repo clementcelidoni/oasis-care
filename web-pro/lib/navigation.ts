@@ -149,11 +149,25 @@ export const NAVIGATION: NavGroup[] = [
       // `invoice.create` sans les droits sur les devis, voyait un
       // annuaire fournisseurs vide.
       { label: "Fournisseurs", href: "/fournisseurs", icon: "supplier", permission: "quotes.read", milestone: 9 },
-      // §5 les liste, aucun milestone ne les programme. UNSCHEDULED les
-      // laisse visibles comme « à venir » plutôt que de leur inventer
-      // une date qu'aucune ligne de la spec ne donne.
-      { label: "Matériel", href: "/materiel", icon: "equipment", permission: "projects.manage", module: "equipment", milestone: UNSCHEDULED },
-      { label: "Documents", href: "/documents", icon: "document", permission: "projects.read", milestone: UNSCHEDULED },
+      // §5 le liste, et la refonte lui donne son écran : le parc, et
+      // surtout ce qui expire dessus (migration 0067).
+      //
+      // La permission passe de `projects.manage` à `projects.read`, et
+      // c'est l'encadré du haut appliqué à la lettre : `equipment` SE
+      // LIT avec `projects.read` — c'est ce que dit sa politique RLS,
+      // calquée sur `employees` et `teams`. Exiger `manage` cachait
+      // l'entrée au chef d'équipe, qui a pourtant le droit de consulter
+      // le parc et à qui l'on demande justement de savoir où est la
+      // mini-pelle. L'écran, lui, masque de lui-même ce qui s'écrit.
+      { label: "Matériel", href: "/materiel", icon: "equipment", permission: "projects.read", module: "equipment", milestone: REFONTE },
+      // §21 DOCUMENTS DE TRAVAIL. `projects.read` et non
+      // `organization.manageUsers` : c'est la permission qui ouvre
+      // `public.documents` (migration 0068), et c'est délibérément la
+      // plus large — une photo de chantier que l'ouvrier ne peut pas
+      // ouvrir ne sert à personne. Le classeur de la société (§45,
+      // KBIS, RIB) est ailleurs, sous `/entreprise/documents`, et lui
+      // reste aux administrateurs.
+      { label: "Documents", href: "/documents", icon: "document", permission: "projects.read", milestone: REFONTE },
     ],
   },
   {

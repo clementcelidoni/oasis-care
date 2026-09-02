@@ -87,6 +87,133 @@ export async function archiveEmployee(formData: FormData) {
   revalidatePath("/equipes");
 }
 
+/**
+ * Rattache une fiche salarié à un compte Oasis Care — ou l'en détache.
+ *
+ * `employees.user_id` existait depuis 0051 et documentait ce lien, mais
+ * rien ne l'écrivait jamais : un compte invité restait « Compte sans
+ * fiche salarié » pour toujours, sans coût horaire, sans équipe, sans
+ * compétences, et ses pointages ne se rattachaient à personne.
+ *
+ * Le choix se fait depuis le COMPTE vers le SALARIÉ, et pas l'inverse,
+ * pour une raison de lecture : `profiles` n'est visible que pour
+ * soi-même, donc le web ne connaît pas le nom des autres comptes — mais
+ * il connaît celui de tous les salariés, qui sont dans nos tables. La
+ * liste déroulante peut donc nommer ses options ; dans l'autre sens
+ * elle n'aurait affiché que des identifiants.
+ *
+ * Rattacher ne donne AUCUN droit : l'accès vient du rôle porté par
+ * `organization_members`, jamais d'ici. Ce lien dit qui est qui, pas
+ * qui peut quoi.
+ */
+export async function linkEmployeeAccount(formData: FormData) {
+  const organization = await requireOrganization();
+  const memberUserId = String(formData.get("member_user_id") ?? "");
+  const employeeId = String(formData.get("employee_id") ?? "");
+  if (!memberUserId) return;
+
+  const supabase = await createClient();
+
+  // Le compte doit être membre de CETTE entreprise. Sans ce contrôle, un
+  // identifiant posté à la main rattacherait une fiche à n'importe quel
+  // compte d'Oasis Care — l'identifiant vient du navigateur, donc il
+  // n'est pas une preuve.
+  const { data: member, error: memberError } = await supabase
+    .from("organization_members")
+    .select("id")
+    .eq("organization_id", organization.organizationId)
+    .eq("user_id", memberUserId)
+    .maybeSingle();
+  if (memberError) throw new Error(memberError.message);
+  if (!member) throw new Error("Ce compte n'est pas membre de cette entreprise.");
+
+  // Un compte ne désigne qu'une fiche. On détache d'abord celle qu'il
+  // occupait : sans ça, deux salariés porteraient le même compte et les
+  // heures pointées ne sauraient plus à qui revenir.
+  const { error: detachError } = await supabase
+    .from("employees")
+    .update({ user_id: null, updated_at: new Date().toISOString() })
+    .eq("organization_id", organization.organizationId)
+    .eq("user_id", memberUserId);
+  if (detachError) throw new Error(detachError.message);
+
+  // Une valeur vide est un détachement volontaire, pas un oubli : la
+  // liste propose « Aucune fiche » et c'est ce qu'on vient de faire.
+  if (employeeId) {
+    const { error } = await supabase
+      .from("employees")
+      .update({ user_id: memberUserId, updated_at: new Date().toISOString() })
+      .eq("id", employeeId)
+      .eq("organization_id", organization.organizationId);
+    if (error) throw new Error(error.message);
+  }
+
+  revalidatePath("/entreprise/equipe");
+  revalidatePath("/equipes");
+}
+
+/**
+ * Supprime définitivement un salarié.
+ *
+ * `time_entries.employee_id` est en ON DELETE CASCADE : supprimer
+ * quelqu'un emporte TOUS ses pointages, donc le coût main-d'œuvre réel
+ * des chantiers auxquels il a participé, donc leur marge, donc ce que
+ * l'analytique en dit. Rien dans la base ne s'y oppose et rien ne
+ * préviendrait — c'est précisément ce qui rend un simple bouton ✕
+ * dangereux ici.
+ *
+ * La suppression reste donc possible, entière et sans corbeille. Mais
+ * elle exige que l'appelant ait vu le chiffre : le formulaire renvoie
+ * le nombre de pointages qui lui a été AFFICHÉ, et le serveur le
+ * recompte. S'il a changé entre l'affichage et le clic — un pointage
+ * saisi par un collègue pendant ce temps — la suppression est refusée
+ * plutôt qu'exécutée sur un décompte périmé. La garantie que cela
+ * donne est simple : le nombre montré est le nombre supprimé.
+ *
+ * Contrôlé côté serveur, pas dans la modale : une confirmation qui ne
+ * vit que dans le navigateur n'est pas une confirmation.
+ */
+export async function deleteEmployee(formData: FormData) {
+  const organization = await requireOrganization();
+  const id = String(formData.get("employee_id") ?? "");
+  if (!id) return;
+
+  const supabase = await createClient();
+
+  const { count, error: countError } = await supabase
+    .from("time_entries")
+    .select("id", { count: "exact", head: true })
+    .eq("employee_id", id);
+  if (countError) throw new Error(countError.message);
+
+  const actual = count ?? 0;
+  // `?? -1` et non `?? 0` : un formulaire sans le champ ne doit pas
+  // ressembler à « zéro pointage, confirmé ». Absent veut dire non
+  // confirmé, y compris quand il n'y a effectivement rien à perdre.
+  const acknowledged = Number(formData.get("known_entries") ?? -1);
+  if (actual !== acknowledged) {
+    throw new Error(
+      actual === 0
+        ? "Suppression non confirmée."
+        : `Ce salarié a maintenant ${actual} pointage${actual > 1 ? "s" : ""}, et non ${acknowledged}. ` +
+          "Rechargez la page pour voir ce qui serait supprimé.",
+    );
+  }
+
+  // Le filtre sur l'organisation double la politique RLS. Elle porte
+  // déjà sur l'organisation de la ligne elle-même, donc elle suffit —
+  // mais une action de suppression est le dernier endroit où se
+  // reposer sur une seule barrière.
+  const { error } = await supabase
+    .from("employees")
+    .delete()
+    .eq("id", id)
+    .eq("organization_id", organization.organizationId);
+  if (error) throw new Error(error.message);
+
+  revalidatePath("/equipes");
+}
+
 export async function createTeam(formData: FormData) {
   const organization = await requireOrganization();
   const name = text(formData, "name");

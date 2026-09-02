@@ -1,11 +1,29 @@
 "use client";
 
-import { createEmployee, updateEmployee, archiveEmployee } from "@/lib/field/actions";
+import { createEmployee, updateEmployee, archiveEmployee, deleteEmployee } from "@/lib/field/actions";
 import { centsToInput, formatCents } from "@/lib/quotes/types";
-import { type Employee } from "@/lib/field/types";
+import { type Employee, employeeName } from "@/lib/field/types";
+import { ConfirmDialog } from "@/components/ui";
 
-/** Les salariés, modifiables sur place. */
-export function EmployeeTable({ employees }: { employees: Employee[] }) {
+/**
+ * Les salariés, modifiables sur place.
+ *
+ * Deux sorties, pas une, parce que ce ne sont pas la même chose :
+ * ARCHIVER retire quelqu'un de l'effectif en gardant ses heures, donc
+ * le coût réel des chantiers passés ; SUPPRIMER efface la personne et
+ * ses pointages avec. La première convient à un départ, la seconde à
+ * une fiche créée par erreur. Les proposer côte à côte, en disant ce
+ * que chacune emporte, vaut mieux que de choisir à la place de
+ * l'utilisateur.
+ */
+export function EmployeeTable({
+  employees,
+  timeEntryCounts,
+}: {
+  employees: Employee[];
+  /** Nombre de pointages par salarié — ce qu'une suppression détruirait. */
+  timeEntryCounts: Record<string, number>;
+}) {
   return (
     <section className="mb-8">
       <h2 className="mb-2 text-xs font-semibold uppercase tracking-wide text-ink-faint">
@@ -23,7 +41,7 @@ export function EmployeeTable({ employees }: { employees: Employee[] }) {
                   <th className="px-2 py-2 font-medium">Poste</th>
                   <th className="px-2 py-2 font-medium">Téléphone</th>
                   <th className="w-28 px-2 py-2 text-right font-medium">Coût / h</th>
-                  <th className="w-8 py-2 pr-3" />
+                  <th className="w-32 py-2 pr-3" />
                 </tr>
               </thead>
               <tbody>
@@ -52,17 +70,37 @@ export function EmployeeTable({ employees }: { employees: Employee[] }) {
                         />
                       </form>
                     </td>
-                    <td className="py-1 pr-3 text-right">
-                      <form action={archiveEmployee}>
-                        <input type="hidden" name="employee_id" value={e.id} />
-                        <button
-                          type="submit"
-                          title="Archiver. Ses pointages et le coût des chantiers passés sont conservés."
-                          className="px-1 text-xs text-ink-faint hover:text-critical"
-                        >
-                          ✕
-                        </button>
-                      </form>
+                    <td className="py-1 pr-3">
+                      <div className="flex items-center justify-end gap-1">
+                        <form action={archiveEmployee}>
+                          <input type="hidden" name="employee_id" value={e.id} />
+                          <button
+                            type="submit"
+                            title="Archiver. Ses pointages et le coût des chantiers passés sont conservés."
+                            className="rounded px-1.5 py-1 text-xs text-ink-faint hover:bg-canvas hover:text-ink"
+                          >
+                            Archiver
+                          </button>
+                        </form>
+                        <ConfirmDialog
+                          triggerLabel="✕"
+                          triggerTitle={`Supprimer définitivement ${employeeName(e)}`}
+                          triggerVariant="ghost"
+                          title={`Supprimer ${employeeName(e)} ?`}
+                          message={deletionWarning(timeEntryCounts[e.id] ?? 0)}
+                          confirmLabel="Supprimer définitivement"
+                          confirmVariant="danger"
+                          action={deleteEmployee}
+                          hidden={{
+                            employee_id: e.id,
+                            // Le nombre AFFICHÉ repart au serveur, qui le
+                            // recompte : c'est ce qui garantit que le
+                            // chiffre lu dans ce message est bien celui
+                            // qui sera détruit.
+                            known_entries: String(timeEntryCounts[e.id] ?? 0),
+                          }}
+                        />
+                      </div>
                     </td>
                   </tr>
                 ))}
@@ -118,6 +156,28 @@ export function EmployeeTable({ employees }: { employees: Employee[] }) {
         </form>
       </div>
     </section>
+  );
+}
+
+/**
+ * Ce que la suppression emporte, dit AVANT le clic et chiffré.
+ *
+ * « Cette action est irréversible » ne renseigne sur rien. Le nombre de
+ * pointages, lui, dit exactement ce qui disparaît — et c'est le seul
+ * élément qui permette de distinguer une fiche créée par erreur, qu'on
+ * supprime sans hésiter, d'un ancien salarié dont les heures tiennent
+ * la marge de trois chantiers.
+ */
+function deletionWarning(entries: number): string {
+  if (entries === 0) {
+    return "Cette fiche n'a aucun pointage : rien d'autre ne disparaîtra avec elle. La suppression reste définitive, sans corbeille.";
+  }
+  const s = entries > 1 ? "s" : "";
+  return (
+    `${entries} pointage${s} disparaîtra${entries > 1 ? "ont" : ""} avec cette fiche. ` +
+    "Le coût de main-d'œuvre des chantiers concernés sera recalculé sans ces heures, " +
+    "et leur marge changera. Pour un départ, préférez « Archiver » : la personne quitte " +
+    "l'effectif et ses heures restent."
   );
 }
 

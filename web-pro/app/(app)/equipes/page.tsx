@@ -31,6 +31,23 @@ export default async function TeamsPage() {
 
   const allEmployees = (employees ?? []) as Employee[];
 
+  // Ce que la suppression d'un salarié emporterait avec elle (voir
+  // `deleteEmployee`). Un COUNT par personne plutôt qu'un chargement de
+  // tous les pointages : le nombre de requêtes suit l'effectif, pas les
+  // années d'historique — huit salariés qui pointent chaque jour font
+  // deux mille lignes par an, et cette page n'a besoin d'aucune.
+  const timeEntryCounts = Object.fromEntries(
+    await Promise.all(
+      allEmployees.map(async (employee) => {
+        const { count } = await supabase
+          .from("time_entries")
+          .select("id", { count: "exact", head: true })
+          .eq("employee_id", employee.id);
+        return [employee.id, count ?? 0] as const;
+      }),
+    ),
+  );
+
   return (
     <div className="mx-auto max-w-5xl px-8 py-10">
       <PageHeader
@@ -38,7 +55,7 @@ export default async function TeamsPage() {
         subtitle={`${allEmployees.length} personne${allEmployees.length > 1 ? "s" : ""}`}
       />
 
-      <EmployeeTable employees={allEmployees} />
+      <EmployeeTable employees={allEmployees} timeEntryCounts={timeEntryCounts} />
 
       <TeamList
         teams={(teams ?? []) as Team[]}

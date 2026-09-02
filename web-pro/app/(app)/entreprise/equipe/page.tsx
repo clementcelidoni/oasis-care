@@ -16,6 +16,7 @@ import { Icon } from "@/components/shell/Icon";
 import { ROLES, ROLE_LABELS, type Role } from "@/lib/auth/permissions";
 import { formatDate } from "@/lib/crm/types";
 import { employeeName, SKILL_LEVEL_LABELS } from "@/lib/field/types";
+import { LinkEmployeeSelect } from "./LinkEmployeeSelect";
 import { updateMemberRole, setMemberAccess, revokeInvitation } from "@/lib/company/teamActions";
 import { CompanyTabs } from "../CompanyTabs";
 import { InviteMemberForm } from "./InviteMemberForm";
@@ -237,6 +238,14 @@ export default async function TeamPage({ searchParams }: PageProps<"/entreprise/
       return (a.name ?? "￿").localeCompare(b.name ?? "￿", "fr");
     });
 
+  // Les fiches déjà prises par un autre compte. Les proposer quand même
+  // laisserait choisir un rattachement qui en défait un autre en
+  // silence — la liste ne montre donc que les fiches libres, plus celle
+  // du compte qu'on est en train de regarder.
+  const claimedEmployeeIds = new Set(
+    members.map((member) => member.employee?.id).filter(Boolean) as string[],
+  );
+
   const activeMembers = members.filter((member) => !member.archived_at);
   const memberUserIds = new Set(members.map((member) => member.user_id));
 
@@ -401,6 +410,16 @@ export default async function TeamPage({ searchParams }: PageProps<"/entreprise/
                       <Detail label="Téléphone" value={member.employee?.phone} />
                       <Detail label="Compte créé le" value={formatDate(member.created_at)} />
                     </dl>
+
+                    <LinkEmployeeSelect
+                      memberUserId={member.user_id}
+                      currentEmployeeId={member.employee?.id ?? null}
+                      options={employees.filter(
+                        (employee) =>
+                          !claimedEmployeeIds.has(employee.id) ||
+                          employee.id === member.employee?.id,
+                      )}
+                    />
 
                     {skills.length > 0 && (
                       <div className="mt-3 flex flex-wrap items-center gap-1.5">

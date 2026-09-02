@@ -112,6 +112,67 @@ final class GardenMapEngine: ObservableObject {
         camera = GardenMapCamera()
     }
 
+    /// Tout ce qui est dessiné sur le plan ramené à un seul rectangle :
+    /// contour, zones, TUYAUX et objets — exactement l'ensemble que
+    /// `fitAll` parcourt côté web (`web-pro/components/twin/TwinEditor.tsx`,
+    /// qui inclut `doc.pipes.flatMap(x => x.points)`).
+    ///
+    /// Pourquoi ça manquait ici : la caméra de l'iPhone démarre au point
+    /// d'origine (0, 0) à 20 pt/m, soit une fenêtre d'une vingtaine de
+    /// mètres. Un réseau tracé sur le web à trente mètres de l'origine
+    /// était bien dessiné par `OasisPlanView.drawPipes` — simplement
+    /// hors de l'écran, et « Recentrer » ramenait sur l'origine,
+    /// c'est-à-dire nulle part. Le tuyau n'était pas absent, il était
+    /// hors champ, ce qui se raconte pareil : « je vois pas les tuyaux ».
+    var contentBounds: GardenMapContentBounds? {
+        var points = boundaryPoints
+        for area in garden.areas { points.append(contentsOf: area.points) }
+        for pipe in garden.irrigationPipes { points.append(contentsOf: pipe.points) }
+        points.append(contentsOf: garden.mapObjects.map(\.position))
+
+        guard let first = points.first else { return nil }
+        var bounds = GardenMapContentBounds(
+            minX: first.xMeters, minY: first.yMeters,
+            maxX: first.xMeters, maxY: first.yMeters
+        )
+        for point in points.dropFirst() {
+            bounds.minX = min(bounds.minX, point.xMeters)
+            bounds.minY = min(bounds.minY, point.yMeters)
+            bounds.maxX = max(bounds.maxX, point.xMeters)
+            bounds.maxY = max(bounds.maxY, point.yMeters)
+        }
+        return bounds
+    }
+
+    /// Cadre la caméra sur `contentBounds`.
+    ///
+    /// La rotation repart à zéro : le calcul d'échelle ci-dessous
+    /// raisonne sur un rectangle aligné aux axes, et garder le plan
+    /// penché ferait déborder un contenu pourtant annoncé comme
+    /// entièrement cadré. Sans contenu du tout, on retombe sur la vue
+    /// par défaut plutôt que de cadrer sur une étendue nulle.
+    func fitToContent(viewSize: CGSize) {
+        guard let bounds = contentBounds, viewSize.width > 0, viewSize.height > 0 else {
+            resetCamera()
+            return
+        }
+
+        var fitted = GardenMapCamera()
+        fitted.centerMeters = bounds.center
+        // 12 % de marge pour que le contenu ne colle pas aux bords. Le
+        // plancher d'un mètre couvre le jardin réduit à un seul point
+        // (un objet, un tuyau pas encore tracé) : son étendue vaut zéro
+        // et la division donnerait un infini — borné ensuite par
+        // maxScale, mais autant ne pas y passer.
+        let spanXMeters = max(bounds.maxX - bounds.minX, 1)
+        let spanYMeters = max(bounds.maxY - bounds.minY, 1)
+        let scaleX = (viewSize.width * 0.88) / (spanXMeters * GardenMapCamera.basePointsPerMeter)
+        let scaleY = (viewSize.height * 0.88) / (spanYMeters * GardenMapCamera.basePointsPerMeter)
+        let scale = min(scaleX, scaleY)
+        fitted.scale = min(max(scale, GardenMapCamera.minScale), GardenMapCamera.maxScale)
+        camera = fitted
+    }
+
     func select(_ id: UUID) {
         selectedObjectIDs = [id]
     }
@@ -792,21 +853,55 @@ final class GardenMapEngine: ObservableObject {
     /// bounding box with a margin when one exists, otherwise a
     /// reasonable default square around the garden's own position —
     /// so the layer still works before any boundary has been drawn.
-    private func satelliteRegionAndLocalBounds(marginMeters: Double = 6) -> (region: MKCoordinateRegion, origin: GardenCoordinate, widthMeters: Double, heightMeters: Double)? {
+    private func satelliteRegionAndLocalBounds(marginMeters: Double = 120) -> (bounds: GardenSatelliteImageService.GeoBounds, region: MKCoordinateRegion, origin: GardenCoordinate, widthMeters: Double, heightMeters: Double)? {
         guard let coordinateSystem else { return nil }
 
-        let minX: Double
-        let maxX: Double
-        let minY: Double
-        let maxY: Double
+        // A minimum extent in METERS, not in degrees. This used to floor
+        // the MapKit span at 0.0004° instead — which is 44.5 m
+        // north-south but only 32 m east-west at this latitude, and,
+        // worse, floored the requested region WITHOUT flooring the
+        // rectangle the image gets drawn into. Any garden under ~44 m
+        // therefore received a photo covering more ground than the
+        // rectangle it was squeezed into: a background silently at the
+        // wrong scale, on the one layer whose whole job is to be to
+        // scale.
+        //
+        // 400 m, not the 46 m the boundary alone gave: the background
+        // stopped at the fence, so panning one screen off the garden
+        // showed bare grid. A garden is understood partly by what
+        // surrounds it — the road, the neighbours, the treeline — and
+        // that context has to be there before you pan, not fetched
+        // when you arrive. 400 m is also the widest square that still
+        // fits IGN's finest zoom under the pixel cap, so the extra
+        // ground costs nothing in sharpness on the garden itself.
+        let minimumExtent = 400.0
+        var minX: Double
+        var maxX: Double
+        var minY: Double
+        var maxY: Double
         if let boundaryPoints = garden.boundary?.points, boundaryPoints.count >= 3 {
             minX = boundaryPoints.map(\.xMeters).min()! - marginMeters
             maxX = boundaryPoints.map(\.xMeters).max()! + marginMeters
             minY = boundaryPoints.map(\.yMeters).min()! - marginMeters
             maxY = boundaryPoints.map(\.yMeters).max()! + marginMeters
         } else {
-            let half = 40.0
+            // No boundary drawn yet: centre the same wide square on the
+            // garden's own GPS point, so the satellite layer is useful
+            // for TRACING the boundary rather than only for admiring one
+            // that already exists.
+            let half = minimumExtent / 2
             minX = -half; maxX = half; minY = -half; maxY = half
+        }
+
+        if maxX - minX < minimumExtent {
+            let padding = (minimumExtent - (maxX - minX)) / 2
+            minX -= padding
+            maxX += padding
+        }
+        if maxY - minY < minimumExtent {
+            let padding = (minimumExtent - (maxY - minY)) / 2
+            minY -= padding
+            maxY += padding
         }
 
         let corners = [
@@ -821,9 +916,21 @@ final class GardenMapEngine: ObservableObject {
         guard let minLat = lats.min(), let maxLat = lats.max(), let minLon = lons.min(), let maxLon = lons.max() else { return nil }
 
         let center = CLLocationCoordinate2D(latitude: (minLat + maxLat) / 2, longitude: (minLon + maxLon) / 2)
-        let span = MKCoordinateSpan(latitudeDelta: max(maxLat - minLat, 0.0004), longitudeDelta: max(maxLon - minLon, 0.0004))
-        let region = MKCoordinateRegion(center: center, span: span)
-        return (region, GardenCoordinate(xMeters: minX, yMeters: minY), maxX - minX, maxY - minY)
+        // No floor here any more: the box above is already at least
+        // `minimumExtent` on both sides, so the region asked for and the
+        // rectangle drawn into describe the very same patch of ground.
+        let span = MKCoordinateSpan(latitudeDelta: maxLat - minLat, longitudeDelta: maxLon - minLon)
+        let bounds = GardenSatelliteImageService.GeoBounds(
+            minLatitude: minLat,
+            maxLatitude: maxLat,
+            minLongitude: minLon,
+            maxLongitude: maxLon
+        )
+        return (bounds,
+                MKCoordinateRegion(center: center, span: span),
+                GardenCoordinate(xMeters: minX, yMeters: minY),
+                maxX - minX,
+                maxY - minY)
     }
 
     /// Loads from the on-disk cache first (near-instant, no network);
@@ -834,7 +941,7 @@ final class GardenMapEngine: ObservableObject {
     /// pretending the layer is unavailable for no reason.
     func loadSatelliteBackgroundIfNeeded(force: Bool = false) {
         guard force || satelliteBackground == nil else { return }
-        guard let (region, origin, widthMeters, heightMeters) = satelliteRegionAndLocalBounds() else {
+        guard let (bounds, region, origin, widthMeters, heightMeters) = satelliteRegionAndLocalBounds() else {
             satelliteBackgroundError = "Renseignez la position du jardin (Modifier le jardin) pour activer le fond satellite."
             return
         }
@@ -847,13 +954,27 @@ final class GardenMapEngine: ObservableObject {
         isLoadingSatelliteBackground = true
         satelliteBackgroundError = nil
         let gardenID = garden.id
+        // Matches the orthophoto path's own pixel cap, so the MapKit
+        // fallback is not four times blurrier than the layer it stands
+        // in for.
         let aspectRatio = max(widthMeters / heightMeters, 0.2)
-        let requestedSize = CGSize(width: 1024, height: (1024 / aspectRatio).rounded())
+        let requestedSize = CGSize(width: 2048, height: (2048 / aspectRatio).rounded())
 
         Task { @MainActor in
             defer { isLoadingSatelliteBackground = false }
             do {
-                let image = try await GardenSatelliteImageService.fetchSnapshot(region: region, size: requestedSize, mapType: .hybrid)
+                // The orthophoto first: it is the same photograph the
+                // web draws on, so a boundary traced there lands here.
+                // MapKit only catches gardens outside that coverage,
+                // where an approximately-placed photo still beats a
+                // bare grid — and where nothing was traced on IGN
+                // either, so nothing disagrees.
+                let image: UIImage
+                do {
+                    image = try await GardenSatelliteImageService.fetchOrthophoto(bounds: bounds)
+                } catch {
+                    image = try await GardenSatelliteImageService.fetchSnapshot(region: region, size: requestedSize, mapType: .hybrid)
+                }
                 GardenSatelliteImageService.cache(image, for: gardenID)
                 satelliteBackground = SatelliteBackground(image: image, localOrigin: origin, widthMeters: widthMeters, heightMeters: heightMeters)
             } catch {
@@ -946,5 +1067,19 @@ final class GardenMapEngine: ObservableObject {
 
         let step = Double(candidates.count) / Double(count)
         return (0..<count).map { candidates[Int(Double($0) * step)] }
+    }
+}
+
+/// Le rectangle englobant du contenu d'un plan, en mètres locaux — la
+/// valeur que `GardenMapEngine.contentBounds` renvoie, et la seule
+/// chose dont `fitToContent` a besoin pour cadrer.
+struct GardenMapContentBounds: Equatable {
+    var minX: Double
+    var minY: Double
+    var maxX: Double
+    var maxY: Double
+
+    var center: GardenCoordinate {
+        GardenCoordinate(xMeters: (minX + maxX) / 2, yMeters: (minY + maxY) / 2)
     }
 }

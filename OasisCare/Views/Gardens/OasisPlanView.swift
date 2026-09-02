@@ -21,6 +21,28 @@ struct OasisPlanView: View {
     @ObservedObject var engine: GardenMapEngine
     @Environment(\.modelContext) private var modelContext
 
+    /// Les tuyaux passent par une `@Query` et non par
+    /// `engine.garden.irrigationPipes`, alors que le dessin, lui, a
+    /// toujours été là (`drawPipes`, Phase 6D).
+    ///
+    /// La raison est une subtilité de `Canvas` : sa fermeture de rendu
+    /// est appelée APRÈS l'évaluation du `body`, donc ce qu'on y lit
+    /// n'est pas enregistré comme dépendance de la vue. Les objets
+    /// s'en sortaient par accident — `objectsOverlay` lit
+    /// `garden.mapObjects` dans le `body`, ce qui redessine tout le
+    /// reste au passage. Les tuyaux n'avaient personne : une
+    /// synchronisation qui descendait un réseau tracé sur Oasis Care Pro
+    /// pendant que le plan était à l'écran ne repeignait rien. Une
+    /// `@Query` est, elle, une vraie dépendance que SwiftData invalide
+    /// à l'insertion, à la modification ET à la suppression.
+    ///
+    /// Sans prédicat : filtrer sur une relation (`$0.garden?.id == ...`)
+    /// dans un `#Predicate` est le genre de chose qui compile et
+    /// renvoie vide à l'exécution. Le tri par date de création
+    /// reproduit celui d'`IrrigationPipesSheet`, pour que la liste et
+    /// le plan superposent les tuyaux dans le même ordre.
+    @Query(sort: \IrrigationPipe.createdAt) private var allPipes: [IrrigationPipe]
+
     @GestureState private var dragTranslation: CGSize = .zero
     @GestureState private var liveMagnification: CGFloat = 1.0
     @GestureState private var liveRotation: Angle = .zero
@@ -29,6 +51,10 @@ struct OasisPlanView: View {
 
     @State private var selectedHandleIndex: Int?
     @State private var activeSheet: ActiveSheet?
+    /// Le cadrage automatique n'a lieu qu'une fois par apparition de la
+    /// vue : recadrer à chaque changement de données déplacerait la
+    /// carte sous le doigt de l'utilisateur pendant qu'il travaille.
+    @State private var hasFramedContent = false
 
     private struct HandleDrag: Equatable {
         var index: Int
@@ -82,6 +108,13 @@ struct OasisPlanView: View {
         engine.isEditingBoundary || engine.editingAreaID != nil || engine.editingPipeID != nil
     }
 
+    /// Les tuyaux de CE jardin. Le filtre est fait ici plutôt que dans
+    /// la requête (voir `allPipes`) ; un réseau se compte en dizaines de
+    /// lignes, pas en milliers.
+    private var gardenPipes: [IrrigationPipe] {
+        allPipes.filter { $0.garden?.id == engine.garden.id }
+    }
+
     var body: some View {
         GeometryReader { geometry in
             ZStack(alignment: .topTrailing) {
@@ -100,10 +133,28 @@ struct OasisPlanView: View {
                     handlesOverlay(geometry: geometry)
                 }
 
-                controlCluster
+                controlCluster(geometry: geometry)
                     .padding(12)
             }
             .coordinateSpace(name: Self.coordinateSpaceName)
+            .onAppear {
+                // Cadrer sur le contenu à l'ouverture, comme le fait
+                // l'éditeur web à son chargement. Sans ça le plan
+                // s'ouvre sur l'origine (0, 0) du repère local, qui
+                // n'est pas forcément là où le jardin a été dessiné :
+                // un réseau tracé à trente mètres de là restait hors
+                // de l'écran, dessiné mais invisible.
+                //
+                // Deux verrous plutôt qu'un : la vue est recréée à
+                // chaque changement de mode de carte, alors que la
+                // caméra, elle, vit dans le moteur et survit. Ne cadrer
+                // que sur une caméra restée à sa valeur par défaut,
+                // c'est ne jamais reprendre à l'utilisateur un zoom
+                // qu'il a réglé lui-même.
+                guard !hasFramedContent, engine.camera == GardenMapCamera() else { return }
+                hasFramedContent = true
+                engine.fitToContent(viewSize: geometry.size)
+            }
             .overlay(alignment: .top) {
                 if let placingType = engine.placingObjectType {
                     placingBanner(type: placingType)
@@ -623,8 +674,16 @@ struct OasisPlanView: View {
     /// Spec Phase 6D — pipes as a drawn polyline, differentiated by
     /// line type (color + dash pattern, never color alone) with a
     /// diameter label at the midpoint once zoomed in enough to read it.
+    ///
+    /// Parité avec le web : `PIPE_STYLE` (`web-pro/lib/twin/types.ts`)
+    /// et `PipeLineType` posent déjà les mêmes épaisseurs (3 / 2 / 1,5)
+    /// et les mêmes tiretés ([] / [6,3] / [1,3]), donc le même réseau
+    /// se lit pareil des deux côtés. L'étiquette, elle, divergeait : le
+    /// web écrit la longueur mesurée, l'iPhone écrivait le diamètre —
+    /// deux chiffres différents sur le même tuyau selon l'écran. Elle
+    /// porte maintenant les deux.
     private func drawPipes(in context: GraphicsContext, size: CGSize, camera: GardenMapCamera) {
-        for pipe in engine.garden.irrigationPipes {
+        for pipe in gardenPipes {
             let points = pipe.points
             guard points.count >= 2 else { continue }
 
@@ -644,12 +703,30 @@ struct OasisPlanView: View {
                 )
             )
 
-            guard camera.pointsPerMeter > 6 else { continue }
+            // Seuil de 4 pt/m, celui du web (`camera.pixelsPerMeter > 4`),
+            // et une plaque claire derrière le texte pour la même raison
+            // qu'il en met une : posée à même un fond satellite, une
+            // légende de couleur ne se lit pas.
+            guard camera.pointsPerMeter > 4 else { continue }
             let midpoint = camera.screenPoint(for: points[points.count / 2], viewSize: size)
-            context.draw(
-                Text("Ø\(Int(pipe.diameterMM)) mm").font(.caption2.weight(.medium)).foregroundStyle(pipe.lineType.color),
-                at: CGPoint(x: midpoint.x, y: midpoint.y - 10)
+            let label = context.resolve(
+                Text("Ø\(Int(pipe.diameterMM)) mm · \(String(format: "%.1f m", pipe.totalLengthMeters))")
+                    .font(.caption2.weight(.medium))
+                    .foregroundStyle(pipe.lineType.color)
             )
+            let labelSize = label.measure(in: size)
+            let labelCenter = CGPoint(x: midpoint.x, y: midpoint.y - 12)
+            let plate = CGRect(
+                x: labelCenter.x - labelSize.width / 2 - 3,
+                y: labelCenter.y - labelSize.height / 2 - 2,
+                width: labelSize.width + 6,
+                height: labelSize.height + 4
+            )
+            context.fill(
+                RoundedRectangle(cornerRadius: 3, style: .continuous).path(in: plate),
+                with: .color(Color(.systemBackground).opacity(0.85))
+            )
+            context.draw(label, at: labelCenter)
         }
     }
 
@@ -1102,7 +1179,7 @@ struct OasisPlanView: View {
 
     // MARK: - Controls
 
-    private var controlCluster: some View {
+    private func controlCluster(geometry: GeometryProxy) -> some View {
         VStack(spacing: 10) {
             if engine.isEditingBoundary {
                 Button {
@@ -1250,12 +1327,18 @@ struct OasisPlanView: View {
                 .accessibilityLabel("Oasis AI")
             }
 
+            // « Recentrer » cadre sur ce qui est dessiné — contour,
+            // zones, tuyaux, objets — et non plus sur l'origine (0, 0)
+            // du repère local. Recentrer sur un point où il n'y a rien
+            // était le geste qui ne ramenait pas les tuyaux à l'écran.
+            // Sans contenu du tout, `fitToContent` retombe de lui-même
+            // sur la vue par défaut.
             Button {
-                withAnimation(.snappy) { engine.resetCamera() }
+                withAnimation(.snappy) { engine.fitToContent(viewSize: geometry.size) }
             } label: {
                 Image(systemName: "scope")
             }
-            .accessibilityLabel("Recentrer la carte")
+            .accessibilityLabel("Cadrer sur le jardin")
         }
         .font(.system(size: 28))
         .symbolRenderingMode(.multicolor)

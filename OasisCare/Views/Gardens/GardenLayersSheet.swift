@@ -74,6 +74,9 @@ struct GardenLayersSheet: View {
                             if layer == .satelliteBackground, engine.visibleLayers.contains(layer) {
                                 satelliteBackgroundStatusRow
                             }
+                            if layer == .irrigation {
+                                irrigationNetworkSummary
+                            }
                         }
                     }
                 }
@@ -101,6 +104,46 @@ struct GardenLayersSheet: View {
             }
             .sheet(isPresented: $isShowingPlanImageSheet) {
                 GardenPlanImageSheet(engine: engine)
+            }
+        }
+    }
+
+    /// Le calque Irrigation porte à la fois les arroseurs et les
+    /// TUYAUX, ce que son seul intitulé ne dit pas. Ce récapitulatif
+    /// répond à la question que l'utilisateur pose vraiment quand il
+    /// dit « je ne vois pas mes tuyaux » : est-ce que le téléphone les
+    /// a, oui ou non ? Un réseau descendu d'Oasis Care Pro mais tracé
+    /// hors du champ visible, et un réseau qui n'est jamais arrivé,
+    /// donnent le même écran vide — ici ils ne se ressemblent plus.
+    /// Les couleurs reprennent celles du tracé, pour que la légende et
+    /// le plan se lisent ensemble.
+    @ViewBuilder
+    private var irrigationNetworkSummary: some View {
+        let pipes = engine.garden.irrigationPipes
+        if pipes.isEmpty {
+            // Le constat de vide ne s'affiche que si le calque est
+            // allumé : sinon il s'ajouterait à la liste de tous les
+            // jardins sans irrigation, où il n'apprend rien.
+            if engine.visibleLayers.contains(.irrigation) {
+                Text("Aucun tuyau tracé. Le bouton « Réseau d'irrigation » du plan permet d'en ajouter ; ceux dessinés sur Oasis Care Pro apparaissent ici après synchronisation.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+        } else {
+            VStack(alignment: .leading, spacing: 4) {
+                ForEach(PipeLineType.allCases) { lineType in
+                    let ofType = pipes.filter { $0.lineType == lineType }
+                    if !ofType.isEmpty {
+                        HStack(spacing: 8) {
+                            Capsule()
+                                .fill(lineType.color)
+                                .frame(width: 16, height: 3)
+                            Text("\(lineType.label) · \(ofType.count) · \(String(format: "%.1f m", GardenMeasurementTool.totalIrrigationLengthMeters(ofType)))")
+                                .font(.caption)
+                                .foregroundStyle(.secondary)
+                        }
+                    }
+                }
             }
         }
     }

@@ -5,7 +5,8 @@ import {
   worldToScreen, screenToWorld, distance, perimeter, polygonArea,
   snapPoint, snapAngle, pointInPolygon, pointInRotatedRect, rotatedRectCorners,
   boundsOf, centroid, formatMeters, formatArea, distanceToPolyline, DEFAULT_SNAP,
-  type Point, type Camera, type SnapSettings,
+  planRectCorners, pointInPlan, worldToPlanPixels,
+  type Point, type Camera, type SnapSettings, type PlanPlacement,
 } from "@/lib/twin/geometry";
 import {
   OBJECT_TYPES, AREA_TYPES, OBJECT_TYPE_LABELS, AREA_TYPE_LABELS,
@@ -57,6 +58,46 @@ type Snapshot = {
 };
 
 const MAX_HISTORY = 60;
+
+/**
+ * Échelle de repli d'un plan non calibré : 1 pixel = 1 cm.
+ *
+ * Ouvertement provisoire, et signalée comme telle par le panneau. On
+ * n'invente pas une échelle plausible : ce serait faire mesurer un
+ * terrain sur un plan faux. L'iPhone, lui, refuse carrément d'afficher
+ * un plan non calibré — un écart de comportement assumé, le web servant
+ * aussi à POSER le calibrage, qu'il faut bien voir pour le poser.
+ */
+const UNCALIBRATED_METERS_PER_PIXEL = 0.01;
+
+/**
+ * Contour du plan importé quand son panneau est ouvert. Un gris neutre,
+ * repris de la palette des constructions : une couleur vive le ferait
+ * lire comme un élément du jardin, alors que ce n'est qu'un cadre.
+ * (Le canvas ne connaît pas les jetons CSS — il lui faut une couleur.)
+ */
+const PLAN_OUTLINE = "#6b6459";
+
+/**
+ * Le plan tel qu'il occupe le terrain, à partir de la ligne en base et
+ * de l'image chargée.
+ *
+ * `position` est le CENTRE de l'image — la convention de l'iPhone, voir
+ * l'encadré « ANCRAGE ET ROTATION DU FOND DE PLAN » dans `geometry.ts`.
+ * Rendu, accrochage à la souris et calibrage passent tous par ici :
+ * c'est ce qui les empêche de repartir chacun sur sa propre idée du
+ * point d'ancrage, ce qui est très exactement le bug d'origine.
+ */
+function planPlacementOf(plan: PlanImage, image: HTMLImageElement): PlanPlacement | null {
+  if (!image.complete || image.naturalWidth === 0) return null;
+  const metersPerPixel = planScale(plan.calibration) ?? UNCALIBRATED_METERS_PER_PIXEL;
+  return {
+    position: { xMeters: plan.positionX, yMeters: plan.positionY },
+    widthMeters: image.naturalWidth * metersPerPixel,
+    heightMeters: image.naturalHeight * metersPerPixel,
+    rotationRadians: plan.rotationRadians,
+  };
+}
 
 export function TwinEditor({
   initial,
@@ -110,6 +151,12 @@ export function TwinEditor({
     | { mode: "pan"; startX: number; startY: number; camX: number; camY: number }
     | { mode: "move"; last: Point }
     | { mode: "vertex"; areaId: string | "boundary"; index: number }
+    // §"ALIGNEMENT" du plan importé. La position vit dans sa propre
+    // table, pas dans le document : elle n'entre donc pas dans l'undo,
+    // et le déplacement est enregistré au relâchement, pas à chaque
+    // pixel. On la garde ici plutôt que de la relire dans l'état à la
+    // fin du geste, où elle pourrait être d'un rendu de retard.
+    | { mode: "plan"; planId: string; last: Point; position: Point }
     | null
   >(null);
 
@@ -302,19 +349,18 @@ export function TwinEditor({
         return;
       }
 
-      const currentScale = planScale(plan.calibration) ?? 0.01;
-      const toImagePixels = (p: Point) => {
-        const dx = p.xMeters - plan.positionX;
-        const dy = p.yMeters - plan.positionY;
-        const cos = Math.cos(plan.rotationRadians);
-        const sin = Math.sin(plan.rotationRadians);
-        // Rotation inverse pour revenir dans le repère de l'image, puis
-        // division par l'échelle. y est inversé : l'image descend.
-        return {
-          x: (dx * cos + dy * sin) / currentScale,
-          y: -(-dx * sin + dy * cos) / currentScale,
-        };
-      };
+      const placement = planPlacementOf(plan, image);
+      if (!placement) return;
+      const currentScale = planScale(plan.calibration) ?? UNCALIBRATED_METERS_PER_PIXEL;
+
+      // La conversion passe par `worldToPlanPixels`, la même géométrie
+      // que le rendu : ancrage au centre et rotation horaire. L'ancienne
+      // version d'ici repartait du coin et tournait à l'envers — deux
+      // erreurs qui s'annulaient dans le résultat, l'échelle ne
+      // dépendant que de la DISTANCE entre les deux repères, mais qui
+      // écrivaient des pixels image faux dans la ligne.
+      const toImagePixels = (p: Point) =>
+        worldToPlanPixels(p, placement, image.naturalWidth, image.naturalHeight, currentScale);
 
       const a = toImagePixels(points[0]);
       const b = toImagePixels(points[1]);
@@ -457,29 +503,49 @@ export function TwinEditor({
     for (const plan of plans) {
       if (!plan.isVisible) continue;
       const image = planImages.current.get(plan.id);
-      if (!image || !image.complete || image.naturalWidth === 0) continue;
+      if (!image) continue;
+      const placement = planPlacementOf(plan, image);
+      if (!placement) continue;
 
-      // Sans calibrage on ne connaît pas l'échelle. Plutôt que d'en
-      // inventer une — ce qui ferait mesurer un terrain sur un plan
-      // faux — on affiche 1 pixel = 1 cm, valeur ouvertement provisoire
-      // que le panneau signale comme non calibrée.
-      const metersPerPixel = planScale(plan.calibration) ?? 0.01;
-      const widthMeters = image.naturalWidth * metersPerPixel;
-      const heightMeters = image.naturalHeight * metersPerPixel;
+      // ANCRAGE PAR LE CENTRE, comme l'iPhone : la position stockée
+      // désigne le milieu de l'image, pas son coin. On translate donc
+      // jusqu'à ce centre et on dessine de -w/2 à +w/2. Ancrer au coin,
+      // ce que faisait cette boucle, décalait le fond d'une demi-image
+      // d'une application à l'autre — 10 m et 7,50 m sur un plan de
+      // 20 × 15 m. Voir `geometry.ts`, § ANCRAGE ET ROTATION.
+      const center = toScreen(placement.position);
+      const widthPixels = placement.widthMeters * camera.pixelsPerMeter;
+      const heightPixels = placement.heightMeters * camera.pixelsPerMeter;
 
-      const topLeft = toScreen({ xMeters: plan.positionX, yMeters: plan.positionY });
       ctx.save();
       ctx.globalAlpha = plan.opacity;
-      ctx.translate(topLeft.x, topLeft.y);
-      // Rotation inversée : l'écran a son y vers le bas, le monde vers
-      // le haut — voir worldToScreen.
-      ctx.rotate(-plan.rotationRadians);
-      ctx.drawImage(
-        image, 0, 0,
-        widthMeters * camera.pixelsPerMeter,
-        heightMeters * camera.pixelsPerMeter,
-      );
+      ctx.translate(center.x, center.y);
+      // Signe POSITIF, et démontré plutôt que deviné : la valeur stockée
+      // vient d'un `rotate` en espace écran côté iOS, où le y descend et
+      // où le positif tourne donc dans le sens horaire. `ctx.rotate` du
+      // canvas fait exactement la même chose. Le `-` d'avant raisonnait
+      // sur un angle du repère monde — juste en soi, mais ce n'est pas
+      // ce que cette colonne contient : les deux applications tournaient
+      // le même plan en sens contraire.
+      ctx.rotate(placement.rotationRadians);
+      ctx.drawImage(image, -widthPixels / 2, -heightPixels / 2, widthPixels, heightPixels);
       ctx.restore();
+
+      // Le contour n'apparaît qu'avec le panneau des plans ouvert : il
+      // ne sert qu'à montrer ce qu'on peut attraper pour le caler, et
+      // encombrerait le dessin le reste du temps.
+      if (showPlans) {
+        const corners = planRectCorners(placement).map(toScreen);
+        ctx.save();
+        ctx.strokeStyle = PLAN_OUTLINE;
+        ctx.lineWidth = 1;
+        ctx.setLineDash([6, 4]);
+        ctx.beginPath();
+        corners.forEach((c, i) => (i === 0 ? ctx.moveTo(c.x, c.y) : ctx.lineTo(c.x, c.y)));
+        ctx.closePath();
+        ctx.stroke();
+        ctx.restore();
+      }
     }
 
     // Grille — seulement si elle reste lisible.
@@ -799,7 +865,7 @@ export function TwinEditor({
       ctx.textAlign = "left";
     }
   }, [doc, camera, view, selection, draft, cursor, snap, mapMode, showTiles, tileLayer,
-      geoOrigin, plans, calibratingId, calibrationPoints, layers]);
+      geoOrigin, plans, calibratingId, calibrationPoints, layers, showPlans]);
 
   // ---------- interaction ----------
   const pointerWorld = (event: React.PointerEvent | React.MouseEvent): Point => {
@@ -807,6 +873,27 @@ export function TwinEditor({
     return screenToWorld(
       { x: event.clientX - rect.left, y: event.clientY - rect.top }, camera, view,
     );
+  };
+
+  /**
+   * Le plan importé sous le curseur, s'il y en a un.
+   *
+   * Parcouru à l'envers : les plans sont dessinés dans l'ordre de la
+   * liste, donc le dernier est celui du dessus, et c'est celui-là qu'on
+   * attrape. Le test d'appartenance vient de `pointInPlan`, la même
+   * géométrie que le rendu — sans quoi on pourrait viser un plan là où
+   * il n'est pas dessiné.
+   */
+  const planUnder = (p: Point): PlanImage | null => {
+    for (let i = plans.length - 1; i >= 0; i--) {
+      const plan = plans[i];
+      if (!plan.isVisible) continue;
+      const image = planImages.current.get(plan.id);
+      if (!image) continue;
+      const placement = planPlacementOf(plan, image);
+      if (placement && pointInPlan(p, placement)) return plan;
+    }
+    return null;
   };
 
   const hitTest = (p: Point): Selection | null => {
@@ -913,6 +1000,21 @@ export function TwinEditor({
     const hit = hitTest(raw);
     if (!hit) {
       if (!event.shiftKey) setSelection([]);
+
+      // §"IMPORT DE PLAN — ALIGNEMENT : déplacement." Caler le fond au
+      // glisser, mais SEULEMENT quand son panneau est ouvert : ailleurs,
+      // glisser le vide déplace la vue, et détourner ce réflexe ferait
+      // bouger le fond par mégarde. Le contour pointillé, affiché dans
+      // les mêmes conditions, dit ce qu'on peut attraper.
+      const grabbed = showPlans ? planUnder(raw) : null;
+      if (grabbed) {
+        drag.current = {
+          mode: "plan", planId: grabbed.id, last: raw,
+          position: { xMeters: grabbed.positionX, yMeters: grabbed.positionY },
+        };
+        return;
+      }
+
       drag.current = {
         mode: "pan", startX: event.clientX, startY: event.clientY,
         camX: camera.centerX, camY: camera.centerY,
@@ -957,6 +1059,23 @@ export function TwinEditor({
       return;
     }
 
+    if (d.mode === "plan") {
+      const dx = raw.xMeters - d.last.xMeters;
+      const dy = raw.yMeters - d.last.yMeters;
+      d.last = raw;
+      // La position suivie est bien celle du CENTRE : c'est ce que la
+      // colonne signifie désormais des deux côtés, et c'est donc ce
+      // qu'on enregistrera tel quel au relâchement.
+      d.position = { xMeters: d.position.xMeters + dx, yMeters: d.position.yMeters + dy };
+      const moved = d.position;
+      setPlans((list) =>
+        list.map((p) =>
+          p.id === d.planId ? { ...p, positionX: moved.xMeters, positionY: moved.yMeters } : p,
+        ),
+      );
+      return;
+    }
+
     if (d.mode === "move" && selection.length > 0) {
       const dx = raw.xMeters - d.last.xMeters;
       const dy = raw.yMeters - d.last.yMeters;
@@ -992,6 +1111,19 @@ export function TwinEditor({
   }
   function onPointerUp(event: React.PointerEvent) {
     canvasRef.current?.releasePointerCapture(event.pointerId);
+
+    // Le plan est enregistré une fois, à la fin du geste : une écriture
+    // par pixel parcouru saturerait la base pour un seul déplacement.
+    if (drag.current?.mode === "plan") {
+      const { planId, position } = drag.current;
+      void updatePlanImage({
+        id: planId,
+        gardenId: initial.gardenId,
+        positionX: position.xMeters,
+        positionY: position.yMeters,
+      });
+    }
+
     if (drag.current?.mode === "move" && movedFrom.current) {
       // Un seul point d'historique pour tout le déplacement.
       history.current.push(movedFrom.current);
@@ -1234,6 +1366,15 @@ export function TwinEditor({
             onWheel={onWheel}
             onDoubleClick={finishDraft}
           />
+          {/* Le glisser du fond n'est actif qu'ici, et il change le sens
+              d'un geste habituel : il faut donc le dire, sinon on croit
+              à un bug de la vue. Masqué pendant le calibrage, où le clic
+              sert à autre chose. */}
+          {showPlans && !calibratingId && tool.kind === "select" && plans.some((p) => p.isVisible) && (
+            <div className="pointer-events-none absolute left-1/2 top-3 -translate-x-1/2 rounded-full bg-ink/85 px-3 py-1.5 text-xs text-white">
+              Glissez le plan pointillé pour le caler · Alt + glisser pour déplacer la vue
+            </div>
+          )}
           {draft.length > 0 && (
             <div className="pointer-events-none absolute left-1/2 top-3 -translate-x-1/2 rounded-full bg-ink/85 px-3 py-1.5 text-xs text-white">
               {draft.length} point{draft.length > 1 ? "s" : ""} ·{" "}

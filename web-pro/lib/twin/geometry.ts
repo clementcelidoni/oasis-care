@@ -312,3 +312,197 @@ export function formatArea(squareMeters: number): string {
   if (!Number.isFinite(squareMeters)) return "—";
   return `${AREA.format(squareMeters)} m²`;
 }
+
+// ---------------------------------------------------------------
+// Plan importé — ANCRAGE ET ROTATION DU FOND DE PLAN
+// ---------------------------------------------------------------
+
+/**
+ * Deux conventions se disputaient la même colonne `position_x_meters`.
+ *
+ * L'iPhone (`OasisPlanView.drawPlanImage`, Phase 6K) traite la position
+ * stockée comme le CENTRE de l'image : il translate le contexte jusqu'à
+ * ce point puis dessine un rectangle de `-w/2, -h/2` à `+w/2, +h/2`.
+ * Le web, lui, la traitait comme le COIN HAUT-GAUCHE et dessinait à
+ * partir de `0, 0`. Un plan de 20 × 15 m se retrouvait donc décalé de
+ * 10 m en x et de 7,5 m en y d'une application à l'autre : le périmètre
+ * tracé sur le web sur ce fond-là tombait à côté du terrain sur le
+ * téléphone.
+ *
+ * La convention retenue est celle de l'iPhone — le CENTRE. C'est
+ * l'application publiée, dont les plans sont alignés à la main sur
+ * l'appareil de chaque utilisateur ; en changer le sens déplacerait le
+ * plan de tout le monde. Tout ce qui suit convertit donc vers ce
+ * centre-là, et `planCenterFromTopLeft` existe précisément pour
+ * rattraper une valeur écrite sous l'ancienne convention.
+ *
+ * ROTATION. Le signe s'établit par le calcul, pas par intuition :
+ *
+ *  • iOS additionne la rotation du plan à celle de la caméra dans
+ *    l'ESPACE ÉCRAN (`imageContext.rotate(by: camera.rotationRadians +
+ *    planImage.rotationRadians)`), et l'écran a son y vers le BAS. Une
+ *    valeur positive y tourne donc l'image dans le sens HORAIRE.
+ *  • `ctx.rotate(θ)` du canvas se comporte exactement pareil, pour la
+ *    même raison : y vers le bas, positif = horaire.
+ *
+ * Le web écrivait `ctx.rotate(-plan.rotationRadians)` en invoquant
+ * l'inversion du y — un raisonnement juste pour un angle exprimé dans
+ * le repère MONDE (y vers le haut, sens trigonométrique), mais la
+ * valeur stockée ne l'est pas : elle vient d'un `rotate` écran. Les
+ * deux applications tournaient donc le même plan en sens contraire. Le
+ * signe correct est `+`.
+ *
+ * Conséquence pour les fonctions ci-dessous : dans le repère monde
+ * (y vers le haut), une rotation positive est HORAIRE, donc d'angle
+ * mathématique `-θ`.
+ */
+export type PlanAnchorMode = "center" | "topLeft";
+
+/** Le plan tel qu'il occupe le terrain : où, quelle taille, quel angle. */
+export type PlanPlacement = {
+  /** Valeur stockée en base, interprétée selon `mode`. */
+  position: Point;
+  widthMeters: number;
+  heightMeters: number;
+  /** Positif = horaire à l'écran. Voir l'encadré ci-dessus. */
+  rotationRadians: number;
+};
+
+/**
+ * Applique au décalage local (en mètres, y vers le haut) la rotation du
+ * plan. Un seul endroit porte le signe : c'est ce qui empêche les six
+ * fonctions suivantes de diverger.
+ */
+function rotateClockwise(ox: number, oy: number, rotationRadians: number) {
+  const cos = Math.cos(rotationRadians);
+  const sin = Math.sin(rotationRadians);
+  return { x: ox * cos + oy * sin, y: -ox * sin + oy * cos };
+}
+
+/** L'inverse exact de `rotateClockwise`. */
+function unrotateClockwise(dx: number, dy: number, rotationRadians: number) {
+  const cos = Math.cos(rotationRadians);
+  const sin = Math.sin(rotationRadians);
+  return { x: dx * cos - dy * sin, y: dx * sin + dy * cos };
+}
+
+/**
+ * Centre du plan à partir de la position de son coin haut-gauche —
+ * l'ancienne convention web. Sert à convertir une valeur héritée.
+ */
+export function planCenterFromTopLeft(
+  topLeft: Point,
+  widthMeters: number,
+  heightMeters: number,
+  rotationRadians: number,
+): Point {
+  // Le coin haut-gauche est à (-w/2, +h/2) du centre : l'image s'étend
+  // vers l'est et vers le SUD, son y descend quand celui du monde monte.
+  const offset = rotateClockwise(-widthMeters / 2, heightMeters / 2, rotationRadians);
+  return { xMeters: topLeft.xMeters - offset.x, yMeters: topLeft.yMeters - offset.y };
+}
+
+/** Coin haut-gauche de l'image, connaissant son centre. La réciproque. */
+export function planTopLeftFromCenter(
+  center: Point,
+  widthMeters: number,
+  heightMeters: number,
+  rotationRadians: number,
+): Point {
+  const offset = rotateClockwise(-widthMeters / 2, heightMeters / 2, rotationRadians);
+  return { xMeters: center.xMeters + offset.x, yMeters: center.yMeters + offset.y };
+}
+
+/** Le centre du plan, quelle que soit la convention de la valeur reçue. */
+export function planCenter(placement: PlanPlacement, mode: PlanAnchorMode = "center"): Point {
+  if (mode === "center") return placement.position;
+  return planCenterFromTopLeft(
+    placement.position,
+    placement.widthMeters,
+    placement.heightMeters,
+    placement.rotationRadians,
+  );
+}
+
+/**
+ * LE RECTANGLE OCCUPÉ PAR LE PLAN, en mètres monde.
+ *
+ * Quatre sommets dans l'ordre de l'image : haut-gauche, haut-droit,
+ * bas-droit, bas-gauche. C'est la fonction de référence — le rendu, le
+ * test d'appartenance et le calibrage en découlent tous, et le test
+ * unitaire s'en sert pour prouver que les deux conventions décrivent
+ * bien le même rectangle.
+ */
+export function planRectCorners(
+  placement: PlanPlacement,
+  mode: PlanAnchorMode = "center",
+): Point[] {
+  const center = planCenter(placement, mode);
+  const hw = placement.widthMeters / 2;
+  const hh = placement.heightMeters / 2;
+  return [
+    { ox: -hw, oy: hh },
+    { ox: hw, oy: hh },
+    { ox: hw, oy: -hh },
+    { ox: -hw, oy: -hh },
+  ].map(({ ox, oy }) => {
+    const r = rotateClockwise(ox, oy, placement.rotationRadians);
+    return { xMeters: center.xMeters + r.x, yMeters: center.yMeters + r.y };
+  });
+}
+
+/** Le point est-il sur le plan ? Utilisé pour l'attraper à la souris. */
+export function pointInPlan(
+  p: Point,
+  placement: PlanPlacement,
+  mode: PlanAnchorMode = "center",
+): boolean {
+  const center = planCenter(placement, mode);
+  const local = unrotateClockwise(p.xMeters - center.xMeters, p.yMeters - center.yMeters, placement.rotationRadians);
+  return (
+    Math.abs(local.x) <= placement.widthMeters / 2 &&
+    Math.abs(local.y) <= placement.heightMeters / 2
+  );
+}
+
+/**
+ * Un point du monde ramené en PIXELS de l'image source — origine au
+ * coin haut-gauche, y vers le bas, comme n'importe quel bitmap.
+ *
+ * C'est ce que le calibrage doit stocker : deux repères sur le
+ * document, pas deux points du terrain. La taille en pixels de l'image
+ * est nécessaire parce que l'origine du bitmap est son coin, alors que
+ * la position stockée est son centre.
+ */
+export function worldToPlanPixels(
+  p: Point,
+  placement: PlanPlacement,
+  imageWidthPixels: number,
+  imageHeightPixels: number,
+  metersPerPixel: number,
+  mode: PlanAnchorMode = "center",
+): { x: number; y: number } {
+  if (!(metersPerPixel > 0)) return { x: 0, y: 0 };
+  const center = planCenter(placement, mode);
+  const local = unrotateClockwise(p.xMeters - center.xMeters, p.yMeters - center.yMeters, placement.rotationRadians);
+  return {
+    x: imageWidthPixels / 2 + local.x / metersPerPixel,
+    y: imageHeightPixels / 2 - local.y / metersPerPixel,
+  };
+}
+
+/** La réciproque : un pixel de l'image, replacé sur le terrain. */
+export function planPixelsToWorld(
+  pixel: { x: number; y: number },
+  placement: PlanPlacement,
+  imageWidthPixels: number,
+  imageHeightPixels: number,
+  metersPerPixel: number,
+  mode: PlanAnchorMode = "center",
+): Point {
+  const center = planCenter(placement, mode);
+  const ox = (pixel.x - imageWidthPixels / 2) * metersPerPixel;
+  const oy = (imageHeightPixels / 2 - pixel.y) * metersPerPixel;
+  const r = rotateClockwise(ox, oy, placement.rotationRadians);
+  return { xMeters: center.xMeters + r.x, yMeters: center.yMeters + r.y };
+}
