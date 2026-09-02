@@ -18,6 +18,22 @@ import { LogoUploader } from "./LogoUploader";
  * Trois formulaires plutôt qu'un : corriger un numéro de contrat
  * d'assurance ne doit pas obliger à revalider l'adresse du siège.
  */
+/**
+ * Une attestation d'assurance qui expire dans moins de deux mois.
+ *
+ * Hors du composant, et pas par coquetterie : lire l'heure pendant un
+ * rendu rend celui-ci impur, et l'analyseur de React le refuse — à
+ * juste titre, puisque deux rendus du même état donneraient deux
+ * résultats. Ici la fonction est appelée une fois, au rendu serveur, et
+ * son résultat est une donnée comme une autre.
+ *
+ * Deux mois de préavis : le temps de relancer un assureur.
+ */
+function expiresSoon(date: string | null): boolean {
+  if (!date) return false;
+  return new Date(date).getTime() < Date.now() + 60 * 24 * 3600 * 1000;
+}
+
 export default async function CompanyPage() {
   const organization = await getActiveOrganization();
   if (!organization) return null;
@@ -44,9 +60,7 @@ export default async function CompanyPage() {
   // §12 — l'effectif calculé, à côté du champ qui permet de l'imposer.
   const automatic = company.employee_count_override === null;
 
-  const expiring =
-    company.insurance_expires_on &&
-    new Date(company.insurance_expires_on) < new Date(Date.now() + 60 * 24 * 3600 * 1000);
+  const expiring = expiresSoon(company.insurance_expires_on);
 
   return (
     <div className="mx-auto max-w-4xl px-8 py-10">

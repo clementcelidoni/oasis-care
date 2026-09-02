@@ -3,7 +3,7 @@
 import Link from "next/link";
 import { useEffect, useState } from "react";
 import { Icon } from "./Icon";
-import { FLASH_COOKIE, type Flash } from "@/lib/ui/flash";
+import { FLASH_COOKIE, type Flash } from "@/lib/ui/flashShared";
 
 /**
  * §34 TOASTS / FEEDBACK — la moitié visible.
@@ -33,12 +33,17 @@ const TONE = {
   },
 };
 
+/**
+ * `key` remonte le composant à chaque nouveau message — voir la mise en
+ * page. C'est ce qui permet à l'état initial d'être la vérité, sans
+ * qu'un effet ait à le remettre à `true` : rappeler `setState` depuis le
+ * corps d'un effet provoque un rendu en cascade, et React le signale.
+ */
 export function Toast({ flash }: { flash: Flash | null }) {
   const [visible, setVisible] = useState(Boolean(flash));
 
   useEffect(() => {
     if (!flash) return;
-    setVisible(true);
     // Effacer le cookie dès l'affichage : il a fait son travail.
     document.cookie = `${FLASH_COOKIE}=; path=/; max-age=0; samesite=lax`;
 

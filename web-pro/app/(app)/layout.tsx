@@ -125,7 +125,11 @@ export default async function AppLayout({ children }: LayoutProps<"/">) {
           message arrive par un cookie posé par la Server Action, ce qui
           le fait survivre à une redirection : « Devis créé » s'affiche
           sur la fiche du devis, pas sur la page qu'on vient de quitter. */}
-      <Toast flash={pendingFlash} />
+      {/* `key` : chaque message est un composant neuf. Sans lui, un
+          deuxième message n'en serait pas un — l'état « visible » du
+          premier survivrait, et il faudrait le remettre à jour depuis un
+          effet, ce qui déclenche un rendu en cascade. */}
+      <Toast key={pendingFlash?.message ?? "aucun"} flash={pendingFlash} />
     </div>
   );
 }

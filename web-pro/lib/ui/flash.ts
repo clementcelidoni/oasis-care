@@ -1,4 +1,5 @@
 import { cookies } from "next/headers";
+import { FLASH_COOKIE, type Flash, type FlashTone } from "./flashShared";
 
 /**
  * §34 TOASTS / FEEDBACK.
@@ -32,16 +33,8 @@ import { cookies } from "next/headers";
  * message de confirmation.
  */
 
-export const FLASH_COOKIE = "oasis_flash";
-
-export type FlashTone = "success" | "error" | "info";
-
-export type Flash = {
-  tone: FlashTone;
-  message: string;
-  /** Une action de rattrapage — §34 « Réessayer ». */
-  action?: { label: string; href: string };
-};
+export { FLASH_COOKIE } from "./flashShared";
+export type { Flash, FlashTone } from "./flashShared";
 
 /**
  * Dépose un message pour le prochain rendu.

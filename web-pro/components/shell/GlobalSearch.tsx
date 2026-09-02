@@ -110,16 +110,17 @@ export function GlobalSearch({
   // ---- §31 recherche : debounce + annulation ---------------------
   useEffect(() => {
     const parsed = parseQuery(query);
-    if (parsed.text.trim().length < 2) {
-      setResults([]);
-      setLoading(false);
-      return;
-    }
+    // Trop court : on ne lance rien et on ne TOUCHE À RIEN. Vider
+    // `results` ici serait un `setState` synchrone dans le corps d'un
+    // effet — un rendu en cascade que React signale. L'affichage se
+    // dérive plus bas de la longueur de la saisie ; les résultats
+    // périmés ne sont simplement pas montrés.
+    if (parsed.text.trim().length < 2) return;
 
     const controller = new AbortController();
-    setLoading(true);
 
     const timer = setTimeout(async () => {
+      setLoading(true);
       try {
         const response = await fetch(`/api/recherche?q=${encodeURIComponent(query)}`, {
           signal: controller.signal,
@@ -244,8 +245,19 @@ export function GlobalSearch({
     }
   }
 
-  let index = -1;
-  const nextIndex = () => (index += 1);
+  /**
+   * La position d'une ligne dans l'ordre des flèches.
+   *
+   * Une table plutôt qu'un compteur incrémenté au fil du rendu :
+   * modifier une variable pendant qu'on rend rend le rendu impur, et
+   * React le refuse. `options` porte déjà l'ordre exact — il suffit d'y
+   * lire la position par sa clé.
+   */
+  const positions = useMemo(
+    () => new Map(options.map((option, position) => [option.key, position])),
+    [options],
+  );
+  const at = (key: string) => positions.get(key) ?? -1;
 
   return (
     <>
@@ -283,7 +295,10 @@ export function GlobalSearch({
               onKeyDown={onKeyDown}
               placeholder="Client, devis, facture, lot, objet du plan…"
               aria-label="Rechercher"
+              role="combobox"
+              aria-expanded
               aria-controls={listId}
+              aria-activedescendant={options[cursor] ? `oasis-option-${cursor}` : undefined}
               autoComplete="off"
               className="min-w-0 flex-1 bg-transparent text-[length:var(--text-card)] outline-none placeholder:text-ink-faint"
             />
@@ -322,7 +337,12 @@ export function GlobalSearch({
             </div>
           )}
 
-          <div id={listId} className="flex-1 overflow-y-auto px-2 py-2">
+          <div
+            id={listId}
+            role="listbox"
+            aria-label="Résultats"
+            className="flex-1 overflow-y-auto px-2 py-2"
+          >
             {empty ? (
               <>
                 {favorites.length > 0 && (
@@ -330,7 +350,7 @@ export function GlobalSearch({
                     {favorites.map((item) => (
                       <Row
                         key={item.id}
-                        index={nextIndex()}
+                        index={at(`fav-${item.id}`)}
                         cursor={cursor}
                         setCursor={setCursor}
                         icon="check"
@@ -347,7 +367,7 @@ export function GlobalSearch({
                     {recents.map((item) => (
                       <Row
                         key={item.id}
-                        index={nextIndex()}
+                        index={at(`rec-${item.id}`)}
                         cursor={cursor}
                         setCursor={setCursor}
                         icon="chevron"
@@ -376,7 +396,7 @@ export function GlobalSearch({
                     {commands.map((command) => (
                       <Row
                         key={command.id}
-                        index={nextIndex()}
+                        index={at(`cmd-${command.id}`)}
                         cursor={cursor}
                         setCursor={setCursor}
                         icon={command.icon}
@@ -396,7 +416,7 @@ export function GlobalSearch({
                     {group.rows.map((row) => (
                       <Row
                         key={`${row.entity_type}-${row.entity_id}`}
-                        index={nextIndex()}
+                        index={at(`${row.entity_type}-${row.entity_id}`)}
                         cursor={cursor}
                         setCursor={setCursor}
                         icon={row.icon}
@@ -486,8 +506,16 @@ function Row({
 }) {
   const active = index === cursor;
   return (
+    // §47 — le motif « combobox » de l'ARIA : une liste `listbox`, des
+    // `option`, et un champ qui désigne l'option courante par
+    // `aria-activedescendant`. `aria-selected` sur un bouton ordinaire
+    // n'est pas interprété — un lecteur d'écran annonçait la ligne
+    // survolée comme un bouton quelconque, sans dire qu'elle était
+    // sélectionnée.
     <button
       type="button"
+      id={`oasis-option-${index}`}
+      role="option"
       onMouseMove={() => setCursor(index)}
       onClick={onSelect}
       aria-selected={active}

@@ -6,7 +6,7 @@ import { formatDate } from "@/lib/crm/types";
 import { formatCents } from "@/lib/quotes/types";
 import {
   INTERVENTION_KIND_LABELS, INTERVENTION_STATUS_LABELS, INTERVENTION_STATUS_TONE,
-  scheduledHours, employeeName,
+  scheduledHours,
   type Intervention, type Employee, type Team, type TimeEntry,
 } from "@/lib/field/types";
 import { InterventionHeader } from "./InterventionHeader";
