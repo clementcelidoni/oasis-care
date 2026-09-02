@@ -22,6 +22,15 @@ import { Assistant } from "./Assistant";
  * plusieurs sources : « quels végétaux commander pour les chantiers
  * signés » suppose de comparer chantiers, stock, réservations et
  * commandes. Là, le modèle sert vraiment à quelque chose.
+ *
+ * ET DEPUIS 0069, IL PEUT AUSSI PRÉPARER. Quinze écritures lui sont
+ * ouvertes — un client, une opportunité, une note, un brouillon de
+ * devis, un chantier et ses phases, une intervention, un lot, un
+ * mouvement de stock, une commande fournisseur brouillon — et il n'en
+ * déclenche aucune : il propose, l'écran met la proposition en
+ * français, et l'utilisateur clique. Ce qui engage juridiquement ou ne
+ * se rejoue pas — envoyer, facturer, encaisser, supprimer, livrer,
+ * toucher aux droits — n'a tout simplement pas d'outil.
  */
 export default async function OasisAIPage() {
   const organization = await requireOrganization();
@@ -44,7 +53,9 @@ export default async function OasisAIPage() {
         <h1 className="text-2xl font-semibold tracking-tight">Oasis AI</h1>
         <p className="mt-1 text-sm text-ink-soft">
           Votre assistant lit les données de {organization.name} — devis,
-          chantiers, stock, factures — et répond à partir d&apos;elles.
+          chantiers, stock, factures — répond à partir d&apos;elles, et prépare
+          ce que vous lui demandez. Il ne l&apos;enregistre qu&apos;après votre
+          confirmation.
         </p>
       </header>
 
@@ -201,12 +212,43 @@ export default async function OasisAIPage() {
 
       <section>
         <h2 className="mb-3 text-sm font-semibold">Demander à Oasis</h2>
-        <Assistant />
+        <Assistant permissions={organization.permissions} />
+
+        {/* §32 : dire ce qu'il peut ET ce qu'il ne peut pas, au même
+            endroit. Une liste de capacités sans sa limite laisse
+            l'utilisateur découvrir la limite au moment où il compte
+            dessus — c'est-à-dire au pire moment. */}
+        <div className="mt-4 grid gap-3 sm:grid-cols-2">
+          <div className="rounded-[var(--radius-card)] border border-line bg-surface-sunken px-4 py-3">
+            <p className="text-[var(--text-secondary)] font-medium">Il peut préparer</p>
+            <p className="mt-1 text-[var(--text-secondary)] text-ink-soft">
+              Un client ou un prospect, une opportunité, une note d&apos;échange,
+              un brouillon de devis et ses lignes, un article de catalogue, un
+              chantier avec ses phases et ses tâches, une intervention au
+              planning, un lot de pépinière, un mouvement de stock, une
+              commande fournisseur en brouillon. Chaque fois : une proposition,
+              et votre clic.
+            </p>
+          </div>
+          <div className="rounded-[var(--radius-card)] border border-line bg-surface-sunken px-4 py-3">
+            <p className="text-[var(--text-secondary)] font-medium">Il ne peut pas</p>
+            <p className="mt-1 text-[var(--text-secondary)] text-ink-soft">
+              Envoyer un devis, émettre une facture ou un avoir, encaisser un
+              règlement, envoyer une commande, réceptionner une marchandise,
+              valider un pointage, faire signer une intervention, livrer un
+              jardin, supprimer ou archiver quoi que ce soit, ni modifier les
+              droits d&apos;un membre. Ces gestes engagent, ou ne se rejouent
+              pas.
+            </p>
+          </div>
+        </div>
+
         <p className="mt-4 text-[11px] text-ink-faint">
           {usage?.used ? `${usage.used} question(s) ce mois-ci. ` : ""}
-          Oasis peut préparer un brouillon de devis, jamais l&apos;envoyer. Les
-          montants qu&apos;il cite viennent de vos données, mais relisez-les avant
-          de vous engager dessus.
+          Les montants qu&apos;Oasis cite viennent de vos données, mais
+          relisez-les avant de vous engager dessus. Chaque écriture qu&apos;il
+          prépare est signée « Oasis AI » dans le journal des opérations, avec
+          votre nom et l&apos;heure — Paramètres → Journal des opérations.
         </p>
       </section>
     </div>

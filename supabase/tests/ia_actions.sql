@@ -38,10 +38,10 @@ create temp table ids(k text, v uuid) on commit drop;
 grant all on res to authenticated;
 grant all on ids to authenticated;
 
--- Deux aides, parce que quarante-cinq blocs `do $$ … exception …` se
--- relisent moins bien que quarante-cinq lignes. Elles sont en
--- `security invoker` par défaut : le rôle et le JWT de l'appelant
--- traversent, sans quoi le test ne testerait rien.
+-- Deux aides, parce que quarante-cinq blocs anonymes avec leur clause
+-- d'exception se relisent moins bien que quarante-cinq lignes. Elles
+-- sont en `security invoker` par défaut : le rôle et le JWT de
+-- l'appelant traversent, sans quoi le test ne testerait rien.
 create function pg_temp.refuse(p_nom text, p_sql text) returns void
 language plpgsql as $$
 begin
