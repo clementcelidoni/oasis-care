@@ -221,6 +221,35 @@ export default async function SettingsPage() {
         />
       </div>
 
+      {/* §11V p. 26 « Créer dans administration technique : AI
+          Configuration ». La carte n'apparaît qu'aux administrateurs :
+          l'écran derrière affiche les identifiants de modèle, et la
+          page 27 interdit que l'utilisateur métier les voie. Une carte
+          menant à un refus serait de toute façon une porte fermée
+          annoncée comme une porte. */}
+      {canManage && (
+        <>
+          <SectionHeader
+            title="Intelligence artificielle"
+            description="Le réglage interne d'Oasis AI : quel modèle, à quel coût, dans quelles limites."
+          />
+          <div className="mb-10 grid gap-3 sm:grid-cols-2">
+            <ActionCard
+              href="/parametres/ia"
+              icon={<Icon name="ai" />}
+              title="Configuration IA"
+              description="Quel niveau de modèle chaque agent demande, et si ces modèles existent vraiment."
+            />
+            <ActionCard
+              href="/parametres/ia/couts"
+              icon={<Icon name="analytics" />}
+              title="Coûts et plafonds IA"
+              description="Ce qu'Oasis AI consomme, sa répartition entre les trois niveaux, et jusqu'où il peut aller."
+            />
+          </div>
+        </>
+      )}
+
       {/* §43 — le seul réglage qui vit sur cette page. */}
       <ModulesPanel
         businessType={organization.businessType}

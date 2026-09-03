@@ -67,6 +67,7 @@ export function Modal({
   triggerLabel,
   triggerTitle,
   triggerVariant = "secondary",
+  triggerClassName,
   title,
   description,
   children,
@@ -81,6 +82,13 @@ export function Modal({
    */
   triggerTitle?: string;
   triggerVariant?: ButtonVariant;
+  /**
+   * Le style du déclencheur, quand le bouton par défaut ne convient
+   * pas — un compteur dans un en-tête de colonne, un « ⋯ » de 24 px sur
+   * une carte. Remplace `triggerVariant` ; sans elle, rien ne change
+   * pour les écrans qui utilisent déjà ce composant.
+   */
+  triggerClassName?: string;
   title: string;
   description?: string;
   children: ReactNode;
@@ -96,7 +104,7 @@ export function Modal({
         onClick={() => setOpen(true)}
         aria-label={triggerTitle}
         title={triggerTitle}
-        className={`${TRIGGER_BASE} ${TRIGGER_VARIANT[triggerVariant]}`}
+        className={triggerClassName ?? `${TRIGGER_BASE} ${TRIGGER_VARIANT[triggerVariant]}`}
       >
         {triggerLabel}
       </button>
@@ -145,6 +153,7 @@ export function Drawer({
   triggerLabel,
   triggerTitle,
   triggerVariant = "ghost",
+  triggerClassName,
   title,
   description,
   children,
@@ -159,6 +168,13 @@ export function Drawer({
    */
   triggerTitle?: string;
   triggerVariant?: ButtonVariant;
+  /**
+   * Le style du déclencheur, quand le bouton par défaut ne convient
+   * pas — un compteur dans un en-tête de colonne, un « ⋯ » de 24 px sur
+   * une carte. Remplace `triggerVariant` ; sans elle, rien ne change
+   * pour les écrans qui utilisent déjà ce composant.
+   */
+  triggerClassName?: string;
   title: string;
   description?: string;
   children: ReactNode;
@@ -174,7 +190,7 @@ export function Drawer({
         onClick={() => setOpen(true)}
         aria-label={triggerTitle}
         title={triggerTitle}
-        className={`${TRIGGER_BASE} ${TRIGGER_VARIANT[triggerVariant]}`}
+        className={triggerClassName ?? `${TRIGGER_BASE} ${TRIGGER_VARIANT[triggerVariant]}`}
       >
         {triggerLabel}
       </button>

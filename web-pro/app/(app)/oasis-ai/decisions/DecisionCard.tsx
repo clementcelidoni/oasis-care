@@ -23,7 +23,9 @@ import {
 } from "@/lib/ai/types";
 import type { CatalogEntry } from "@/lib/ai/types";
 import type { DecisionWithActions } from "@/lib/ai/decisions";
+import type { MonAvis } from "@/lib/ai/admin/lecture";
 import { Explanation } from "../Explanation";
+import { Feedback } from "./Feedback";
 
 /**
  * §11V — UNE DÉCISION, ET LES CINQ BOUTONS DE LA SPEC (p. 6).
@@ -60,6 +62,7 @@ export function DecisionCard({
   catalog,
   canAct,
   confirmMessages,
+  monAvis = null,
 }: {
   item: DecisionWithActions;
   catalog: Map<string, CatalogEntry>;
@@ -67,6 +70,8 @@ export function DecisionCard({
   canAct: boolean;
   /** Le récapitulatif à montrer avant d'appliquer, par type d'action. */
   confirmMessages: Map<string, string>;
+  /** Mon 👍 / 👎 sur cette recommandation (spec p. 25), s'il existe. */
+  monAvis?: MonAvis | null;
 }) {
   const { decision, pending, actions } = item;
   const proposed = readDecisionActions(decision.available_actions);
@@ -273,6 +278,20 @@ export function DecisionCard({
           </>
         )}
       </div>
+
+      {/* §11V p. 25 — le pouce vient APRÈS les boutons, et il est offert
+          même à qui ne peut pas agir.
+
+          Après, parce qu'on juge une recommandation une fois qu'on a
+          décidé quoi en faire — la placer au-dessus reviendrait à
+          demander un avis avant d'avoir lu.
+
+          À tout le monde, parce que la politique RLS de
+          `ai_recommendation_feedback` (0076) demande `projects.read` et
+          non `projects.manage`, et pour la raison qu'elle donne :
+          réserver la mesure aux seuls gestionnaires fausserait
+          l'échantillon en excluant ceux qui utilisent le plus l'outil. */}
+      <Feedback decisionId={decision.id} avis={monAvis} />
     </Card>
   );
 }

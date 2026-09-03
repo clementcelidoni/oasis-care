@@ -12,6 +12,7 @@ import { answerApproval } from "@/lib/ai/engine";
 import { catalogIndex, getActionCatalog } from "@/lib/ai/registry";
 import { RISK_LABELS, RISK_TONES } from "@/lib/ai/types";
 import { runExecutiveScan } from "@/lib/ai/scan";
+import { lireMesAvis } from "@/lib/ai/admin/lecture";
 import {
   CATEGORY_LABELS,
   DECISION_CATEGORIES,
@@ -63,6 +64,15 @@ export default async function DecisionsPage({
   // Le droit d'écrire dans `ai_actions` et de répondre à une décision
   // (0072, section 14 : l'opérationnel suit le régime du chantier).
   const canAct = organization.permissions.includes("projects.manage");
+
+  // §11V p. 25 — MON avis sur chacune des recommandations affichées.
+  // Lu après le tableau, et seulement pour les décisions qui vont
+  // s'afficher : une jointure sur toutes les décisions de l'entreprise
+  // coûterait cher pour des lignes que le filtre écarte.
+  const mesAvis = await lireMesAvis(
+    organization.organizationId,
+    board.items.map((item) => item.decision.id),
+  );
 
   const index = catalogIndex(catalog.entries);
   const confirmMessages = await buildConfirmMessages(
@@ -179,6 +189,7 @@ export default async function DecisionsPage({
               catalog={index}
               canAct={canAct}
               confirmMessages={confirmMessages}
+              monAvis={mesAvis.get(item.decision.id) ?? null}
             />
           ))}
         </div>
