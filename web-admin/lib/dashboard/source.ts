@@ -3,7 +3,13 @@ import "server-only";
 import { createClient } from "@/lib/supabase/server";
 
 import { AdminAccessDenied, AdminReadFailed } from "./errors";
-import type { LiveActivityRow, PlatformKpisRow, UnknownReasons } from "./types";
+import type {
+  LiveActivityRow,
+  MobileOsRow,
+  MobileVersionRow,
+  PlatformKpisRow,
+  UnknownReasons,
+} from "./types";
 
 /**
  * OASIS CONTROL CENTER — d'où viennent les chiffres du tableau de bord.
@@ -78,6 +84,52 @@ async function callAdminFunction<Row>(
 }
 
 /**
+ * Appelle une fonction d'administration qui rend PLUSIEURS lignes, et
+ * pour laquelle le vide est une réponse légitime.
+ *
+ * ------------------------------------------------------------------
+ * POURQUOI CE SECOND APPELANT, ET NON `callAdminFunction`
+ * ------------------------------------------------------------------
+ * Celui du dessus traite l'absence de ligne comme une ANOMALIE, et il a
+ * raison : un tableau de bord qui ne rend rien est en panne. Les deux
+ * distributions du parc mobile, elles, sont vides tant qu'aucune
+ * installation ne s'est annoncée — c'est l'état normal du jour du
+ * déploiement, pas une panne. Les faire passer par le même chemin
+ * transformerait « le parc n'a pas encore basculé » en écran d'erreur,
+ * ce qui est exactement la confusion que tout ce chantier combat.
+ *
+ * Le tableau vide remonte donc tel quel, et c'est l'ÉCRAN qui décide
+ * quoi en dire. Il ne dira jamais « aucune version en circulation » :
+ * il dira « aucune installation ne s'est encore annoncée ».
+ */
+async function callAdminRows<Row>(name: string): Promise<Row[]> {
+  const supabase = await createClient();
+  const { data, error } = await supabase.rpc(name, {});
+
+  if (error) {
+    if (error.code === "42501") {
+      throw new AdminAccessDenied(error.message);
+    }
+
+    // PGRST202 / 42883 : la fonction est introuvable. Ces deux-là
+    // méritent leur propre phrase — ce sont les fonctions les plus
+    // récentes du Control Center, et « migration 0077 non appliquée »
+    // est de loin la cause la plus probable d'un échec ici. Un
+    // « échec de lecture » générique enverrait chercher un bug pendant
+    // une heure.
+    if (error.code === "PGRST202" || error.code === "42883") {
+      throw new AdminReadFailed(
+        `la fonction ${name}() est introuvable — la migration 0077 n'est probablement pas appliquée, ou le cache de schéma de PostgREST n'a pas encore été rechargé.`,
+      );
+    }
+
+    throw new AdminReadFailed(`${name} : ${error.message}`);
+  }
+
+  return Array.isArray(data) ? (data as Row[]) : [];
+}
+
+/**
  * `unknown_reasons` arrive en jsonb. La base garantit un objet — 0075
  * écrit `coalesce(v_reasons, '{}'::jsonb)` — mais on ne fait pas
  * reposer l'affichage des motifs sur une garantie distante : sans
@@ -112,4 +164,32 @@ export async function readLiveActivity(since: Date | null): Promise<LiveActivity
     p_since: since ? since.toISOString() : null,
   });
   return { ...row, unknown_reasons: normalizeReasons(row.unknown_reasons) };
+}
+
+/**
+ * ==================================================================
+ * LE PARC MOBILE — les deux distributions de 0077 §5.c
+ * ==================================================================
+ *
+ * Permission `platform.dashboard.read`, vérifiée en SQL comme le reste.
+ * Attention : ce n'est PAS `platform.users.read`. Un rôle qui ouvre la
+ * liste des comptes sans porter la lecture du tableau de bord — le
+ * support, par exemple — se verra refuser ces deux lectures-là. L'écran
+ * qui les affiche doit donc demander la permission AVANT d'appeler,
+ * plutôt que d'attraper un refus (voir `/utilisateurs/mobile`).
+ *
+ * Ces deux fonctions ne comptent que les installations DÉCLARÉES : une
+ * déduction rétroactive ne porte aucune version. Leur total n'est donc
+ * pas `mobile_users`, et `declared_installations_total` est là pour
+ * qu'on ne se trompe pas de dénominateur.
+ */
+
+/** Les versions de l'application en circulation (0077 §5.c). */
+export async function readMobileVersionDistribution(): Promise<MobileVersionRow[]> {
+  return callAdminRows<MobileVersionRow>("admin_mobile_version_distribution");
+}
+
+/** Les versions majeures d'iOS en circulation (0077 §5.c). */
+export async function readMobileOsDistribution(): Promise<MobileOsRow[]> {
+  return callAdminRows<MobileOsRow>("admin_mobile_os_distribution");
 }

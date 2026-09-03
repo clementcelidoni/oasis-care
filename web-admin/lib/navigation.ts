@@ -55,13 +55,15 @@ export type AdminNavGroup = {
 /**
  * Les six entrées du jalon 1, dans l'ordre de la spec p.5.
  *
- * `/utilisateurs/mobile` mérite un mot : l'audit a établi que RIEN
- * n'enregistre par quelle application un compte est entré, et
- * `admin_list_users` LÈVE sur le filtre « mobile » plutôt que de rendre
- * toute la liste en faisant semblant. L'entrée reste — la spec la
- * demande, et la question « qui utilise l'iPhone ? » est légitime —
- * mais la page qui s'ouvre derrière doit dire pourquoi la réponse est
- * INCONNUE, sans jamais appeler ce filtre.
+ * `/utilisateurs/mobile` mérite un mot, et ce n'est plus le même
+ * qu'avant. L'audit avait établi que RIEN n'enregistrait par quelle
+ * application un compte était entré : la page ne pouvait qu'expliquer
+ * l'absence, et `admin_list_users` LEVAIT sur le filtre « mobile »
+ * plutôt que de rendre toute la liste en faisant semblant. La migration
+ * 0077 a posé la collecte, la reprise rétroactive et le filtre : la
+ * page liste désormais, et ce qu'elle doit continuer de dire à l'écran
+ * est autre chose — que son chiffre est une BORNE INFÉRIEURE tant que
+ * le parc n'a pas basculé.
  */
 export const ADMIN_NAVIGATION: AdminNavGroup[] = [
   {
@@ -98,7 +100,7 @@ export const ADMIN_NAVIGATION: AdminNavGroup[] = [
         href: "/utilisateurs/mobile",
         icon: "phone",
         permission: "platform.users.read",
-        hint: "L'usage iPhone — non mesuré à ce jour",
+        hint: "L'usage iPhone : qui, quelle version, depuis quand",
       },
       {
         label: "Oasis Care Pro",

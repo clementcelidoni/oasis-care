@@ -37,6 +37,14 @@ final class SyncEngine: ObservableObject {
 
         do {
             let workspaceID = try await fetchWorkspaceID()
+            // Tells the Control Center this installation exists
+            // (migration 0077). Placed here because we now know both
+            // that we are authenticated and that the network answers.
+            // Deliberately NOT awaited and unable to throw: telemetry is
+            // administrative comfort, never a dependency of the user's
+            // own data, so a failure here must leave everything below
+            // untouched and must not delay it either.
+            Task { await MobilePresenceReporter.declareIfNeeded() }
             try await restoreFromCloudIfNeeded(context: context)
             try await pushGardens(workspaceID: workspaceID, context: context)
             try await pushZones(context: context)

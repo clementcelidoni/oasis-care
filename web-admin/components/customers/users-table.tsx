@@ -8,7 +8,11 @@ import {
   UnknownValue,
   type Column,
 } from "@/components/ui";
-import { productLabel } from "@/lib/customers/labels";
+import {
+  presenceSourceLabel,
+  presenceSourceTone,
+  productLabel,
+} from "@/lib/customers/labels";
 import type { AdminUserRow } from "@/lib/customers/types";
 import { formatDate, formatRelative } from "@/lib/format";
 
@@ -80,18 +84,81 @@ export function UsersTable({
       cell: (row) => {
         const label = productLabel(row.product);
         // `null` n'est pas « aucun produit » : c'est « on ne sait pas ».
-        // Rien dans cette base n'enregistre par quelle application un
-        // compte est entré, et l'écrire « Mobile » par défaut serait
-        // une invention — la plus tentante de tout cet écran.
+        // Ce compte n'est membre d'aucune entreprise ET n'a laissé
+        // aucune trace mobile — ce qui n'est pas la même chose que
+        // « n'utilise rien ». Le mode invité en est la cause la plus
+        // fréquente, et un compte qui n'a pas rouvert l'application
+        // depuis la mise en service de la collecte reste invisible.
         if (label === null) {
           return (
             <UnknownValue
               compact
-              reason="Rien n'enregistre par quelle application ce compte est entré. L'appartenance à une entreprise prouverait « Pro » ; ici il n'y en a aucune, et l'usage de l'iPhone n'est mesuré nulle part."
+              reason="Ce compte n'est membre d'aucune entreprise et aucune trace d'usage de l'application iPhone n'existe à son nom. Ce n'est pas « il n'utilise rien » : le mode invité n'écrit jamais, et un compte qui n'a pas rouvert l'application depuis la mise en service de la collecte reste invisible."
             />
           );
         }
         return <Badge tone="accent">{label}</Badge>;
+      },
+    },
+    {
+      key: "mobile",
+      header: "Mobile",
+      // Masquée sous 1280px, comme la date d'inscription : sur un écran
+      // étroit, l'identité et l'abonnement passent avant.
+      secondary: true,
+      cell: (row) => {
+        // Les cinq colonnes de présence valent `null` ensemble. Une
+        // seule suffit donc à savoir s'il y a quelque chose à montrer,
+        // et c'est la provenance qu'on interroge : elle est renseignée
+        // dès qu'une ligne existe, y compris pour une déduction, qui
+        // n'a ni version ni date.
+        if (row.mobile_presence_source === null) {
+          return (
+            <UnknownValue
+              compact
+              reason="Aucune trace d'usage mobile pour ce compte : ni installation annoncée, ni activité passée que seule l'application iPhone sache écrire."
+            />
+          );
+        }
+
+        // UNE DÉDUCTION NE SE PEINT PAS COMME UNE MESURE. Sans ce
+        // badge, un compte rattrapé rétroactivement occuperait la même
+        // ligne qu'un téléphone qui s'est annoncé hier, et la colonne
+        // « version » vide passerait pour une lacune de collecte.
+        if (row.mobile_presence_source !== "declared") {
+          return (
+            <Badge tone={presenceSourceTone(row.mobile_presence_source)}>
+              {presenceSourceLabel(row.mobile_presence_source)}
+            </Badge>
+          );
+        }
+
+        const appareils = row.mobile_install_count;
+        return (
+          <span className="flex flex-wrap items-baseline gap-x-2">
+            {row.mobile_app_version === null ? (
+              // Ne devrait pas arriver : la contrainte de cohérence de
+              // 0077 exige qu'une ligne déclarée porte sa version. Si
+              // ça arrive quand même, on le dit plutôt que d'écrire une
+              // version par défaut — une « 0.1.0 » inventée deviendrait
+              // une ligne de la distribution.
+              <UnknownValue
+                compact
+                reason="Cette présence est déclarée mais ne porte aucune version, ce que la contrainte de cohérence de la table devrait interdire."
+              />
+            ) : (
+              <span className="tabular">{row.mobile_app_version}</span>
+            )}
+            {appareils !== null && appareils > 1 && (
+              <span
+                className="tabular text-[var(--text-secondary)] text-ink-faint"
+                title="Des installations, pas des appareils : une réinstallation en crée une nouvelle."
+              >
+                {appareils} installations
+              </span>
+            )}
+          </span>
+        );
       },
     },
     {

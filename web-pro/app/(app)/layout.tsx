@@ -11,6 +11,7 @@ import { Sidebar } from "@/components/shell/Sidebar";
 import { Header } from "@/components/shell/Header";
 import { Toast } from "@/components/shell/Toast";
 import { readFlash } from "@/lib/ui/flash";
+import { PresenceReporter } from "@/lib/telemetry/PresenceReporter";
 
 /**
  * §2 STRUCTURE GÉNÉRALE — « Créer une vraie interface desktop » :
@@ -130,6 +131,13 @@ export default async function AppLayout({ children }: LayoutProps<"/">) {
           premier survivrait, et il faudrait le remettre à jour depuis un
           effet, ce qui déclenche un rendu en cascade. */}
       <Toast key={pendingFlash?.message ?? "aucun"} flash={pendingFlash} />
+
+      {/* PRÉSENCE APPLICATIVE — n'affiche rien, ne rend rien, ne peut
+          rien casser. Il annonce au Control Center qu'un compte utilise
+          bien le web, ce que rien n'enregistrait : sans ce pendant,
+          « Oasis Care Mobile : N utilisateurs » n'a pas de contraire et
+          ne veut rien dire. Voir lib/telemetry/presence.ts. */}
+      <PresenceReporter />
     </div>
   );
 }

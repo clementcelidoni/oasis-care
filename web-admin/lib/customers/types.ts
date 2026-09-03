@@ -48,10 +48,18 @@ export type AdminUserRow = {
   last_sign_in_at: string | null;
   banned_until: string | null;
   /**
-   * `'pro'` ou `null`. Jamais `'mobile'` : rien dans cette base
-   * n'enregistre par quelle application un compte est entré, et
-   * l'appartenance à une organisation ne prouve que la moitié de la
-   * phrase. `null` se lit « inconnu », pas « aucun ».
+   * `'pro'`, `'mobile'`, `'both'` — ou `null`.
+   *
+   * La phrase de la spec p.8 (« Oasis Care Mobile / Pro / ou les
+   * deux ») est enfin complète depuis 0077 : l'appartenance à une
+   * organisation prouve Pro, une ligne de `mobile_app_installations`
+   * prouve Mobile, et les deux ensemble donnent `'both'`.
+   *
+   * `null` reste possible et veut TOUJOURS dire « on ne sait pas » : un
+   * compte sans organisation et sans trace mobile n'est pas un compte
+   * gratuit, c'est un compte dont on ignore par où il passe. Le mode
+   * invité en est la cause la plus fréquente — l'application entière
+   * s'utilise sans compte, et rien ne remonte alors.
    */
   product: string | null;
   organization_count: number;
@@ -67,6 +75,62 @@ export type AdminUserRow = {
    * ignore ce drapeau compte un client de plus qu'il n'y en a.
    */
   complimentary: boolean;
+
+  /**
+   * ----------------------------------------------------------------
+   * LA PRÉSENCE MOBILE — les cinq colonnes de la spec p.8-9 (0077)
+   * ----------------------------------------------------------------
+   * Les cinq valent `null` ENSEMBLE pour un compte sans aucune ligne de
+   * présence, et ce `null` veut dire « on ne sait pas » — jamais « zéro
+   * appareil », jamais « pas mobile ». La distinction n'est pas
+   * théorique : la collecte a une date de début, et tout ce qui s'est
+   * passé avant elle sans laisser de trace rétroactive est
+   * définitivement invisible.
+   *
+   * `install_id` N'EST PAS DANS CETTE LISTE, et son absence est
+   * délibérée : aucune fonction d'administration de 0077 ne le rend.
+   * Il n'y a donc rien à ranger derrière « Afficher détails
+   * techniques » — la donnée ne franchit jamais la frontière de la
+   * base. C'est plus strict que la règle de la spec p.35, et c'est le
+   * bon niveau pour un identifiant qui suit une installation.
+   */
+
+  /** `'ios'` — la seule valeur que la contrainte de 0077 accepte. `null` si aucune trace. */
+  mobile_platform: string | null;
+  /**
+   * La version de l'installation vue le plus RÉCEMMENT, pas la plus
+   * haute : sur deux téléphones, c'est celle du dernier utilisé qui
+   * décrit l'utilisateur. `null` pour un compte connu par déduction —
+   * une déduction ne porte aucune version.
+   */
+  mobile_app_version: string | null;
+  /**
+   * Des INSTALLATIONS déclarées, pas des appareils : `identifierForVendor`
+   * est remis à zéro à la désinstallation, donc il compte des
+   * installations. `null` — et non 0 — pour un compte déduit : « 0
+   * appareil » affirmerait qu'on a regardé et qu'il n'y en a pas.
+   */
+  mobile_install_count: number | null;
+  /**
+   * La dernière ANNONCE de l'application, toutes installations
+   * déclarées confondues. ISO 8601.
+   *
+   * `null` POUR UN COMPTE DÉDUIT, et c'est une correction, pas une
+   * limite : la ligne déduite porte bien une date, mais c'est celle du
+   * dernier geste métier du compte — un arrosage, un appel IA — et
+   * l'afficher sous « dernière annonce » aurait présenté une donnée de
+   * comportement sous une étiquette de télémétrie. 0077 ne rend donc
+   * ici que les dates qui viennent d'une déclaration.
+   */
+  mobile_last_seen_at: string | null;
+  /**
+   * `'declared'` si au moins une installation s'est annoncée,
+   * `'inferred'` si le compte n'est connu que par la reprise
+   * rétroactive. C'est la colonne qui empêche de lire une déduction
+   * comme une mesure.
+   */
+  mobile_presence_source: string | null;
+
   total_count: number;
 };
 

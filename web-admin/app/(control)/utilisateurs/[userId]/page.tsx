@@ -7,10 +7,16 @@ import { TechnicalDetails } from "@/components/customers/technical-details";
 import { Badge, EntityAvatar, PageHeader, Panel, StatusBadge } from "@/components/ui";
 import { requireAdmin } from "@/lib/auth/guard";
 import { MOBILE_GAPS, USER_GAPS } from "@/lib/customers/gaps";
-import { productLabel } from "@/lib/customers/labels";
+import {
+  platformLabel,
+  presenceSourceHint,
+  presenceSourceLabel,
+  presenceSourceTone,
+  productLabel,
+} from "@/lib/customers/labels";
 import { findUser } from "@/lib/customers/source";
 import type { AdminUserRow } from "@/lib/customers/types";
-import { formatDate, formatDateTime, formatRelative } from "@/lib/format";
+import { formatCount, formatDate, formatDateTime, formatRelative } from "@/lib/format";
 
 /**
  * ==================================================================
@@ -65,6 +71,32 @@ export const dynamic = "force-dynamic";
  */
 const UUID =
   /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+/**
+ * Ce que « Produit utilisé » veut dire pour ce compte-là.
+ *
+ * `'both'` est la valeur qu'on oublie, et c'est celle du compte le plus
+ * important de la production : le propriétaire est membre de
+ * l'organisation ET utilisateur de l'iPhone. La spec p.8 l'a toujours
+ * prévue (« ou les deux ») ; la base ne savait pas la produire avant
+ * 0077.
+ *
+ * Un produit hors catalogue ne reçoit AUCUNE phrase : la valeur brute
+ * s'affichera, et c'est le bon signal — mieux vaut un mot anglais
+ * pendant une journée qu'une explication inventée pour toujours.
+ */
+function produitHint(product: string | null): string | undefined {
+  switch (product) {
+    case "pro":
+      return "Membre d'au moins une entreprise non archivée. Aucune trace d'usage de l'application iPhone à ce nom — ce qui ne prouve pas l'absence d'usage, seulement l'absence de trace.";
+    case "mobile":
+      return "Un usage de l'application iPhone est attesté, et ce compte n'est membre d'aucune entreprise non archivée.";
+    case "both":
+      return "Membre d'une entreprise ET usage de l'iPhone attesté. C'est la troisième branche de la spec p.8 (« ou les deux »), et elle décrit un vrai cas : un professionnel qui soigne aussi ses propres plantes.";
+    default:
+      return undefined;
+  }
+}
 
 export async function generateMetadata({
   params,
@@ -128,12 +160,13 @@ export default async function FicheUtilisateurPage({
     {
       label: "Produit utilisé",
       value: productLabel(user.product),
+      // `null` ne veut pas dire « aucun produit » : ce compte n'est
+      // membre d'aucune entreprise ET n'a laissé aucune trace mobile.
+      // Le mode invité en est la cause la plus fréquente — l'application
+      // entière s'utilise sans compte, et rien ne remonte alors.
       unknownReason:
-        "L'appartenance à une entreprise prouverait « Pro ». Ce compte n'en a aucune, et rien n'enregistre l'usage de l'application iPhone.",
-      hint:
-        user.product === "pro"
-          ? "Membre d'au moins une entreprise. Cela ne dit rien de l'usage de l'iPhone, qui n'est mesuré nulle part."
-          : undefined,
+        "Ce compte n'est membre d'aucune entreprise, et aucune trace d'usage de l'application iPhone n'existe à son nom — ni déclaration, ni activité passée. Cela ne prouve pas qu'il n'utilise rien : un compte qui n'a pas rouvert l'application depuis la mise en service de la collecte reste invisible.",
+      hint: produitHint(user.product),
     },
     {
       label: "Restriction",
@@ -171,6 +204,111 @@ export default async function FicheUtilisateurPage({
     },
   ];
 
+  /**
+   * ================================================================
+   * LA PRÉSENCE MOBILE — spec p.8 : plateforme, version, appareils
+   * ================================================================
+   *
+   * Les cinq champs valent `null` ENSEMBLE pour un compte sans trace,
+   * et ce `null` se lit « on ne sait pas », jamais « aucun appareil ».
+   * La différence n'est pas rhétorique : la collecte a une date de
+   * début, et ce qui s'est passé avant elle sans laisser de trace
+   * rétroactive est définitivement invisible.
+   *
+   * POUR UN COMPTE DÉDUIT, DEUX CHAMPS SUR CINQ SONT RENSEIGNÉS, et
+   * c'est exactement ce que 0077 rend : la provenance et la plateforme.
+   * La version, le nombre d'installations et la DATE D'ANNONCE valent
+   * `null`, parce qu'une déduction ne les connaît pas. Ce dernier point
+   * a dû être corrigé : la date affichée était en réalité celle du
+   * dernier ARROSAGE du compte — un geste métier présenté sous une
+   * étiquette de télémétrie, sur le seul état que la production
+   * connaîtra le jour du déploiement.
+   *
+   * LA PROVENANCE EST LE PREMIER CHAMP, avant la version et avant le
+   * nombre d'installations, parce qu'elle dit ce que les autres valent.
+   * Sur une ligne DÉDUITE, il n'y a ni version ni date : le compte est
+   * réputé mobile parce qu'il a laissé dans la base une trace que seule
+   * l'application iPhone écrit, et c'est tout ce qu'on sait. Afficher
+   * les trois autres champs en inconnu sans expliquer d'où vient
+   * l'inconnu laisserait croire à une collecte défaillante.
+   *
+   * L'IDENTIFIANT D'INSTALLATION N'EST NULLE PART SUR CETTE FICHE, pas
+   * même derrière « Afficher détails techniques ». Ce n'est pas une
+   * décision d'écran : aucune fonction d'administration de 0077 ne le
+   * rend, il ne franchit donc jamais la frontière de la base. C'est
+   * plus strict que la spec p.35, et c'est le bon niveau pour un
+   * identifiant qui suit une installation.
+   */
+  const mobile: Fact[] = [
+    {
+      label: "Comment on le sait",
+      value: user.mobile_presence_source ? (
+        <Badge tone={presenceSourceTone(user.mobile_presence_source)}>
+          {presenceSourceLabel(user.mobile_presence_source)}
+        </Badge>
+      ) : null,
+      unknownReason:
+        "Aucune ligne de présence mobile pour ce compte : ni installation annoncée, ni activité passée que seule l'application iPhone sache écrire. Ce n'est pas « il n'utilise pas l'iPhone » — c'est « rien ne l'atteste ».",
+      hint: user.mobile_presence_source
+        ? (presenceSourceHint(user.mobile_presence_source) ?? undefined)
+        : undefined,
+    },
+    {
+      label: "Plateforme",
+      value: user.mobile_platform ? platformLabel(user.mobile_platform) : null,
+      // La plateforme est le SEUL des quatre champs suivants qu'une
+      // DÉDUCTION sache renseigner, et 0077 la rend exprès dans ce
+      // cas-là : les cinq tables et les compteurs sur lesquels repose la
+      // déduction ne sont écrits que par l'application iPhone. Le motif
+      // d'inconnu ne doit donc pas dire « seule une déclaration la
+      // connaît » — ce serait faux, et l'écran afficherait « iOS » juste
+      // au-dessus d'une phrase qui le réfute.
+      unknownReason:
+        "Aucune ligne de présence mobile pour ce compte : ni déclaration, ni déduction. Il n'y a donc aucune plateforme à afficher — pas « aucune plateforme ».",
+      hint:
+        user.mobile_presence_source === "inferred"
+          ? "Déduite, pas déclarée : les tables qui portent la trace de ce compte ne sont écrites que par l'application iPhone."
+          : undefined,
+    },
+    {
+      label: "Version de l'application",
+      value: user.mobile_app_version,
+      unknownReason:
+        "Une présence DÉDUITE ne porte aucune version : on sait que ce compte est passé par l'iPhone, pas avec quelle build. Inventer « 0.1.0 » en aurait fait une ligne de la distribution des versions.",
+      hint: user.mobile_app_version
+        ? "Celle de l'installation vue le plus récemment — sur deux téléphones, c'est le dernier utilisé qui décrit l'utilisateur, pas la version la plus haute."
+        : undefined,
+    },
+    {
+      label: "Nombre d'appareils",
+      // `mobile_install_count` compte des INSTALLATIONS. Le libellé de
+      // la spec p.8 dit « appareils » et on le garde — c'est le mot que
+      // l'équipe emploie — mais la précision est écrite juste en
+      // dessous : `identifierForVendor` est remis à zéro à la
+      // désinstallation, donc quelqu'un qui réinstalle deux fois en
+      // vaut trois. Promettre des appareils serait plus court et faux.
+      value: formatCount(user.mobile_install_count),
+      unknownReason:
+        "Aucune installation identifiée. « 0 appareil » affirmerait qu'on a regardé et qu'il n'y en a pas ; la vérité est qu'on ne sait pas combien.",
+      hint:
+        user.mobile_install_count === null
+          ? undefined
+          : user.mobile_install_count >= 10
+            ? "Dix est le PLAFOND : au-delà, la base recycle la plus ancienne installation. « 10 » se lit donc « au moins dix » — une saturation, pas une mesure."
+            : "Des INSTALLATIONS, pas des appareils : l'identifiant est remis à zéro à la désinstallation, donc une réinstallation en crée une nouvelle.",
+    },
+    {
+      label: "Dernière annonce de l'application",
+      value: formatDateTime(user.mobile_last_seen_at),
+      unknownReason:
+        "Aucune installation ne s'est annoncée. Une présence déduite d'une activité passée n'a pas de date de dernière ouverture.",
+      hint:
+        user.mobile_last_seen_at === null
+          ? undefined
+          : `${formatRelative(user.mobile_last_seen_at) ?? "date relative indisponible"} — c'est l'ouverture de l'application, ni la dernière connexion, ni le dernier geste métier.`,
+    },
+  ];
+
   return (
     <>
       <PageHeader
@@ -194,6 +332,14 @@ export default async function FicheUtilisateurPage({
 
         <Panel title="Abonnement et droits">
           <FactList facts={subscription} />
+        </Panel>
+
+        <Panel
+          title="Présence mobile"
+          description="Spec p.8. Plateforme, version, appareils et dernière annonce — minimisés à la source : ni adresse IP, ni position, ni modèle, ni nom d'appareil."
+          className="lg:col-span-2"
+        >
+          <FactList facts={mobile} />
         </Panel>
 
         <Panel
@@ -225,8 +371,8 @@ export default async function FicheUtilisateurPage({
         </Panel>
 
         <Panel
-          title="Usage mobile — spec p.9"
-          description="Ces champs sont listés pour tout compte : rien ne permet de savoir lequel utilise l'iPhone."
+          title="Usage mobile — ce qui reste hors de portée (spec p.9)"
+          description="Ces champs-là décrivent le CONTENU d'un compte — combien de jardins, combien de photos. La donnée existe ; aucune fonction d'administration ne la compte, et la spec p.9 interdit de la lister."
           className="lg:col-span-2"
         >
           <GapList gaps={MOBILE_GAPS} />
@@ -238,6 +384,14 @@ export default async function FicheUtilisateurPage({
           Spec p.35 : les identifiants techniques ne s&apos;affichent que derrière ce dépliant. Un
           écran couvert d&apos;uuid est illisible, et l&apos;œil n&apos;y retrouve plus le nom du
           compte.
+          <p className="mt-2">
+            L&apos;identifiant d&apos;INSTALLATION de l&apos;application n&apos;y figure pas, et ce
+            n&apos;est pas un oubli : aucune fonction d&apos;administration de la migration 0077 ne
+            le rend. Il ne franchit jamais la frontière de la base — plus strict que la règle
+            ci-dessus, et le bon niveau pour un identifiant qui suit une installation sur le
+            téléphone de quelqu&apos;un. Ce que cette fiche montre du mobile, ce sont des NOMBRES
+            et des VERSIONS.
+          </p>
         </TechnicalDetails>
       </div>
     </>

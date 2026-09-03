@@ -518,9 +518,21 @@ insert into res
 select 'Essais Pro inconnus tant que la table n''est alimentée par personne','NULL',
        coalesce((select pro_trials::text from public.admin_platform_kpis()), 'NULL');
 
+-- DEPUIS 0077, CE CHIFFRE EXISTE. L'assertion « toujours NULL » qui se
+-- trouvait ici défendait une absence, et l'absence a été comblée : une
+-- table enregistre désormais la présence applicative. Sa valeur dépend
+-- de ce qui a été collecté et n'a donc pas sa place dans un test à
+-- valeur fixe — `supabase/tests/presence_applicative.sql` l'éprouve
+-- dans ses deux états (inconnu DATÉ tant que rien n'est collecté, borne
+-- inférieure annoncée dès qu'il y a quelque chose).
+--
+-- Ce qui reste vrai ici, et doit le rester : un nombre OU un motif,
+-- jamais ni l'un ni l'autre, jamais les deux. C'est l'invariant de tout
+-- l'écran, et il se teste sans rien savoir de l'état de la collecte.
 insert into res
-select 'Utilisateurs « Oasis Care Mobile » : inconnus, rien ne l''enregistre','NULL',
-       coalesce((select mobile_users::text from public.admin_platform_kpis()), 'NULL');
+select 'Utilisateurs Mobile : un nombre, ou un inconnu MOTIVÉ (0077)','true',
+       (select ((k.mobile_users is not null) <> (k.unknown_reasons ? 'mobile_users'))::text
+          from public.admin_platform_kpis() k);
 
 insert into res
 select 'Churn inconnu','NULL',
@@ -533,9 +545,11 @@ select 'Coût de l''IA inconnu : aucune table n''enregistre de tokens','NULL',
 -- Un NULL muet ne vaut pas grand-chose : l'écran doit pouvoir dire
 -- POURQUOI il ne sait pas.
 insert into res
+-- `mobile_users` a quitté cette liste avec 0077 : son motif n'apparaît
+-- plus que lorsque la collecte n'a rien enregistré, et l'assertion
+-- ci-dessus s'en charge dans les deux cas.
 select 'Chaque inconnu est accompagné de son motif','true',
-       (select (unknown_reasons ? 'mrr_cents' and unknown_reasons ? 'ai_cost_cents'
-                and unknown_reasons ? 'mobile_users')::text
+       (select (unknown_reasons ? 'mrr_cents' and unknown_reasons ? 'ai_cost_cents')::text
           from public.admin_platform_kpis());
 
 -- ------------------------------------------------------------
@@ -876,7 +890,12 @@ declare
 begin
   for c in
     select * from (values
-      ('mobile','Le filtre « Mobile » lève : rien n''enregistre le produit d''origine'),
+      -- « Mobile » a quitté cette liste avec 0077 : le filtre fonctionne
+      -- désormais, et c'est `presence_applicative.sql` qui l'éprouve.
+      -- « Android » le remplace, pour la même raison qu'à l'époque :
+      -- aucun client Android n'existe, et une liste vide se lirait
+      -- « aucun utilisateur Android » — c'est-à-dire un fait.
+      ('android','Le filtre « Android » lève : aucun client Android n''existe'),
       ('trial','Le filtre « Trial » lève : un essai Apple est indiscernable'),
       ('cancelled','Le filtre « Cancelled » lève : il n''y a pas d''historique'),
       ('nimportequoi','Un filtre inconnu lève plutôt que de tout rendre')

@@ -14,9 +14,10 @@
 // What it deletes: every workspace the caller owns (Storage photos under
 // that workspace's path, then the workspace row itself — Postgres FK
 // cascades take care of gardens/zones/plants/photos/events/schedules
-// automatically from there), the caller's profile row, and finally the
-// auth user. Nothing here soft-deletes or deactivates; per the spec this
-// must be a real, irreversible deletion.
+// automatically from there), the caller's profile row, the caller's
+// app-presence telemetry (mobile_app_installations, migration 0077),
+// and finally the auth user. Nothing here soft-deletes or deactivates;
+// per the spec this must be a real, irreversible deletion.
 //
 // Deploy via the Supabase dashboard: Edge Functions → Create a new
 // function named "delete-account" → paste this file's contents → Deploy.
@@ -67,6 +68,29 @@ Deno.serve(async (req: Request) => {
 
     const { error: profileError } = await admin.from("profiles").delete().eq("id", userId);
     if (profileError) throw profileError;
+
+    // App-presence telemetry (migration 0077): platform, app version,
+    // build, OS major, last seen, and one installation identifier per
+    // install. Personal data, so it goes with the account.
+    //
+    // The foreign key is `on delete cascade` on auth.users, so the row
+    // below would disappear on its own two lines further down — and
+    // that is not a reason to leave this out. A cascade is INVISIBLE
+    // when you read this function: nothing here would tell you the
+    // telemetry is gone, and a future `on delete set null` (this repo
+    // already has one, analytics_events.user_id) would let it survive
+    // without anything failing. Written out, the guarantee is
+    // reviewable.
+    //
+    // It has to run BEFORE deleteUser: afterwards there would be
+    // nothing left to delete and this would prove nothing. And it
+    // throws like the three deletions around it — better to leave the
+    // account intact than to leave an orphan telemetry row behind.
+    const { error: presenceError } = await admin
+      .from("mobile_app_installations")
+      .delete()
+      .eq("user_id", userId);
+    if (presenceError) throw presenceError;
 
     const { error: deleteUserError } = await admin.auth.admin.deleteUser(userId);
     if (deleteUserError) throw deleteUserError;

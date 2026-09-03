@@ -98,6 +98,38 @@ export type ListQuery = {
   page: number;
 };
 
+/**
+ * ==================================================================
+ * LA FENÊTRE ENTRE DEUX MIGRATIONS, ET POURQUOI ELLE MÉRITE DIX LIGNES
+ * ==================================================================
+ *
+ * `admin_list_users` a gagné cinq colonnes avec la migration 0077.
+ * Entre le déploiement de cette application et l'application de la
+ * migration — quelques minutes, ou le temps que le cache de schéma de
+ * PostgREST se recharge — la fonction rend l'ANCIENNE forme, et ces
+ * cinq clés sont absentes de l'objet JSON.
+ *
+ * `undefined` n'est pas `null`, et toute cette interface repose sur
+ * `null` pour dessiner l'inconnu : `value === null` déclenche le
+ * marqueur et son motif, `value === undefined` traverse et rend une
+ * case VIDE. Une case vide dans une colonne de versions se lit « aucune
+ * version », ce qui est un fait, et il serait faux.
+ *
+ * On ramène donc l'absence à l'inconnu, une fois, ici. Le reste de
+ * l'application n'a jamais à se demander laquelle des deux formes elle
+ * regarde.
+ */
+function normalizeMobilePresence(row: AdminUserRow): AdminUserRow {
+  return {
+    ...row,
+    mobile_platform: row.mobile_platform ?? null,
+    mobile_app_version: row.mobile_app_version ?? null,
+    mobile_install_count: row.mobile_install_count ?? null,
+    mobile_last_seen_at: row.mobile_last_seen_at ?? null,
+    mobile_presence_source: row.mobile_presence_source ?? null,
+  };
+}
+
 /** USERS (spec p.7). Permission `platform.users.read`, vérifiée en SQL. */
 export async function listUsers(query: ListQuery): Promise<Paged<AdminUserRow>> {
   const rows = await callAdminList<AdminUserRow>(
@@ -111,7 +143,7 @@ export async function listUsers(query: ListQuery): Promise<Paged<AdminUserRow>> 
     query.filter,
   );
 
-  return toPage(rows, query.page, PAGE_SIZE);
+  return toPage(rows.map(normalizeMobilePresence), query.page, PAGE_SIZE);
 }
 
 /** PRO ORGANIZATIONS (spec p.9). Permission `platform.organizations.read`. */

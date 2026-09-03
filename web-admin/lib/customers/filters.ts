@@ -3,16 +3,17 @@
  * LES FILTRES — dont trois que la spec demande et que la base refuse
  * ==================================================================
  *
- * La spec p.7 énumère neuf filtres d'utilisateurs. Six ont une donnée
- * derrière. Trois n'en ont aucune, et `admin_list_users` LÈVE sur
- * ceux-là (SQLSTATE 0A000) au lieu de les ignorer.
+ * La spec p.7 énumère neuf filtres d'utilisateurs. Sept ont une donnée
+ * derrière depuis la migration 0077 — « Mobile » en fait enfin
+ * partie — et deux n'en ont toujours aucune : `admin_list_users` LÈVE
+ * sur ceux-là (SQLSTATE 0A000) au lieu de les ignorer.
  *
  * Cette décision de la base commande le dessin de l'interface. Un
  * filtre qu'on ignore en silence rend la liste ENTIÈRE sous un titre
- * qui affirme le contraire : cliquer sur « Mobile » afficherait les
- * deux comptes de la plateforme, et l'écran dirait « voici les
- * utilisateurs Mobile ». C'est le pire des trois comportements
- * possibles — pire qu'une erreur, pire qu'une absence.
+ * qui affirme le contraire : cliquer sur « Essai » afficherait tous les
+ * comptes de la plateforme, et l'écran dirait « voici les comptes en
+ * essai ». C'est le pire des trois comportements possibles — pire
+ * qu'une erreur, pire qu'une absence.
  *
  * Ils sont donc DESSINÉS ÉTEINTS, avec leur raison. Les faire
  * disparaître aurait fait croire à un oubli d'interface ; les laisser
@@ -52,12 +53,27 @@ export type FilterOption = {
  */
 export const USER_FILTERS: FilterOption[] = [
   { value: null, label: "Tous" },
-  {
-    value: "mobile",
-    label: "Mobile",
-    unsupportedReason:
-      "Rien n'enregistre par quelle application un compte est entré. Le seul proxy imaginable — « possède un espace personnel » — est faux : le trigger on_auth_user_created en crée un pour tout nouveau compte, y compris celui qui n'ouvrira jamais l'iPhone.",
-  },
+  /*
+    « MOBILE » EST RALLUMÉ, ET LE MOTIF QUI L'ÉTEIGNAIT N'EST PLUS VRAI.
+
+    Il disait : « rien n'enregistre par quelle application un compte est
+    entré ; le seul proxy imaginable, posséder un espace personnel, est
+    faux ». Les deux moitiés de la phrase étaient exactes, et la
+    migration 0077 a répondu à la première : une ligne de
+    `mobile_app_installations` dit qu'un compte est passé par l'iPhone,
+    soit parce que l'application s'est annoncée, soit parce que le
+    compte a laissé une trace que seule elle sait écrire. Le proxy des
+    espaces personnels, lui, reste faux — et 0077 ne l'utilise pas.
+
+    Les deux sous-filtres qui suivent ne sont pas un raffinement
+    d'ingénieur : « qui a rouvert l'application depuis la mise en
+    service ? » et « qui est passé par l'iPhone un jour ? » sont deux
+    questions différentes, et la première est la seule qui dise si le
+    parc a basculé.
+  */
+  { value: "mobile", label: "Mobile" },
+  { value: "mobile_declare", label: "Mobile — déclaré" },
+  { value: "mobile_deduit", label: "Mobile — déduit" },
   { value: "pro", label: "Pro" },
   { value: "premium", label: "Premium" },
   { value: "gratuit", label: "Gratuit" },
@@ -78,6 +94,15 @@ export const USER_FILTERS: FilterOption[] = [
   { value: "banni", label: "Banni" },
   { value: "offert", label: "Accès offert" },
   { value: "sans_organisation", label: "Sans organisation" },
+  /*
+    « ANDROID » NE FIGURE PAS DANS CE CATALOGUE, et ce n'est pas un
+    oubli non plus. `admin_list_users` LÈVE dessus : il n'existe aucun
+    client Android, la contrainte de `mobile_app_installations`
+    n'accepte que « ios », et une liste vide se lirait « aucun
+    utilisateur Android » — c'est-à-dire un fait — alors qu'il n'y a
+    rien à mesurer. Un chip éteint aurait au contraire suggéré qu'une
+    application Android existe et qu'on n'arrive pas à la compter.
+  */
 ];
 
 /**

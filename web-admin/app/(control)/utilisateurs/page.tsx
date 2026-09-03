@@ -176,7 +176,7 @@ function Header({ search, total }: { search: string | null; total?: number | nul
 }
 
 /**
- * Les trois filtres que la spec demande et que la base refuse.
+ * Les filtres que la spec demande et que la base refuse encore.
  *
  * Ils sont déjà dessinés éteints dans la barre de filtres, avec leur
  * raison en attribut `title`. Ce panneau existe parce qu'un `title` ne
@@ -184,6 +184,13 @@ function Header({ search, total }: { search: string | null; total?: number | nul
  * pour un lecteur d'écran. Or la raison est ici plus intéressante que
  * le filtre lui-même — elle dit ce qu'il faudrait enregistrer pour que
  * la question devienne posable.
+ *
+ * ILS ÉTAIENT TROIS, ILS SONT DEUX. « Mobile » a passé tout le jalon 1
+ * ici, avec une raison exacte : rien n'enregistrait par quelle
+ * application un compte était entré. La migration 0077 y a répondu, le
+ * chip est rallumé, et le panneau s'est vidé d'une ligne tout seul —
+ * parce qu'il se construit depuis le catalogue et non depuis une liste
+ * recopiée à la main.
  */
 function UnfilterablePanel() {
   const unsupported = USER_FILTERS.filter((option) => option.unsupportedReason !== undefined);
@@ -191,7 +198,7 @@ function UnfilterablePanel() {
   return (
     <Panel
       title="Ce que cette liste ne sait pas filtrer"
-      description="Trois filtres de la spec p.7 n'ont aucune donnée derrière. La base lève plutôt que de rendre la liste entière sous un titre qui affirmerait le contraire."
+      description="Ces filtres de la spec p.7 n'ont aucune donnée derrière. La base lève plutôt que de rendre la liste entière sous un titre qui affirmerait le contraire."
     >
       <ul className="divide-y divide-line">
         {unsupported.map((option) => (
@@ -210,6 +217,29 @@ function UnfilterablePanel() {
             Ces deux-là fonctionnent, mais mesurent la CONNEXION, pas l&apos;usage : le seuil est
             de trente jours sans connexion, fixé dans la base. Rien dans ce projet ne date un
             geste métier par utilisateur.
+          </p>
+        </li>
+        <li className="px-4 py-2.5">
+          <p className="text-[var(--text-body)] font-medium text-ink-soft">
+            « Mobile », « Mobile — déclaré », « Mobile — déduit »
+          </p>
+          <p className="mt-1 max-w-prose text-[var(--text-secondary)] leading-relaxed text-ink-faint">
+            Ces trois-là fonctionnent depuis la migration 0077, et ils rendent une BORNE
+            INFÉRIEURE : un compte qui n&apos;a pas rouvert l&apos;application depuis la mise en
+            service de la collecte n&apos;y figure pas, et le mode invité — l&apos;application
+            entière s&apos;utilise sans compte — n&apos;y figurera jamais. « Déclaré » veut dire
+            que l&apos;application s&apos;est annoncée ; « déduit » veut dire qu&apos;on a
+            reconnu, dans la base, une trace que seule elle sait écrire.
+          </p>
+        </li>
+        <li className="px-4 py-2.5">
+          <p className="text-[var(--text-body)] font-medium text-ink-soft">« Android »</p>
+          <p className="mt-1 max-w-prose text-[var(--text-secondary)] leading-relaxed text-ink-faint">
+            Absent de la barre, même éteint. Il n&apos;existe aucun client Android et la contrainte
+            de la table de présence n&apos;accepte que « ios » : un chip grisé aurait suggéré
+            qu&apos;une application Android existe et qu&apos;on n&apos;arrive pas à la compter. La
+            base lève sur ce filtre plutôt que de rendre une liste vide, qui se lirait « aucun
+            utilisateur Android » — un fait, alors qu&apos;il n&apos;y a rien à mesurer.
           </p>
         </li>
       </ul>

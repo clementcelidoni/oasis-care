@@ -6,6 +6,7 @@ import { UnknownsPanel } from "@/components/dashboard/unknowns";
 import { ButtonLink, MetricCard, PageHeader, Panel, SectionHeader } from "@/components/ui";
 import { requireAdmin } from "@/lib/auth/guard";
 import { combineReasons, formatSignedCount, reasonFor, sumKnown } from "@/lib/dashboard/aggregate";
+import { mobileBreakdown, mobilePresence } from "@/lib/dashboard/mobile";
 import { readPlatformKpis } from "@/lib/dashboard/source";
 import type { PlatformKpisRow } from "@/lib/dashboard/types";
 import { formatCents, formatCount, formatPercent, formatTime } from "@/lib/format";
@@ -20,13 +21,31 @@ import { formatCents, formatCount, formatPercent, formatTime } from "@/lib/forma
  * d'entreprises utilisent Pro, combien rapporte Oasis Care, combien
  * coûte l'IA » (spec p.33).
  *
- * Cet écran répond à ce qu'il peut et refuse d'inventer le reste. Sept
+ * Cet écran répond à ce qu'il peut et refuse d'inventer le reste. Six
  * des seize chiffres demandés n'existent pas dans cette base — pas par
  * oubli de requête, par absence de donnée : les quatre forfaits Pro
  * n'ont pas de prix, `organization_subscriptions` est vide et aucune
- * ligne de code du dépôt ne l'écrit, aucune table n'enregistre de
- * jetons ni de coût IA, et rien ne dit par quelle application un compte
- * est entré. Ceux-là s'affichent en INCONNU, avec leur motif.
+ * ligne de code du dépôt ne l'écrit, et aucune table n'enregistre de
+ * jetons ni de coût IA. Ceux-là s'affichent en INCONNU, avec leur
+ * motif.
+ *
+ * ------------------------------------------------------------------
+ * LE SEPTIÈME EST DEVENU CALCULABLE, ET IL DEMANDE PLUS QU'UN CHIFFRE
+ * ------------------------------------------------------------------
+ * « Oasis Care Mobile » affichait un tiret : rien n'enregistrait par
+ * quelle application un compte était entré. La migration 0077 y a
+ * répondu, et pose du même coup un problème que les quinze autres
+ * chiffres n'ont pas — celui-ci va MONTER TOUT SEUL pendant des
+ * semaines, à mesure que le parc bascule sur la version qui déclare sa
+ * présence, sans qu'un seul utilisateur de plus soit arrivé.
+ *
+ * Il n'est donc jamais affiché nu. La carte porte, en clair et sans
+ * survol, combien de comptes sont DÉCLARÉS, combien sont DÉDUITS d'une
+ * activité passée, et depuis quand la collecte existe ; la section
+ * « Couverture » reprend la réserve de la base en entier. Tant que rien
+ * n'est mesurable, la base rend `null` avec un motif daté et la carte
+ * affiche l'inconnu : « 0 utilisateur mobile » et « personne n'a encore
+ * ouvert la nouvelle version » ne sont pas la même phrase.
  *
  * ------------------------------------------------------------------
  * AUCUN CALCUL ICI
@@ -97,6 +116,13 @@ export default async function TableauDeBordPage() {
   const monthProgress = formatSignedCount(kpis.new_users_this_month);
   const computedAt = formatTime(kpis.computed_at);
 
+  // Le parc mobile, rangé une fois pour les trois endroits qui en
+  // parlent sur cet écran. Voir `lib/dashboard/mobile.ts` et ses tests :
+  // aucun `?? 0` n'y entre, et la ligne de répartition disparaît d'un
+  // bloc plutôt que d'afficher une moitié de vérité.
+  const mobile = mobilePresence(kpis);
+  const mobileLine = mobileBreakdown(mobile);
+
   return (
     <>
       <PageHeader
@@ -129,10 +155,27 @@ export default async function TableauDeBordPage() {
             value={formatCount(kpis.total_users)}
             hint={monthProgress ? `${monthProgress} ce mois` : undefined}
           />
+          {/*
+            LE CHIFFRE ET SA FIABILITÉ, DANS LA MÊME CARTE.
+
+            `hint` n'est pas une note de bas de page ici : c'est la
+            moitié de l'information. Un « 4 » qui devient « 9 » en trois
+            semaines se lit comme une croissance ; « 4 déclarés · 5
+            déduits · collecte depuis le 03/09/2026 » se lit comme ce
+            que c'est — un parc qui bascule. Et c'est affiché, pas mis
+            en survol : une explication qu'il faut chercher n'est pas
+            lue.
+
+            Quand la base rend `null`, `MetricCard` masque le `hint` et
+            montre le motif DATÉ à la place. Les deux états sont
+            couverts, aucun n'affiche zéro.
+          */}
           <MetricCard
             label="Oasis Care Mobile"
-            value={formatCount(kpis.mobile_users)}
+            value={formatCount(mobile.users)}
+            hint={mobileLine ?? undefined}
             unknownReason={reasonFor(reasons, "mobile_users")}
+            href="/utilisateurs/mobile"
           />
           <MetricCard
             label="Oasis Care Pro"
@@ -218,7 +261,7 @@ export default async function TableauDeBordPage() {
       <section className="mb-8">
         <SectionHeader
           title="Couverture"
-          description="Deux rapports entre chiffres mesurés au même instant. Il n'existe aucune série temporelle dans cette base — ni instantané quotidien des compteurs, ni historique d'abonnements — donc aucune courbe n'est traçable sans inventer les points intermédiaires."
+          description="Trois rapports entre chiffres mesurés au même instant. Il n'existe aucune série temporelle dans cette base — ni instantané quotidien des compteurs, ni historique d'abonnements — donc aucune courbe n'est traçable sans inventer les points intermédiaires."
         />
         <Panel>
           <div className="flex flex-col gap-6 p-4">
@@ -227,7 +270,39 @@ export default async function TableauDeBordPage() {
               part={kpis.pro_users}
               whole={kpis.total_users}
               unit="comptes"
-              note="Les deux chiffres portent sur la même population : des comptes vivants, les effacements doux exclus de part et d'autre, et une entreprise archivée ne rattache plus personne. Le reste utilise Oasis Care sans entreprise ; combien d'entre eux passent par l'iPhone reste inconnu, rien n'enregistre l'application d'origine d'un compte."
+              note="Les deux chiffres portent sur la même population : des comptes vivants, les effacements doux exclus de part et d'autre, et une entreprise archivée ne rattache plus personne. Le reste utilise Oasis Care sans entreprise ; la barre suivante dit combien d'entre eux passent par l'iPhone — les deux barres se recoupent, un même compte pouvant être Pro et Mobile."
+            />
+            {/*
+              LA BARRE QUI N'EXISTAIT PAS, ET LA SEULE DE CET ÉCRAN DONT
+              LA NOTE VIENT DE LA BASE.
+
+              `mobile_users_note` est écrite par `admin_platform_kpis()`
+              et affichée telle quelle, en entier. La réécrire ici
+              créerait une seconde vérité à tenir d'accord avec le SQL,
+              et c'est toujours la copie qui dérive — d'autant que cette
+              phrase-là contient les deux chiffres de la répartition et
+              la date de démarrage, qui changent tout seuls.
+
+              Le `reason` couvre l'autre état : quand `mobile_users` est
+              inconnu, `shareOf` rend `null` et la barre affiche le
+              motif daté au lieu de dessiner une piste vide, qui se
+              lirait « 0 % ».
+
+              ET LA NOTE SE TAIT ALORS, exprès. Dans cet état-là,
+              `mobile_users_note` et `unknown_reasons.mobile_users`
+              portent la MÊME phrase — la base écrit le motif daté dans
+              les deux — et `ShareBar` affiche le motif puis la note
+              l'un sous l'autre. On lirait deux fois le même paragraphe,
+              ce qui donne l'impression d'un bug plutôt que d'une
+              explication.
+            */}
+            <ShareBar
+              label="Comptes dont un usage de l'application iPhone est attesté"
+              part={mobile.users}
+              whole={kpis.total_users}
+              unit="comptes"
+              reason={reasonFor(reasons, "mobile_users")}
+              note={mobile.users === null ? undefined : (mobile.note ?? undefined)}
             />
             <ShareBar
               label="Entreprises dont l'abonnement est suivi"

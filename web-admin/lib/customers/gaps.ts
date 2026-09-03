@@ -65,24 +65,14 @@ export type Gap = {
  * `admin_list_users()` rend déjà.
  */
 export const USER_GAPS: Gap[] = [
-  {
-    label: "Nombre d'appareils",
-    cause: "absente",
-    reason:
-      "Aucune table n'enregistre les appareils d'un compte. L'application iPhone ne déclare pas son installation, et Supabase ne conserve d'un appareil que la session vivante — effacée à la déconnexion.",
-  },
-  {
-    label: "Version de l'application",
-    cause: "absente",
-    reason:
-      "Aucune colonne du projet ne porte de numéro de version applicative. Une build en retard de trois mois est aujourd'hui indiscernable de la dernière.",
-  },
-  {
-    label: "Plateforme",
-    cause: "absente",
-    reason:
-      "Rien ne dit iOS, Android ou web. La table auth.sessions porte bien un user_agent, mais elle ne conserve que les sessions ouvertes : la ligne disparaît à la déconnexion.",
-  },
+  /*
+    TROIS MANQUES ONT DISPARU DE CETTE LISTE, et il faut savoir
+    lesquels : « nombre d'appareils », « version de l'application » et
+    « plateforme » étaient les trois champs « absente » de la fiche
+    p.8. La migration 0077 les a comblés, et ils sont désormais
+    AFFICHÉS sur la fiche — dans le panneau « Présence mobile », avec
+    leur date de dernière annonce.
+  */
   {
     label: "Stockage utilisé",
     cause: "non exposée",
@@ -116,12 +106,16 @@ export const USER_GAPS: Gap[] = [
 ];
 
 /**
- * La fiche d'un utilisateur MOBILE (spec p.9).
+ * La fiche d'un utilisateur MOBILE (spec p.9), moins ce que la
+ * migration 0077 a rendu affichable.
  *
- * Tout y manque ou presque, et le premier manque est le plus grave :
- * on ne sait même pas dire QUI est un utilisateur mobile. Ces champs
- * sont donc décrits sur la fiche de n'importe quel compte, sans
- * prétendre que ce compte utilise l'iPhone.
+ * Le premier manque de cette liste était longtemps le plus grave : on
+ * ne savait même pas dire QUI est un utilisateur mobile. Ce n'est plus
+ * le cas. Restent des questions sur le CONTENU d'un compte — combien de
+ * jardins, combien de plantes, combien de photos — auxquelles aucune
+ * fonction d'administration ne répond, et qui sont d'un tout autre
+ * genre : la donnée existe, il faut une migration pour la compter sans
+ * jamais la lister (spec p.9).
  */
 export const MOBILE_GAPS: Gap[] = [
   {
@@ -142,21 +136,22 @@ export const MOBILE_GAPS: Gap[] = [
     reason: "Les tailles sont dans storage.objects ; rien ne les agrège par compte.",
   },
   {
-    label: "Dernière synchronisation",
+    label: "Dernière activité métier",
     cause: "absente",
     reason:
-      "Aucune colonne ne date la dernière synchronisation d'un appareil. La dernière CONNEXION (last_sign_in_at) est une autre question, et elle est affichée sous son vrai nom.",
+      "Rien ne date un GESTE — arroser une plante, ouvrir un jardin — par utilisateur. La « dernière annonce » affichée sur la fiche date l'ouverture de l'application, pas ce qu'on y a fait, et la dernière connexion date encore autre chose. Les trois sont affichées sous leur vrai nom, jamais l'une à la place de l'autre.",
   },
   {
-    label: "Version iOS / Android",
-    cause: "absente",
-    reason: "Aucun numéro de version n'est enregistré, sur aucune plateforme.",
-  },
-  {
-    label: "Dernière activité",
+    label: "Utilisateurs en mode invité",
     cause: "absente",
     reason:
-      "Rien ne date un geste métier par utilisateur — arroser une plante, ouvrir un jardin. Seule la connexion est datée, et elle est affichée séparément.",
+      "L'application entière s'utilise sans compte, et la synchronisation ne part qu'une fois authentifié : un utilisateur mobile en mode invité n'écrit rien et ne sera jamais compté. Le chiffre « N utilisateurs Mobile » compte donc des COMPTES, pas des personnes — c'est l'une des raisons pour lesquelles il reste une borne inférieure.",
+  },
+  {
+    label: "Version d'iOS complète",
+    cause: "absente",
+    reason:
+      "Seule la version MAJEURE est collectée (26, pas 26.3.1) : la mineure ne change aucune décision de cible de déploiement, et la collecter rendrait l'empreinte plus fine pour rien. C'est un choix de minimisation, pas un oubli.",
   },
 ];
 

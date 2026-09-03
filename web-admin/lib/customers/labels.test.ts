@@ -5,6 +5,9 @@ import {
   businessTypeLabel,
   countryLabel,
   memberRoleLabel,
+  platformLabel,
+  presenceSourceLabel,
+  presenceSourceTone,
   productLabel,
   subscriptionStatusLabel,
   subscriptionStatusTone,
@@ -56,15 +59,52 @@ test("le rôle « admin » d'une entreprise ne se confond pas avec un administra
 });
 
 /**
- * `product` vaut `'pro'` ou `null`, jamais `'mobile'`. Le `null` doit
- * remonter tel quel pour que l'écran dessine un INCONNU : rien dans
- * cette base n'enregistre par quelle application un compte est entré, et
- * « Mobile » par défaut serait l'invention la plus tentante de tout cet
- * écran.
+ * `product` vaut `'pro'`, `'mobile'`, `'both'` ou `null`. Le `null` doit
+ * remonter tel quel pour que l'écran dessine un INCONNU : « Mobile » par
+ * défaut serait l'invention la plus tentante de tout cet écran.
  */
 test("un produit inconnu reste inconnu", () => {
   assert.equal(productLabel(null), null);
   assert.equal(productLabel("pro"), "Oasis Care Pro");
+  assert.equal(productLabel("mobile"), "Oasis Care Mobile");
+});
+
+/**
+ * LA VALEUR QU'ON OUBLIE. Depuis 0077, `admin_list_users` sait rendre
+ * `'both'`, et le compte le plus important de la production en est un :
+ * le propriétaire, membre de l'organisation ET utilisateur de l'iPhone.
+ * Sans son entrée au dictionnaire, la fiche afficherait le mot anglais
+ * brut à l'endroit exact où l'œil se pose en premier.
+ */
+test("« both » est traduit, et nomme les deux produits", () => {
+  const label = productLabel("both");
+  assert.ok(label, "« both » doit être traduit");
+  assert.notEqual(label, "both");
+  assert.ok(label.includes("Mobile") && label.includes("Pro"), `« ${label} » doit nommer les deux`);
+});
+
+/**
+ * Une plateforme et une provenance hors catalogue s'affichent telles
+ * quelles, comme tout le reste de ce fichier : le jour où un client
+ * Android existera, sa valeur ne doit pas disparaître de l'interface en
+ * silence.
+ */
+test("plateforme et provenance suivent la règle de la valeur brute", () => {
+  assert.equal(platformLabel("ios"), "iPhone (iOS)");
+  assert.equal(platformLabel("windowsPhone"), "windowsPhone");
+  assert.equal(presenceSourceLabel("inconnue"), "inconnue");
+});
+
+/**
+ * LA DISTINCTION QUE TOUT CE CHANTIER PROTÈGE : une mesure et une
+ * déduction ne se lisent pas pareil. Elles n'ont donc pas la même
+ * couleur, et une provenance qu'on ne comprend pas n'en reçoit aucune.
+ */
+test("une déduction ne se peint pas comme une mesure", () => {
+  assert.equal(presenceSourceLabel("declared"), "Déclaré par l'application");
+  assert.match(presenceSourceLabel("inferred"), /[Dd]éduit/);
+  assert.notEqual(presenceSourceTone("declared"), presenceSourceTone("inferred"));
+  assert.equal(presenceSourceTone("bidon"), "neutral");
 });
 
 test("un statut hors catalogue ne reçoit pas de couleur", () => {

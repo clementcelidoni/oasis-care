@@ -166,15 +166,99 @@ export function countryLabel(code: string): string {
 }
 
 /**
- * « Produit utilisé » (spec p.8), depuis la colonne `product`.
+ * « Produit utilisé : Oasis Care Mobile / Pro / ou les deux »
+ * (spec p.8), depuis la colonne `product`.
  *
- * La base ne rend que `'pro'` ou `null`, et jamais `'mobile'` : la
- * présence dans une organisation prouve l'usage de Pro, rien ne prouve
- * l'usage de l'iPhone. `null` doit donc se lire « on ne sait pas », et
- * cette fonction rend `null` pour que l'appelant dessine un INCONNU —
- * surtout pas « Mobile » par défaut, qui serait une invention.
+ * ⚠️ `'both'` EST LA VALEUR QU'ON OUBLIE. Depuis 0077 la base rend
+ * quatre valeurs et non deux, et le compte le plus important de la
+ * production — le propriétaire, membre de l'organisation ET utilisateur
+ * de l'iPhone — est justement un `'both'`. Sans cette entrée, la fiche
+ * afficherait le mot anglais brut, exactement là où on regarde en
+ * premier.
+ *
+ * `null` doit toujours se lire « on ne sait pas », et cette fonction
+ * rend `null` pour que l'appelant dessine un INCONNU — surtout pas
+ * « Mobile » par défaut, qui serait une invention.
  */
 export function productLabel(value: string | null): string | null {
   if (value === null) return null;
-  return labelOf({ pro: "Oasis Care Pro", mobile: "Oasis Care Mobile" }, value);
+  return labelOf(
+    {
+      pro: "Oasis Care Pro",
+      mobile: "Oasis Care Mobile",
+      both: "Oasis Care Mobile et Pro",
+    },
+    value,
+  );
+}
+
+/**
+ * La plateforme d'une installation (`mobile_app_installations.platform`).
+ *
+ * Une seule valeur possible aujourd'hui : la contrainte de 0077
+ * n'accepte que `'ios'`, exprès — accepter `'android'` d'avance
+ * laisserait croire qu'on le mesure. Le jour où un client Android
+ * existera, une ligne de plus ici et une contrainte élargie là-bas.
+ */
+export function platformLabel(value: string): string {
+  return labelOf({ ios: "iPhone (iOS)", android: "Android" }, value);
+}
+
+/**
+ * ==================================================================
+ * COMMENT ON SAIT QUE CE COMPTE EST MOBILE — la colonne la plus
+ * importante de la fiche mobile
+ * ==================================================================
+ *
+ * `mobile_app_installations.source` sépare une MESURE d'une DÉDUCTION,
+ * et l'écran ne doit jamais les confondre :
+ *
+ *   • « déclaré » — l'application s'est annoncée elle-même depuis la
+ *     mise en service. On connaît sa version, son build, son iOS et la
+ *     date de sa dernière ouverture.
+ *   • « déduit » — personne ne s'est annoncé, mais le compte a laissé
+ *     dans la base une trace que seule l'application iPhone sait
+ *     écrire (un arrosage, un scan de plante, une étiquette QR). On
+ *     sait qu'il est passé par là ; on ne sait ni quand pour la
+ *     dernière fois, ni avec quelle version.
+ *
+ * Les deux comptent dans « N utilisateurs Mobile ». Les additionner
+ * sans le dire donnerait un nombre plus flatteur et moins défini.
+ */
+export function presenceSourceLabel(value: string): string {
+  return labelOf(
+    { declared: "Déclaré par l'application", inferred: "Déduit d'une activité passée" },
+    value,
+  );
+}
+
+/** Ce que cette provenance permet d'affirmer, en une phrase. */
+export function presenceSourceHint(value: string): string | null {
+  switch (value) {
+    case "declared":
+      return "L'application s'est annoncée depuis cet appareil : la version, la plateforme et la date ci-dessus sont mesurées.";
+    case "inferred":
+      return "Aucune installation ne s'est annoncée pour ce compte. Il est réputé mobile parce qu'il a laissé dans la base une trace que seule l'application iPhone écrit — ni sa version, ni sa dernière ouverture ne sont connues.";
+    default:
+      // Une provenance hors catalogue n'invente pas de phrase : la
+      // valeur brute s'affichera, et c'est le bon signal.
+      return null;
+  }
+}
+
+/**
+ * Le ton d'une provenance. Une déduction n'est pas une erreur — elle
+ * mérite donc l'INFO, pas l'avertissement — mais elle n'est pas une
+ * mesure non plus, et sa couleur ne doit pas être celle d'un fait
+ * établi.
+ */
+export function presenceSourceTone(value: string): Tone {
+  switch (value) {
+    case "declared":
+      return "accent";
+    case "inferred":
+      return "info";
+    default:
+      return "neutral";
+  }
 }
