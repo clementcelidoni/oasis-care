@@ -2,286 +2,281 @@
 
 import Link from "next/link";
 import { useRouter } from "next/navigation";
-import { useState } from "react";
-import { moveIntervention, createIntervention } from "@/lib/field/actions";
+import { useRef, useState } from "react";
+import { EmptyState } from "@/components/ui";
+import { Icon } from "@/components/shell/Icon";
+import { moveIntervention } from "@/lib/field/actions";
 import {
-  addDays, isoDay, formatDayShort, formatTime, dayAtHour, WEEKDAY_LABELS,
-  INTERVENTION_KINDS, INTERVENTION_KIND_LABELS, INTERVENTION_STATUS_LABELS,
-  type Intervention, type Team,
+  addDaysIso, groupByDay, weekDaysIso, type Intervention,
 } from "@/lib/field/types";
+import { DayColumn } from "./DayColumn";
+import { NewIntervention } from "./NewIntervention";
+import type { EquipeVue, NoteVue, OptionsCreation, SiteVue } from "./vue";
+
+/** À quelle distance du bord le glisser fait défiler la semaine. */
+const MARGE_DE_DEFILEMENT = 64;
 
 /**
- * §11G — « Drag & drop. »
+ * §11G — la semaine.
  *
- * Glisser-déposer natif du navigateur, sans bibliothèque : une carte est
- * `draggable`, une colonne écoute `onDrop`. Une dépendance de plusieurs
- * centaines de kilo-octets pour déplacer sept cartes serait un mauvais
- * marché.
+ * GLISSER-DÉPOSER NATIF, SANS BIBLIOTHÈQUE : une carte est `draggable`,
+ * une colonne écoute `onDrop`. Plusieurs centaines de kilo-octets pour
+ * déplacer sept cartes seraient un mauvais marché, et le natif rend
+ * exactement le service attendu. Ce qu'il ne rend pas — le tactile, le
+ * clavier — est rendu par le menu « ⋯ » de chaque carte, qui appelle la
+ * même Server Action.
  *
- * Le déplacement CONSERVE l'heure et la durée : faire glisser une carte
- * du mardi au jeudi ne doit pas la faire commencer à minuit — ce serait
- * la première chose cassée, et la moins visible.
+ * LE DÉPLACEMENT CONSERVE L'HEURE ET LA DURÉE, et c'est protégé côté
+ * serveur (`moveIntervention` → `moveToDayParis`). C'est la première
+ * chose qui casse, et la moins visible.
+ *
+ * LA GRILLE DÉFILE HORIZONTALEMENT plutôt que de rétrécir, À PARTIR DE
+ * 768 px. C'est la seule forme qui garantisse une largeur de case sur
+ * un écran de bureau : sur 1920 px la semaine entière tient à ~250 px
+ * par jour ; sur un portable de 1366 px ce sont le samedi et le
+ * dimanche qui sortent du cadre les premiers, ce qui est le bon ordre
+ * pour ce métier. Le sacrifice est assumé : sur un portable, la semaine
+ * entière n'est plus visible d'un seul coup d'œil.
+ *
+ * EN DESSOUS DE 768 px, LA GRILLE REVIENT À UNE COLONNE. Sept pistes
+ * d'au moins 196/156 px font 1 364 px de large ; la barre latérale
+ * n'ayant aucun repli responsive, il reste environ 78 px de fenêtre sur
+ * un téléphone. Un défilement horizontal y serait inutilisable, là où
+ * l'ancien écran, tout serré qu'il était, restait au moins lisible en
+ * pile. On garde donc le repli en pile — mais sans plancher de hauteur
+ * (voir `DayColumn`), pour que les journées vides ne coûtent rien.
  */
 export function WeekPlanner({
-  mondayIso, interventions, teams, projects, customers,
+  mondayIso, aujourdhui, maintenantIso, interventions, equipes, notes, clients, sites,
+  options, equipeFiltre, peutModifier, premiereFois,
 }: {
   mondayIso: string;
+  aujourdhui: string;
+  maintenantIso: string;
   interventions: Intervention[];
-  teams: Team[];
-  projects: { id: string; number: string; name: string }[];
-  customers: { id: string; display_name: string }[];
+  equipes: EquipeVue[];
+  notes: NoteVue[];
+  clients: { id: string; display_name: string }[];
+  sites: SiteVue[];
+  options: OptionsCreation;
+  /** `""` toutes, `"sans"` celles sans équipe, sinon un identifiant. */
+  equipeFiltre: string;
+  peutModifier: boolean;
+  /** L'entreprise n'a jamais planifié quoi que ce soit. */
+  premiereFois: boolean;
 }) {
   const router = useRouter();
-  const monday = new Date(`${mondayIso}T00:00:00Z`);
-  const days = Array.from({ length: 7 }, (_, i) => addDays(monday, i));
+  const grille = useRef<HTMLDivElement>(null);
 
-  const [dragging, setDragging] = useState<string | null>(null);
-  const [over, setOver] = useState<string | null>(null);
-  const [teamFilter, setTeamFilter] = useState<string>("");
-  const [creatingOn, setCreatingOn] = useState<string | null>(null);
+  const [enDeplacement, setEnDeplacement] = useState<string | null>(null);
+  const [survole, setSurvole] = useState<string | null>(null);
+  const [edition, setEdition] = useState<{ jour: string; quoi: string } | null>(null);
 
-  const teamById = new Map(teams.map((t) => [t.id, t]));
-  const visible = teamFilter
-    ? interventions.filter((i) => i.team_id === teamFilter)
-    : interventions;
+  const jours = weekDaysIso(mondayIso);
+  const equipesParId = new Map(equipes.map((e) => [e.id, e]));
+  const clientsParId = new Map(clients.map((c) => [c.id, c.display_name]));
+  const sitesParId = new Map(sites.map((s) => [s.id, s]));
 
-  async function onDrop(event: React.DragEvent, dayIso: string) {
-    event.preventDefault();
-    setOver(null);
-    // L'état React d'abord, `dataTransfer` en secours : le premier est
-    // fiable dans l'onglet, le second survit à un glisser qui aurait
-    // commencé ailleurs.
-    const id = dragging ?? event.dataTransfer.getData("text/plain");
-    setDragging(null);
-    if (!id) return;
+  const retenues = equipeFiltre === ""
+    ? interventions
+    : interventions.filter((iv) =>
+      equipeFiltre === "sans" ? iv.team_id === null : iv.team_id === equipeFiltre);
 
+  const cartesParJour = groupByDay(
+    retenues, jours,
+    (id) => (id ? equipesParId.get(id)?.name ?? "" : ""),
+  );
+
+  // Une note d'entreprise (sans équipe) reste visible quel que soit le
+  // filtre : « dépôt fermé » concerne aussi celui qui ne regarde qu'une
+  // équipe. Une note d'équipe suit le filtre, comme les interventions.
+  const notesRetenues = equipeFiltre === ""
+    ? notes
+    : notes.filter((n) => n.team_id === null
+      || (equipeFiltre !== "sans" && n.team_id === equipeFiltre));
+
+  const notesParJour = new Map<string, NoteVue[]>(jours.map((j) => [j, []]));
+  for (const note of notesRetenues) notesParJour.get(note.day)?.push(note);
+
+  /*
+    « VIDE » SE JUGE SANS LE FILTRE.
+
+    Le calcul se faisait sur la sélection : choisir une équipe qui n'a
+    rien cette semaine effaçait les sept colonnes et affichait « Aucune
+    intervention cette semaine » juste sous une barre de filtres qui
+    annonçait « Toutes : 7 » — deux affirmations contradictoires l'une
+    au-dessus de l'autre. Et l'on y perdait la création sur un jour
+    précis. Un écran vide PAR FILTRE garde sa grille et le dit d'un mot.
+  */
+  const cartesToutes = groupByDay(interventions, jours);
+  const semaineVide = jours.every(
+    (j) => (cartesToutes.get(j)?.length ?? 0) === 0,
+  ) && notes.length === 0;
+  const selectionVide = !semaineVide && jours.every(
+    (j) => (cartesParJour.get(j)?.length ?? 0) === 0 && (notesParJour.get(j)?.length ?? 0) === 0,
+  );
+
+  // Le filtre suit la navigation : on suit UNE équipe d'une semaine à
+  // l'autre, et le lien de secours de l'état vide le perdait.
+  const suffixeEquipe = equipeFiltre === "" ? "" : `&equipe=${equipeFiltre}`;
+  const jourDAccueil = jours.includes(aujourdhui) ? aujourdhui : mondayIso;
+
+  async function deplacer(id: string, jour: string) {
     const data = new FormData();
     data.set("intervention_id", id);
-    data.set("day", dayIso);
+    data.set("day", jour);
     await moveIntervention(data);
     router.refresh();
   }
 
-  return (
-    <div>
-      <div className="mb-4 flex flex-wrap items-center gap-2">
-        <Link
-          href={`/planning?semaine=${isoDay(addDays(monday, -7))}`}
-          className="rounded-md border border-line-strong px-2.5 py-1.5 text-xs font-medium text-ink-soft hover:border-accent hover:text-accent"
-        >
-          ← Semaine précédente
-        </Link>
-        <Link
-          href="/planning"
-          className="rounded-md px-2.5 py-1.5 text-xs font-medium text-ink-soft hover:bg-canvas"
-        >
-          Cette semaine
-        </Link>
-        <Link
-          href={`/planning?semaine=${isoDay(addDays(monday, 7))}`}
-          className="rounded-md border border-line-strong px-2.5 py-1.5 text-xs font-medium text-ink-soft hover:border-accent hover:text-accent"
-        >
-          Semaine suivante →
-        </Link>
+  function surDepot(event: React.DragEvent, jour: string) {
+    event.preventDefault();
+    setSurvole(null);
+    // L'état React d'abord, `dataTransfer` en secours : le premier est
+    // fiable dans l'onglet, le second survit à un glisser qui aurait
+    // commencé ailleurs.
+    const id = enDeplacement ?? event.dataTransfer.getData("text/plain");
+    setEnDeplacement(null);
+    if (id) void deplacer(id, jour);
+  }
 
-        {teams.length > 0 && (
-          <select
-            value={teamFilter}
-            onChange={(e) => setTeamFilter(e.target.value)}
-            className="ml-auto rounded-md border border-line-strong bg-surface px-2 py-1.5 text-xs outline-none focus:border-accent"
-          >
-            <option value="">Toutes les équipes</option>
-            {teams.map((t) => (
-              <option key={t.id} value={t.id}>{t.name}</option>
-            ))}
-          </select>
-        )}
-      </div>
+  /**
+   * Le glisser doit faire défiler la grille.
+   *
+   * Sans cela, une semaine qui déborde rend le dimanche INATTEIGNABLE au
+   * glisser — ce qui annulerait tout le bénéfice des grandes cases.
+   */
+  function surSurvolDeLaGrille(event: React.DragEvent) {
+    const element = grille.current;
+    if (!element) return;
+    const cadre = element.getBoundingClientRect();
+    if (event.clientX - cadre.left < MARGE_DE_DEFILEMENT) element.scrollLeft -= 24;
+    else if (cadre.right - event.clientX < MARGE_DE_DEFILEMENT) element.scrollLeft += 24;
+  }
 
-      <div className="grid grid-cols-1 gap-2 md:grid-cols-7">
-        {days.map((day, index) => {
-          const dayIso = isoDay(day);
-          const dayInterventions = visible.filter(
-            (i) => i.scheduled_start && i.scheduled_start.slice(0, 10) === dayIso,
-          );
-          const isToday = dayIso === isoDay(new Date());
-          const isWeekend = index >= 5;
+  /*
+    L'ÉTAT VIDE CÈDE LA PLACE À LA GRILLE DÈS QU'ON ÉCRIT.
 
-          return (
-            <section
-              key={dayIso}
-              onDragOver={(e) => { e.preventDefault(); setOver(dayIso); }}
-              onDragLeave={() => setOver((c) => (c === dayIso ? null : c))}
-              onDrop={(e) => void onDrop(e, dayIso)}
-              className={`flex min-h-40 flex-col rounded-lg border p-2 transition-colors ${
-                over === dayIso
-                  ? "border-accent bg-accent-wash"
-                  : isWeekend
-                    ? "border-line bg-canvas"
-                    : "border-line bg-surface"
-              }`}
-            >
-              <header className="mb-1.5 flex items-baseline justify-between">
-                <span className={`text-xs font-semibold ${isToday ? "text-accent" : ""}`}>
-                  {WEEKDAY_LABELS[index]}
-                </span>
-                <span className="text-[11px] text-ink-faint">{formatDayShort(day)}</span>
-              </header>
-
-              <div className="flex flex-1 flex-col gap-1.5">
-                {dayInterventions.map((iv) => {
-                  const team = iv.team_id ? teamById.get(iv.team_id) : null;
-                  return (
-                    <Link
-                      key={iv.id}
-                      href={`/projets/interventions/${iv.id}`}
-                      draggable
-                      onDragStart={(e) => {
-                        // Firefox refuse de démarrer un glisser sans
-                        // données, et un lien traîné sans cela emporte
-                        // son URL au lieu de la carte.
-                        e.dataTransfer.setData("text/plain", iv.id);
-                        e.dataTransfer.effectAllowed = "move";
-                        setDragging(iv.id);
-                      }}
-                      onDragEnd={() => { setDragging(null); setOver(null); }}
-                      className={`block cursor-grab rounded-md border-l-[3px] bg-canvas px-2 py-1.5 text-[11px] transition-opacity active:cursor-grabbing ${
-                        dragging === iv.id ? "opacity-40" : ""
-                      }`}
-                      style={{ borderLeftColor: team?.color ?? "#7c8b83" }}
-                    >
-                      <span className="block font-medium leading-tight">{iv.title}</span>
-                      <span className="block text-ink-faint">
-                        {formatTime(iv.scheduled_start)}
-                        {iv.scheduled_end ? `–${formatTime(iv.scheduled_end)}` : ""}
-                        {team ? ` · ${team.name}` : ""}
-                      </span>
-                      {iv.status !== "scheduled" && (
-                        <span className="block text-ink-faint">
-                          {INTERVENTION_STATUS_LABELS[iv.status]}
-                        </span>
-                      )}
-                    </Link>
-                  );
-                })}
-              </div>
-
-              {creatingOn === dayIso ? (
-                <NewInterventionForm
-                  dayIso={dayIso}
-                  teams={teams}
-                  projects={projects}
-                  customers={customers}
-                  onCancel={() => setCreatingOn(null)}
-                />
-              ) : (
-                <button
-                  onClick={() => setCreatingOn(dayIso)}
-                  className="mt-1.5 rounded-md border border-dashed border-line-strong py-1 text-[11px] text-ink-faint hover:border-accent hover:text-accent"
-                >
-                  + Planifier
-                </button>
-              )}
-            </section>
-          );
-        })}
-      </div>
-
-      <p className="mt-3 text-[11px] text-ink-faint">
-        Faites glisser une carte d&apos;un jour à l&apos;autre pour la replanifier.
-        L&apos;heure et la durée sont conservées.
-      </p>
-    </div>
-  );
-}
-
-function NewInterventionForm({
-  dayIso, teams, projects, customers, onCancel,
-}: {
-  dayIso: string;
-  teams: Team[];
-  projects: { id: string; number: string; name: string }[];
-  customers: { id: string; display_name: string }[];
-  onCancel: () => void;
-}) {
-  return (
-    <form action={createIntervention} className="mt-1.5 flex flex-col gap-1">
-      {/*
-        Huit heures par défaut, de 8 h à 16 h : la journée type. Se
-        trompe souvent, mais un champ vide se trompe toujours, et se
-        corrige sur la fiche.
-
-        En instants ISO et non en « JJT08:00 » : la base est en UTC et
-        aurait lu 8 h du matin comme 10 h ici.
-      */}
-      <input type="hidden" name="scheduled_start" value={dayAtHour(dayIso, 8)} />
-      <input type="hidden" name="scheduled_end" value={dayAtHour(dayIso, 16)} />
-
-      <input
-        name="title"
-        required
-        autoFocus
-        placeholder="Intitulé"
-        className="rounded border border-line-strong bg-surface px-1.5 py-1 text-[11px] outline-none focus:border-accent"
+    Il remplaçait la grille entière, donc les colonnes, donc le seul
+    point d'entrée des notes : sur une semaine sans intervention — et
+    en production, c'est la semaine courante et toutes les suivantes —
+    la moitié de ce qui a été demandé de cet écran était littéralement
+    inaccessible. Plutôt que de dupliquer un formulaire de note ici, le
+    bouton ouvre la saisie sur un jour : `edition` cesse d'être nul, la
+    grille reprend la main, et le champ est déjà là, focalisé.
+  */
+  if (semaineVide && edition === null) {
+    return (
+      <EmptyState
+        icon={<Icon name="planning" className="h-6 w-6" />}
+        title={
+          premiereFois
+            ? "Le planning est encore vide"
+            : "Aucune intervention cette semaine"
+        }
+        description={
+          premiereFois
+            ? "Planifiez votre première intervention : donnez-lui un intitulé, "
+              + "une équipe et un jour. Vous pourrez ensuite la faire glisser "
+              + "d'un jour à l'autre, son heure et sa durée suivront."
+            : "Planifiez les chantiers de la semaine, affectez une équipe, et faites "
+              + "glisser une carte d'un jour à l'autre pour la replanifier. Une note "
+              + "de journée retient ce qui ne tient sur aucune intervention."
+        }
+        action={
+          <>
+            {peutModifier && (
+              <NewIntervention
+                dayIso={jourDAccueil}
+                equipes={equipes}
+                options={options}
+                declencheur="Planifier une intervention"
+              />
+            )}
+            {peutModifier && (
+              <button
+                type="button"
+                onClick={() => setEdition({ jour: jourDAccueil, quoi: "nouvelle" })}
+                className="inline-flex items-center justify-center gap-2 rounded-[var(--radius-control)] border border-line-strong bg-surface px-3.5 py-2 text-[length:var(--text-secondary)] font-medium text-ink transition-colors hover:bg-canvas"
+              >
+                Ajouter une note
+              </button>
+            )}
+            {/* Non négociable : devant un écran vide, le premier
+                réflexe est de croire à une panne. La semaine
+                précédente est la preuve du contraire — sauf s'il n'y a
+                jamais rien eu, où elle ne mènerait nulle part. */}
+            {!premiereFois && (
+              <Link
+                href={`/planning?semaine=${addDaysIso(mondayIso, -7)}${suffixeEquipe}`}
+                className="inline-flex items-center justify-center gap-2 rounded-[var(--radius-control)] border border-line-strong bg-surface px-3.5 py-2 text-[length:var(--text-secondary)] font-medium text-ink transition-colors hover:bg-canvas"
+              >
+                ← Semaine précédente
+              </Link>
+            )}
+          </>
+        }
       />
-      <select
-        name="kind"
-        defaultValue="work"
-        className="rounded border border-line-strong bg-surface px-1 py-1 text-[11px] outline-none focus:border-accent"
+    );
+  }
+
+  return (
+    <>
+      {selectionVide && (
+        <p className="mb-3 text-[length:var(--text-secondary)] text-ink-soft">
+          {equipeFiltre === "sans"
+            ? "Tout est affecté à une équipe cette semaine."
+            : "Rien pour cette équipe cette semaine."}{" "}
+          <Link
+            href={`/planning?semaine=${mondayIso}`}
+            className="font-medium text-accent hover:underline"
+          >
+            Voir toutes les équipes
+          </Link>
+        </p>
+      )}
+
+      {/* `items-start` : sans lui la grille étire les sept cases à la
+          hauteur de la plus chargée. Huit interventions le lundi
+          donnaient sept colonnes de 512 px — trois cartes visibles
+          derrière un ascenseur d'un côté, quatre cents pixels de blanc
+          de l'autre. C'est l'inversion exacte de la priorité. */}
+      <div
+        ref={grille}
+        onDragOver={surSurvolDeLaGrille}
+        className="grid grid-cols-1 items-start gap-3 pb-2 md:grid-cols-[repeat(5,minmax(196px,1fr))_repeat(2,minmax(156px,0.72fr))] md:overflow-x-auto md:[overscroll-behavior-x:contain] md:[scroll-padding-left:12px] md:[scroll-snap-type:x_proximity]"
       >
-        {INTERVENTION_KINDS.map((k) => (
-          <option key={k} value={k}>{INTERVENTION_KIND_LABELS[k]}</option>
+        {jours.map((jour, index) => (
+          <DayColumn
+            key={jour}
+            dayIso={jour}
+            index={index}
+            cartes={cartesParJour.get(jour) ?? []}
+            notes={notesParJour.get(jour) ?? []}
+            equipes={equipesParId}
+            equipesListe={equipes}
+            clients={clientsParId}
+            sites={sitesParId}
+            options={options}
+            jours={jours}
+            aujourdhui={aujourdhui}
+            maintenantIso={maintenantIso}
+            peutModifier={peutModifier}
+            equipeParDefaut={equipeFiltre === "sans" ? "" : equipeFiltre}
+            edition={edition?.jour === jour ? edition.quoi : null}
+            surEdition={(quoi) => setEdition(quoi === null ? null : { jour, quoi })}
+            enDeplacement={enDeplacement}
+            survole={survole === jour}
+            unGlisserEnCours={enDeplacement !== null}
+            surSurvol={() => setSurvole(jour)}
+            surSortieDeSurvol={() => setSurvole((c) => (c === jour ? null : c))}
+            surDepot={(event) => surDepot(event, jour)}
+            surPrise={setEnDeplacement}
+            surFin={() => { setEnDeplacement(null); setSurvole(null); }}
+            surDeplacement={(id, cible) => void deplacer(id, cible)}
+          />
         ))}
-      </select>
-      {teams.length > 0 && (
-        <select
-          name="team_id"
-          defaultValue=""
-          className="rounded border border-line-strong bg-surface px-1 py-1 text-[11px] outline-none focus:border-accent"
-        >
-          <option value="">Sans équipe</option>
-          {teams.map((t) => <option key={t.id} value={t.id}>{t.name}</option>)}
-        </select>
-      )}
-      {projects.length > 0 && (
-        <select
-          name="project_id"
-          defaultValue=""
-          className="rounded border border-line-strong bg-surface px-1 py-1 text-[11px] outline-none focus:border-accent"
-        >
-          <option value="">Sans chantier</option>
-          {projects.map((p) => (
-            <option key={p.id} value={p.id}>{p.number} — {p.name}</option>
-          ))}
-        </select>
-      )}
-      {customers.length > 0 && (
-        <select
-          name="customer_id"
-          defaultValue=""
-          className="rounded border border-line-strong bg-surface px-1 py-1 text-[11px] outline-none focus:border-accent"
-        >
-          <option value="">Sans client</option>
-          {customers.map((c) => (
-            <option key={c.id} value={c.id}>{c.display_name}</option>
-          ))}
-        </select>
-      )}
-      <div className="flex gap-1">
-        <button
-          type="submit"
-          className="flex-1 rounded bg-accent px-1.5 py-1 text-[11px] font-medium text-accent-ink"
-        >
-          Créer
-        </button>
-        <button
-          type="button"
-          onClick={onCancel}
-          className="rounded px-1.5 py-1 text-[11px] text-ink-faint hover:bg-canvas"
-        >
-          ✕
-        </button>
       </div>
-    </form>
+    </>
   );
 }

@@ -176,7 +176,20 @@ export function FilterBar({
   current,
   label = "Filtrer",
 }: {
-  filters: { label: string; href: string; count?: number }[];
+  filters: {
+    label: string;
+    href: string;
+    count?: number;
+    /**
+     * Une pastille de couleur AVANT le libellé, quand la chose filtrée
+     * en porte une dans les données — une équipe, par exemple. Elle
+     * double le libellé, elle ne le remplace jamais : une couleur
+     * choisie par l'utilisateur n'est ni forcément lisible ni
+     * forcément distinguable d'une autre. Facultative ; sans elle,
+     * rien ne change pour les écrans qui utilisent déjà ce composant.
+     */
+    dot?: string;
+  }[];
   current: string;
   label?: string;
 }) {
@@ -195,6 +208,13 @@ export function FilterBar({
                 : "border border-line bg-surface text-ink-soft hover:border-line-strong hover:text-ink"
             }`}
           >
+            {filter.dot && (
+              <span
+                aria-hidden
+                className="h-1.5 w-1.5 shrink-0 rounded-full"
+                style={{ background: filter.dot }}
+              />
+            )}
             {filter.label}
             {filter.count !== undefined && (
               <span className={`tabular ${active ? "opacity-80" : "text-ink-faint"}`}>

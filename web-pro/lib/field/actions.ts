@@ -7,7 +7,7 @@ import { requireOrganization } from "@/lib/auth/organization";
 import {
   inputToCents, parseQuantity, parseQuantityOr,
 } from "@/lib/quotes/types";
-import { keepScheduleOrdered } from "./types";
+import { keepScheduleOrdered, moveToDayParis, verdictDeNote } from "./types";
 
 /**
  * §11G planning, §11H équipes.
@@ -359,6 +359,14 @@ export async function createIntervention(formData: FormData) {
 
   revalidatePath("/planning");
   revalidatePath("/projets/interventions");
+
+  /*
+    DEPUIS LE PLANNING, ON NE QUITTE PAS LE PLANNING.
+    Préparer dix chantiers le lundi matin ne peut pas coûter dix allers
+    et dix retours. Ailleurs — et c'est le défaut — on va sur la fiche,
+    parce qu'on vient d'y créer quelque chose qu'on va détailler.
+  */
+  if (String(formData.get("rester")) === "1") return;
   redirect(`/projets/interventions/${data.id}`);
 }
 
@@ -405,13 +413,29 @@ export async function updateIntervention(formData: FormData) {
 }
 
 /**
- * Le glisser-déposer du planning.
+ * Le glisser-déposer du planning — et son équivalent au clavier.
  *
  * Déplace l'intervention d'un jour à l'autre en CONSERVANT son heure et
  * sa durée : faire glisser une carte du mardi au jeudi ne doit pas la
- * faire commencer à minuit.
+ * faire commencer à minuit. C'est la première chose qui casse, et la
+ * moins visible.
+ *
+ * L'heure conservée est celle de PARIS, celle que la carte affiche —
+ * voir `moveToDayParis`. La version précédente réécrivait la date en
+ * heure locale du serveur, donc en UTC : une intervention de 00 h 30
+ * atterrissait un jour trop tôt, en silence.
+ *
+ * Le menu « Déplacer à… » de la carte appelle exactement cette action,
+ * avec exactement les mêmes champs. Deux gestes, un seul déplacement :
+ * un second chemin de code aurait fini par diverger, et c'est le
+ * clavier qui aurait perdu.
  */
 export async function moveIntervention(formData: FormData) {
+  // L'ENTREPRISE ACTIVE, ET PAS SEULEMENT « UNE DE MES ENTREPRISES ».
+  // La RLS rend toutes les organisations dont on est membre : sans ce
+  // filtre, un patron de deux sociétés déplaçait en silence, depuis le
+  // planning de l'une, une intervention de l'autre.
+  const organization = await requireOrganization();
   const id = String(formData.get("intervention_id") ?? "");
   const day = String(formData.get("day") ?? "");
   if (!id || !/^\d{4}-\d{2}-\d{2}$/.test(day)) return;
@@ -421,30 +445,113 @@ export async function moveIntervention(formData: FormData) {
     .from("field_interventions")
     .select("scheduled_start, scheduled_end")
     .eq("id", id)
+    .eq("organization_id", organization.organizationId)
     .maybeSingle();
   if (!current) return;
 
   const start = current.scheduled_start ? new Date(current.scheduled_start) : null;
   const end = current.scheduled_end ? new Date(current.scheduled_end) : null;
   // Durée conservée telle quelle, y compris une intervention à cheval
-  // sur deux jours.
+  // sur plusieurs jours : déplacer le premier jour d'un chantier de
+  // soixante-dix heures déplace le chantier entier.
   const durationMs = start && end ? end.getTime() - start.getTime() : 0;
 
-  const [y, m, d] = day.split("-").map(Number);
-  const newStart = start ? new Date(start) : new Date();
-  newStart.setFullYear(y, m - 1, d);
-  if (!start) newStart.setHours(8, 0, 0, 0);
+  const newStart = moveToDayParis(current.scheduled_start ?? null, day);
 
   const patch: Record<string, unknown> = {
-    scheduled_start: newStart.toISOString(),
+    scheduled_start: newStart,
     updated_at: new Date().toISOString(),
   };
   if (durationMs > 0) {
-    patch.scheduled_end = new Date(newStart.getTime() + durationMs).toISOString();
+    patch.scheduled_end = new Date(Date.parse(newStart) + durationMs).toISOString();
   }
 
-  const { error } = await supabase.from("field_interventions").update(patch).eq("id", id);
+  const { error } = await supabase
+    .from("field_interventions")
+    .update(patch)
+    .eq("id", id)
+    .eq("organization_id", organization.organizationId);
   if (error) throw new Error(error.message);
+
+  revalidatePath("/planning");
+}
+
+// ---------------------------------------------------------------
+// Les notes de journée du planning — table `planning_day_notes` (0078)
+// ---------------------------------------------------------------
+
+/**
+ * Enregistre une note de journée : création, correction, ou effacement.
+ *
+ * UNE SEULE ACTION POUR LES TROIS, parce que c'est un seul geste à
+ * l'écran : on clique le texte, on tape, on valide. Vider le champ et
+ * valider SUPPRIME la note — c'est ce que fait n'importe quelle
+ * annotation, et c'est traité ici plutôt que laissé à la contrainte
+ * `body <> ''` de 0078, qui renverrait le nom d'une contrainte SQL pour
+ * un geste parfaitement normal.
+ *
+ * `organization_id` est posé par le serveur à partir de la session, pas
+ * lu dans le formulaire : le champ de la ligne est justement celui sur
+ * lequel la RLS s'appuie, et le laisser au client reviendrait à lui
+ * demander de se contrôler lui-même. Le rattachement de l'ÉQUIPE, lui,
+ * est vérifié en base par `planning_day_note_same_org()`.
+ */
+export async function saveDayNote(formData: FormData) {
+  const organization = await requireOrganization();
+  const id = text(formData, "note_id");
+  const day = String(formData.get("day") ?? "");
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(day)) return;
+
+  const verdict = verdictDeNote(String(formData.get("body") ?? ""));
+  if (verdict.action === "refuser") throw new Error(verdict.raison);
+
+  const supabase = await createClient();
+
+  // Toutes les écritures par identifiant sont bornées à l'entreprise
+  // ACTIVE, et pas seulement à celles dont on est membre : la RLS rend
+  // les deux, le cookie d'entreprise n'en désigne qu'une.
+  const cetteEntreprise = organization.organizationId;
+
+  if (verdict.action === "vide") {
+    // Une note vidée est une note supprimée. Une note vide qu'on
+    // n'avait pas encore écrite n'est rien du tout.
+    if (id) {
+      const { error } = await supabase
+        .from("planning_day_notes")
+        .delete()
+        .eq("id", id)
+        .eq("organization_id", cetteEntreprise);
+      if (error) throw new Error(error.message);
+    }
+    revalidatePath("/planning");
+    return;
+  }
+
+  if (id) {
+    // Ni `created_by` ni `created_at` : le déclencheur de 0078 les
+    // rend immuables de toute façon, mais les envoyer laisserait croire
+    // ici que corriger, c'est signer.
+    //
+    // `team_id` EN REVANCHE SE CORRIGE. Le formulaire l'envoie déjà ;
+    // l'ignorer rendait le rattachement d'une note à une équipe
+    // définitif, alors que c'est justement ce qu'on se trompe à saisir.
+    // Le déclencheur `planning_day_note_same_org()` de 0078 vérifie que
+    // l'équipe visée appartient bien à l'entreprise de la note.
+    const { error } = await supabase
+      .from("planning_day_notes")
+      .update({ body: verdict.body, team_id: text(formData, "team_id") })
+      .eq("id", id)
+      .eq("organization_id", cetteEntreprise);
+    if (error) throw new Error(error.message);
+  } else {
+    const { error } = await supabase.from("planning_day_notes").insert({
+      organization_id: organization.organizationId,
+      day,
+      team_id: text(formData, "team_id"),
+      body: verdict.body,
+    });
+    if (error) throw new Error(error.message);
+  }
 
   revalidatePath("/planning");
 }

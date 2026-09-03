@@ -1,8 +1,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import {
-  mondayOf, addDays, isoDay, toLocalInput, fromLocalInput, dayAtHour,
-  scheduledHours, keepScheduleOrdered,
+  toLocalInput, fromLocalInput, scheduledHours, keepScheduleOrdered,
 } from "./types.ts";
 
 /**
@@ -40,14 +39,6 @@ test("le champ vide reste vide dans les deux sens", () => {
 test("une valeur illisible ne devient pas une date au hasard", () => {
   assert.equal(toLocalInput("pas une date"), "");
   assert.equal(fromLocalInput("pas une date"), null);
-});
-
-test("dayAtHour place l'heure en local, pas en UTC", () => {
-  const iso = dayAtHour("2026-08-29", 8);
-  // Relu en local, il doit être 8 h — quel que soit le fuseau qui
-  // exécute ce test.
-  assert.equal(new Date(iso).getHours(), 8);
-  assert.equal(new Date(iso).getDate(), 29);
 });
 
 // --- Bornes cohérentes ------------------------------------------
@@ -119,23 +110,7 @@ test("une fin envoyée seule est jugée face au début enregistré", () => {
   assert.ok(end > new Date(eightToFour.scheduled_start));
 });
 
-// --- Semaines ---------------------------------------------------
-
-test("la semaine commence un lundi, y compris le dimanche", () => {
-  // Un dimanche, `getDay()` vaut 0 et la naïveté renverrait ce
-  // dimanche-là : toute la semaine serait décalée d'un jour.
-  const sunday = new Date(2026, 7, 30);
-  assert.equal(isoDay(mondayOf(sunday)), "2026-08-24");
-});
-
-test("un lundi est son propre lundi", () => {
-  assert.equal(isoDay(mondayOf(new Date(2026, 7, 24))), "2026-08-24");
-});
-
-test("la semaine fait bien sept jours", () => {
-  const monday = mondayOf(new Date(2026, 7, 26));
-  assert.equal(isoDay(addDays(monday, 6)), "2026-08-30");
-});
+// --- Durées ---------------------------------------------------
 
 test("scheduledHours arrondit au quart d'heure et ignore l'absurde", () => {
   const start = new Date(2026, 7, 29, 8, 0).toISOString();
