@@ -7,6 +7,13 @@
       "runtimeArgs": ["run", "dev", "--prefix", "web-pro"],
       "port": 3000,
       "autoPort": false
+    },
+    {
+      "name": "oasis-control-center",
+      "runtimeExecutable": "npm",
+      "runtimeArgs": ["run", "dev", "--prefix", "web-admin"],
+      "port": 3100,
+      "autoPort": false
     }
   ]
 }

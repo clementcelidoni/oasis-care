@@ -135,8 +135,17 @@ insert into att values
   (select count(*)::text from auth.users where deleted_at is null)),
  ('pro_orgs',
   (select count(*)::text from public.business_organizations where archived_at is null)),
+ -- « Utilisateur Pro » = compte VIVANT membre d'une entreprise VIVANTE.
+ -- Les deux jointures sont le sujet du test 6.d : sans elles, le
+ -- numérateur et le dénominateur de la barre « comptes rattachés à une
+ -- entreprise Pro » ne portent pas sur la même population.
  ('pro_users',
-  (select count(distinct user_id)::text from public.organization_members where archived_at is null)),
+  (select count(distinct om.user_id)::text
+     from public.organization_members om
+     join auth.users u on u.id = om.user_id and u.deleted_at is null
+     join public.business_organizations o
+       on o.id = om.organization_id and o.archived_at is null
+    where om.archived_at is null)),
  ('signups_today',
   (select count(*)::text from auth.users where deleted_at is null
      and created_at >= date_trunc('day', now() at time zone 'Europe/Paris') at time zone 'Europe/Paris')),
@@ -291,7 +300,12 @@ insert into res select 'Le support LIT les abonnements','true',
   public.platform_admin_can('billing.subscriptions.read')::text;
 insert into res select 'SUPPORT NE MODIFIE PAS LES ABONNEMENTS','false',
   public.platform_admin_can('billing.subscriptions.write')::text;
-insert into res select 'Le support peut ouvrir les données d''un client pour l''aider','true',
+-- PAR DÉFAUT, AUCUN ACCÈS AUX DONNÉES MÉTIER. Ce jalon n'ouvre aucune
+-- donnée client, et aucun rôle de travail ne porte le droit de le
+-- faire : un droit accordé d'avance est un droit que le premier écran
+-- du jalon suivant trouverait déjà ouvert, sans consentement ni session
+-- d'assistance tracée.
+insert into res select 'LE SUPPORT N''OUVRE PAS NON PLUS LES DONNÉES CLIENT DANS CE JALON','false',
   public.platform_admin_can('customer.data.read')::text;
 insert into res select 'Le support ne lit pas le journal des administrateurs','false',
   public.platform_admin_can('platform.audit.read')::text;
@@ -362,6 +376,13 @@ begin
     select * from (values
       ('support','billing.subscriptions.write','On ne peut pas donner au support le droit de modifier un abonnement'),
       ('billing_admin','customer.data.read','On ne peut pas ouvrir les données client à la facturation'),
+      -- La même porte, pour les trois autres rôles que la spec ne nomme
+      -- pas : le défaut voulu est « aucun accès », pas « aucun accès
+      -- pour billing ». `customer.data.read` étant déclarée
+      -- `is_write = false`, la règle de l'analyste ne la couvrait pas.
+      ('product_admin','customer.data.read','Le produit non plus n''ouvre les données client'),
+      ('security_admin','customer.data.read','La sécurité non plus'),
+      ('read_only_analyst','customer.data.read','L''analyste non plus, bien que la permission soit en lecture'),
       ('product_admin','billing.payments.write','On ne peut pas donner les paiements au produit'),
       ('read_only_analyst','platform.admins.manage','On ne peut pas donner une écriture à un analyste'),
       ('support','permission.inventee','Une permission hors catalogue est refusée')
@@ -433,6 +454,34 @@ insert into res select 'authenticated n''écrit pas dans le journal admin','fals
 insert into res select 'Aucune vue security definer n''a été créée pour l''administration','0',
   (select count(*)::text from pg_views
     where schemaname='public' and viewname like 'admin!_%' escape '!');
+
+-- ------------------------------------------------------------
+-- 5.b LES TROIS SURFACES DISENT LA MÊME CHOSE
+-- ------------------------------------------------------------
+-- `web-admin/lib/auth/roles.ts` recopie ce catalogue pour typer les
+-- appels de garde, et `lib/navigation.ts` s'en sert pour filtrer la
+-- barre latérale. Une clé ajoutée ici sans l'être là-bas passerait
+-- inaperçue : le compilateur TypeScript refuserait la nouvelle
+-- permission dans un appel de garde, mais rien ne signalerait qu'elle
+-- existe. Ce test fige la liste ; le jour où elle change, il faut
+-- changer les deux fichiers, et l'échec le rappelle.
+insert into res select 'Le catalogue de permissions est exactement celui que recopie roles.ts',
+  'billing.payments.write, billing.subscriptions.read, billing.subscriptions.write, customer.data.read, platform.admins.manage, platform.admins.read, platform.audit.read, platform.dashboard.read, platform.organizations.read, platform.search, platform.users.read',
+  (select string_agg(key, ', ' order by key) from public.platform_admin_permissions);
+
+-- Le super-administrateur porte TOUT le catalogue : c'est sa
+-- définition, et le semis est écrit comme une jointure précisément pour
+-- qu'aucune permission ne puisse y manquer par distraction.
+insert into res select 'Le super-administrateur porte tout le catalogue','0',
+  (select count(*)::text from public.platform_admin_permissions p
+    where not exists (select 1 from public.platform_admin_role_permissions rp
+                       where rp.role = 'super_admin' and rp.permission = p.key));
+
+-- Et il est le SEUL à porter le droit d'ouvrir les données métier :
+-- par défaut, aucun accès. Voir le semis de la matrice.
+insert into res select 'Un seul rôle porte « ouvrir les données métier », et aucune interface ne le consulte','super_admin',
+  (select string_agg(role, ', ' order by role) from public.platform_admin_role_permissions
+    where permission = 'customer.data.read');
 
 -- ============================================================
 -- 6. LES KPI — un chiffre inconnu rend NULL, jamais zéro
@@ -558,6 +607,151 @@ insert into res
 select 'Sans abonnement facturable, le MRR redevient inconnu','NULL',
        coalesce((select mrr_cents::text from public.admin_platform_kpis()), 'NULL');
 
+-- ------------------------------------------------------------
+-- 6.c L'ARGENT SUIT LA MÊME DÉFINITION QUE LE RESTE DE L'ÉCRAN
+-- ------------------------------------------------------------
+-- Une entreprise archivée sort du décompte d'entreprises. Si son
+-- abonnement restait compté, le tableau de bord afficherait « 49 € de
+-- MRR » à côté d'« 1 entreprise » qui, elle, ne paie rien — du revenu
+-- attribué à un client parti. Rien n'annule l'abonnement à l'archivage
+-- (la table n'est écrite par aucune ligne du dépôt), donc l'état
+-- « archivée + active » est atteignable et durable.
+reset role;
+update public.organization_subscriptions set status = 'active'
+ where organization_id = (select v from ids where k='orgA');
+update public.business_organizations set archived_at = now() - interval '30 days'
+ where id = (select v from ids where k='orgA');
+
+select set_config('request.jwt.claims',
+  json_build_object('sub','cc000010-0000-4000-8000-000000000075')::text, true);
+set local role authenticated;
+
+insert into res
+select 'Le MRR d''une entreprise ARCHIVÉE n''est pas compté','NULL',
+       coalesce((select mrr_cents::text from public.admin_platform_kpis()), 'NULL');
+
+insert into res
+select 'Son ARR non plus','NULL',
+       coalesce((select arr_cents::text from public.admin_platform_kpis()), 'NULL');
+
+insert into res
+select 'Ni son abonnement dans « abonnements suivis » (le numérateur d''une barre dont le dénominateur l''exclut)','0',
+       (select tracked_subscriptions::text from public.admin_platform_kpis());
+
+-- La désarchiver rend le chiffre : la jointure filtre, elle ne casse
+-- pas le calcul.
+reset role;
+update public.business_organizations set archived_at = null
+ where id = (select v from ids where k='orgA');
+
+select set_config('request.jwt.claims',
+  json_build_object('sub','cc000010-0000-4000-8000-000000000075')::text, true);
+set local role authenticated;
+
+insert into res
+select 'Désarchivée, la même entreprise redonne son MRR','4900',
+       (select mrr_cents::text from public.admin_platform_kpis());
+
+-- Même règle pour les essais : un essai chez un client parti n'est pas
+-- un essai en cours.
+reset role;
+update public.organization_subscriptions set status = 'trialing'
+ where organization_id = (select v from ids where k='orgA');
+update public.business_organizations set archived_at = now() - interval '30 days'
+ where id = (select v from ids where k='orgA');
+
+select set_config('request.jwt.claims',
+  json_build_object('sub','cc000010-0000-4000-8000-000000000075')::text, true);
+set local role authenticated;
+
+insert into res
+select 'Un essai chez une entreprise archivée ne se compte pas','NULL',
+       coalesce((select pro_trials::text from public.admin_platform_kpis()), 'NULL');
+
+reset role;
+update public.business_organizations set archived_at = null
+ where id = (select v from ids where k='orgA');
+
+select set_config('request.jwt.claims',
+  json_build_object('sub','cc000010-0000-4000-8000-000000000075')::text, true);
+set local role authenticated;
+
+insert into res
+select 'Le même essai, chez une entreprise vivante, se compte','1',
+       (select pro_trials::text from public.admin_platform_kpis());
+
+-- ------------------------------------------------------------
+-- 6.d NUMÉRATEUR ET DÉNOMINATEUR, MÊME POPULATION
+-- ------------------------------------------------------------
+-- `pro_users` est le numérateur d'une barre dont `total_users` est le
+-- dénominateur. Le dénominateur exclut les comptes effacés en douceur ;
+-- si le numérateur les gardait, la barre pourrait afficher 100 % —
+-- « tous nos comptes sont rattachés à une entreprise Pro » — alors
+-- qu'aucun ne l'est. La cascade ne rattrape rien : l'effacement
+-- Supabase pose `deleted_at` sans supprimer la ligne, donc le
+-- `on delete cascade` de `organization_members` ne se déclenche jamais.
+reset role;
+update public.organization_subscriptions set status = 'trialing'
+ where organization_id = (select v from ids where k='orgA');
+
+insert into auth.users (id, instance_id, aud, role, email, encrypted_password,
+                        email_confirmed_at, created_at, updated_at, last_sign_in_at,
+                        raw_app_meta_data, raw_user_meta_data)
+values ('cc000004-0000-4000-8000-000000000075','00000000-0000-0000-0000-000000000000',
+        'authenticated','authenticated','cc-parti@test.invalid','',now(),now(),now(),now(),'{}','{}');
+
+insert into public.organization_members (organization_id, user_id, role)
+select v, 'cc000004-0000-4000-8000-000000000075', 'fieldWorker' from ids where k='orgA';
+
+select set_config('request.jwt.claims',
+  json_build_object('sub','cc000010-0000-4000-8000-000000000075')::text, true);
+set local role authenticated;
+
+insert into res
+select 'Un salarié de plus est un utilisateur Pro de plus',
+       ((select v from att where k='pro_users')::bigint + 1)::text,
+       (select pro_users::text from public.admin_platform_kpis());
+
+reset role;
+update auth.users set deleted_at = now()
+ where id = 'cc000004-0000-4000-8000-000000000075';
+
+select set_config('request.jwt.claims',
+  json_build_object('sub','cc000010-0000-4000-8000-000000000075')::text, true);
+set local role authenticated;
+
+insert into res
+select 'UN COMPTE EFFACÉ EN DOUCEUR N''EST PLUS UN UTILISATEUR PRO',
+       (select v from att where k='pro_users'),
+       (select pro_users::text from public.admin_platform_kpis());
+
+insert into res
+select 'Et il ne compte pas non plus dans le total (les deux populations coïncident)',
+       (select v from att where k='total_users'),
+       (select total_users::text from public.admin_platform_kpis());
+
+insert into res
+select 'La part ne peut donc jamais dépasser le tout','true',
+       (select (pro_users <= total_users)::text from public.admin_platform_kpis());
+
+-- Même règle dans la liste des entreprises : un compte fermé n'est plus
+-- un membre. Sans quoi la fiche d'une entreprise afficherait plus de
+-- salariés que la plateforme n'a d'utilisateurs.
+insert into res
+select 'La fiche d''entreprise ne compte pas les comptes effacés','1',
+       (select member_count::text from public.admin_list_organizations('Paysages Contrôle A'));
+
+-- Et le compte effacé n'apparaît plus nulle part : on remet l'état
+-- d'avant pour la suite du fichier.
+reset role;
+delete from public.organization_members
+ where user_id = 'cc000004-0000-4000-8000-000000000075';
+delete from auth.users where id = 'cc000004-0000-4000-8000-000000000075';
+
+select set_config('request.jwt.claims',
+  json_build_object('sub','cc000010-0000-4000-8000-000000000075')::text, true);
+set local role authenticated;
+
 -- ============================================================
 -- 7. L'ACTIVITÉ DU JOUR
 -- ============================================================
@@ -587,8 +781,46 @@ insert into res
 select 'Conversions Premium : inconnues tant que subscription_events est vide','NULL',
        coalesce((select premium_conversions::text from public.admin_live_activity()), 'NULL');
 
--- Dès qu'une ligne existe, le compteur se met à répondre tout seul :
--- l'inconnu n'était pas une renonciation, c'était un constat.
+-- LE PIÈGE QUI N'APPARAÎTRAIT QU'AU PREMIER VRAI CLIENT. `event_type`
+-- est recopié tel quel depuis `payload.notificationType` d'Apple, et
+-- DID_RENEW est envoyé à CHAQUE reconduction automatique d'un abonné
+-- DÉJÀ payant. Ces trois lignes ont la forme EXACTE que le webhook
+-- écrit — sans `user_id`, qu'il ne renseigne jamais. Les compter
+-- ferait apparaître, à mille abonnés mensuels, une trentaine de
+-- « conversions » par jour en régime permanent.
+reset role;
+insert into public.subscription_events
+  (event_type, product_id, original_transaction_id, transaction_id, environment, occurred_at)
+values
+  ('DID_RENEW','com.test.premium','cc-orig-r1','cc-tx-r1','Sandbox', now()),
+  ('DID_RENEW','com.test.premium','cc-orig-r2','cc-tx-r2','Sandbox', now()),
+  ('DID_RENEW','com.test.premium','cc-orig-r3','cc-tx-r3','Sandbox', now());
+
+select set_config('request.jwt.claims',
+  json_build_object('sub','cc000010-0000-4000-8000-000000000075')::text, true);
+set local role authenticated;
+
+insert into res
+select 'TROIS RECONDUCTIONS NE SONT PAS TROIS CONVERSIONS','0',
+       (select premium_conversions::text from public.admin_live_activity());
+
+-- Une résiliation, en revanche, est bien un départ.
+reset role;
+insert into public.subscription_events
+  (event_type, product_id, original_transaction_id, transaction_id, environment, occurred_at)
+values ('EXPIRED','com.test.premium','cc-orig-r1','cc-tx-r1','Sandbox', now());
+
+select set_config('request.jwt.claims',
+  json_build_object('sub','cc000010-0000-4000-8000-000000000075')::text, true);
+set local role authenticated;
+
+insert into res
+select 'Une expiration compte comme une résiliation','1',
+       (select mobile_cancellations::text from public.admin_live_activity());
+
+-- Dès qu'une VRAIE conversion existe, le compteur se met à répondre
+-- tout seul : l'inconnu n'était pas une renonciation, c'était un
+-- constat.
 reset role;
 insert into public.subscription_events
   (workspace_id, user_id, event_type, product_id, original_transaction_id, transaction_id, environment, occurred_at)

@@ -1,0 +1,326 @@
+@import "tailwindcss";
+
+/*
+ * ==================================================================
+ * OASIS CARE CONTROL CENTER — le système visuel
+ * ==================================================================
+ *
+ * Spec p.34 : « Conserver l'identité Oasis Care. […] Cette interface
+ * peut être légèrement différente du Pro pour éviter toute confusion. »
+ *
+ * POURQUOI SOMBRE, alors qu'Oasis Care Pro est clair.
+ *
+ * Ce n'est pas une préférence esthétique, c'est la consigne appliquée.
+ * Les deux applications partagent la même base de données, les mêmes
+ * comptes et un vocabulaire presque identique — « organisation »,
+ * « abonnement », « utilisateurs ». Un administrateur qui a les deux
+ * ouvertes dans deux onglets doit savoir en un dixième de seconde,
+ * AVANT de lire quoi que ce soit, dans laquelle il agit : ici une
+ * mauvaise manœuvre porte sur la plateforme entière, là-bas sur une
+ * seule entreprise.
+ *
+ * Une teinte d'accent différente n'aurait pas suffi : c'est le FOND qui
+ * se voit du coin de l'œil. Le vert Oasis reste, mais luminescent sur
+ * ardoise plutôt que forêt sur ivoire — même identité, deux registres.
+ *
+ * Le reste suit la spec p.34 : professionnel, très lisible, grands KPI,
+ * tableaux puissants, informations condensées. « Condensé » n'est pas
+ * « serré » : la densité vient d'une échelle typographique resserrée et
+ * de lignes de tableau basses, pas de la suppression des marges.
+ */
+:root {
+  /* ------------------------------------------------------------
+     Les plans. Quatre profondeurs, du plus enfoncé au plus haut.
+     ------------------------------------------------------------
+     Sur fond sombre, l'élévation ne se lit pas à l'ombre — une ombre
+     noire sur du noir est invisible. Elle se lit à la CLARTÉ : plus
+     un plan est proche, plus il est clair. C'est l'inverse exact du
+     réflexe acquis en clair, et c'est la raison pour laquelle un
+     thème sombre bâclé paraît plat. */
+  --canvas: #0b1013;
+  --surface: #131b1f;
+  --surface-raised: #1a242a;
+  --surface-sunken: #080d0f;
+
+  /* ------------------------------------------------------------
+     L'encre. Trois niveaux, contrastés sur --surface.
+     ------------------------------------------------------------
+     Blanc pur écarté volontairement : sur fond très sombre il produit
+     un halo qui fatigue en lecture longue, et une console
+     d'administration se lit longtemps. Un blanc légèrement verdi
+     s'accorde en plus à l'accent. */
+  --ink: #e6efea;       /* ~14:1 sur --surface */
+  --ink-soft: #9fb1a9;  /* ~7:1  — texte secondaire, toujours lisible */
+  --ink-faint: #6b7d76; /* ~4.5:1 — étiquettes, jamais une information seule */
+
+  --line: #232f34;
+  --line-strong: #35464d;
+
+  /* ------------------------------------------------------------
+     L'accent : le vert Oasis, remonté en luminosité pour le fond
+     sombre. Le #15654a du Pro serait ici presque noir.
+     ------------------------------------------------------------ */
+  --accent: #3ddc97;
+  --accent-hover: #63e8ae;
+  --accent-wash: #102a20;
+  /* Texte POSÉ SUR l'accent : sombre, parce que l'accent est clair.
+     Du blanc sur #3ddc97 tomberait à 2:1. */
+  --accent-ink: #04180f;
+
+  /* Sémantique. Distincte de l'accent : le vert dit « Oasis », pas
+     « succès ». Confondre les deux fait clignoter toute l'interface
+     en signal positif. */
+  --positive: #5fd694;
+  --positive-wash: #11291d;
+  --warning: #f0b429;
+  --warning-wash: #2c2210;
+  --critical: #f87171;
+  --critical-wash: #2e1717;
+  --info: #6cb6ff;
+  --info-wash: #10233a;
+
+  /* ------------------------------------------------------------
+     L'INCONNU — un jeton de couleur à lui seul.
+     ------------------------------------------------------------
+     C'est la particularité de cette application. Onze des seize
+     chiffres de la spec ne se calculent pas depuis cette base ; ils
+     s'affichent INCONNUS, jamais zéro. Un inconnu doit donc être
+     reconnaissable INSTANTANÉMENT et ne ressembler ni à une valeur
+     faible, ni à une erreur, ni à un chargement.
+     D'où sa propre teinte, froide et désaturée, et le trait
+     discontinu de `.unknown-rule` : un pointillé se lit « il manque
+     quelque chose » sans avoir à l'écrire. */
+  --unknown: #7c8f96;
+  --unknown-wash: #141d21;
+  --unknown-line: #34464e;
+
+  /* ------------------------------------------------------------
+     §Typographie — resserrée d'un cran par rapport au Pro, sauf le
+     KPI, qui grossit. « Grands KPI » et « informations condensées »
+     ne se contredisent que si l'on donne la même taille à tout.
+     ------------------------------------------------------------
+     En rem, pour que le zoom du navigateur et le réglage de taille
+     de police du système les emportent avec eux. */
+  --text-kpi: 2.75rem;         /* 44px — le chiffre qu'on vient voir */
+  --text-kpi-small: 1.75rem;   /* 28px — un KPI de seconde ligne */
+  --text-page: 1.75rem;        /* 28px — titre de page */
+  --text-section: 1.1875rem;   /* 19px — titre de section */
+  --text-card: 1rem;           /* 16px — titre de carte */
+  --text-body: 0.875rem;       /* 14px — texte courant, dense */
+  --text-secondary: 0.8125rem; /* 13px — secondaire */
+
+  --radius-card: 0.625rem;
+  --radius-control: 0.4375rem;
+  --radius-pill: 999px;
+
+  /* Sur fond sombre les ombres servent surtout aux couches
+     FLOTTANTES, où elles séparent du contenu qui défile dessous. */
+  --shadow-card: 0 1px 0 rgb(255 255 255 / 0.03) inset;
+  --shadow-raised: 0 2px 10px rgb(0 0 0 / 0.45);
+  --shadow-float: 0 24px 60px -12px rgb(0 0 0 / 0.75), 0 2px 8px rgb(0 0 0 / 0.5);
+
+  --header-height: 3.25rem;
+  --sidebar-width: 15rem;
+}
+
+@theme inline {
+  --color-canvas: var(--canvas);
+  --color-surface: var(--surface);
+  --color-surface-raised: var(--surface-raised);
+  --color-surface-sunken: var(--surface-sunken);
+
+  --color-ink: var(--ink);
+  --color-ink-soft: var(--ink-soft);
+  --color-ink-faint: var(--ink-faint);
+
+  --color-line: var(--line);
+  --color-line-strong: var(--line-strong);
+
+  --color-accent: var(--accent);
+  --color-accent-hover: var(--accent-hover);
+  --color-accent-wash: var(--accent-wash);
+  --color-accent-ink: var(--accent-ink);
+
+  --color-positive: var(--positive);
+  --color-positive-wash: var(--positive-wash);
+  --color-warning: var(--warning);
+  --color-warning-wash: var(--warning-wash);
+  --color-critical: var(--critical);
+  --color-critical-wash: var(--critical-wash);
+  --color-info: var(--info);
+  --color-info-wash: var(--info-wash);
+
+  --color-unknown: var(--unknown);
+  --color-unknown-wash: var(--unknown-wash);
+  --color-unknown-line: var(--unknown-line);
+
+  --text-kpi: var(--text-kpi);
+  --text-kpi-small: var(--text-kpi-small);
+  --text-page: var(--text-page);
+  --text-section: var(--text-section);
+  --text-card: var(--text-card);
+  --text-body: var(--text-body);
+  --text-secondary: var(--text-secondary);
+
+  --radius-card: var(--radius-card);
+  --radius-control: var(--radius-control);
+
+  --shadow-card: var(--shadow-card);
+  --shadow-raised: var(--shadow-raised);
+  --shadow-float: var(--shadow-float);
+
+  --font-sans: var(--font-geist-sans);
+  --font-mono: var(--font-geist-mono);
+}
+
+/*
+ * `color-scheme: dark` n'est pas cosmétique : il donne au navigateur
+ * les bonnes barres de défilement, la bonne couleur d'autofill et le
+ * bon rendu des contrôles natifs (`<select>`, `<input type=search>`).
+ * Sans lui, un menu déroulant s'ouvre en blanc éclatant au milieu de
+ * l'interface.
+ */
+html {
+  color-scheme: dark;
+}
+
+body {
+  background: var(--canvas);
+  color: var(--ink);
+  font-family: var(--font-geist-sans), ui-sans-serif, system-ui, sans-serif;
+  font-size: var(--text-body);
+  -webkit-font-smoothing: antialiased;
+}
+
+/* Les chiffres alignés en colonne doivent l'être vraiment. Une console
+   d'administration passe sa vie à empiler des nombres. */
+.tabular {
+  font-variant-numeric: tabular-nums;
+}
+
+/* La seule place où l'on écrit en capitales : les étiquettes. Sans
+   interlettrage, une majuscule d'étiquette se lit mal. */
+.eyebrow {
+  font-size: 0.6875rem;
+  font-weight: 600;
+  letter-spacing: 0.07em;
+  text-transform: uppercase;
+  color: var(--ink-faint);
+}
+
+/*
+ * L'INCONNU, dessiné.
+ *
+ * Un liseré discontinu autour d'un tiret. Il ne crie pas — ce n'est
+ * pas une erreur — mais il ne se confond avec aucune valeur.
+ */
+.unknown-rule {
+  border: 1px dashed var(--unknown-line);
+  background: var(--unknown-wash);
+  color: var(--unknown);
+}
+
+/* Le titre de l'application. Une seule occurrence, en haut à gauche,
+   et il ne ressemble à rien d'autre dans le produit. */
+.wordmark {
+  font-weight: 700;
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
+}
+
+:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+  border-radius: 3px;
+}
+
+/* Le lien d'évitement : sans lui, atteindre le contenu au clavier
+   demande de traverser toute la navigation, à chaque page. */
+.skip-link {
+  position: absolute;
+  left: 0.5rem;
+  top: -4rem;
+  z-index: 100;
+  border-radius: var(--radius-control);
+  background: var(--accent);
+  color: var(--accent-ink);
+  padding: 0.5rem 0.875rem;
+  font-size: var(--text-secondary);
+  font-weight: 600;
+  transition: top 120ms ease;
+}
+.skip-link:focus {
+  top: 0.5rem;
+}
+
+/* Un squelette dit OÙ le contenu va apparaître ; un spinner ne dit
+   rien. */
+@keyframes oasis-pulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.4; }
+}
+.skeleton {
+  background: var(--surface-raised);
+  border-radius: var(--radius-control);
+  animation: oasis-pulse 1.6s ease-in-out infinite;
+}
+
+@keyframes oasis-rise {
+  from { opacity: 0; transform: translateY(6px); }
+  to { opacity: 1; transform: none; }
+}
+.rise {
+  animation: oasis-rise 150ms ease-out;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+  }
+  /* Un squelette qui ne clignote plus doit rester distinguable du
+     contenu : sans l'animation, seule la teinte le signale. */
+  .skeleton {
+    opacity: 0.6;
+  }
+}
+
+/*
+ * Impression.
+ *
+ * On imprime peu depuis une console d'administration, mais quand on le
+ * fait c'est pour joindre un chiffre à un compte rendu. Le fond sombre
+ * viderait une cartouche pour rien : on repasse en noir sur blanc.
+ */
+@media print {
+  @page {
+    margin: 14mm;
+  }
+  :root {
+    --canvas: #ffffff;
+    --surface: #ffffff;
+    --surface-raised: #ffffff;
+    --surface-sunken: #f4f4f4;
+    --ink: #000000;
+    --ink-soft: #333333;
+    --ink-faint: #666666;
+    --line: #cccccc;
+    --line-strong: #999999;
+    --accent: #0f5a41;
+    --accent-ink: #ffffff;
+    --unknown: #666666;
+    --unknown-wash: #ffffff;
+    --unknown-line: #999999;
+  }
+  html {
+    color-scheme: light;
+  }
+  html,
+  body {
+    height: auto;
+    background: #ffffff;
+  }
+}

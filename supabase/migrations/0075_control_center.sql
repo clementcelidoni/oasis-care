@@ -1,6 +1,12 @@
 -- Oasis Care — OASIS CONTROL CENTER, jalon 1 : LE SOCLE.
 --
--- À exécuter après 0074. Idempotente et purement additive : ce fichier
+-- À exécuter en dernier, après toutes les migrations présentes. Au
+-- moment d'écrire, le dépôt s'arrête à 0073 : 0074 est annoncée mais
+-- n'existe pas encore sur disque. Aucune collision de nom avec
+-- 0071-0073 (vérifiée) ; si 0074 arrive, la relire avant d'appliquer
+-- celle-ci.
+--
+-- Idempotente et purement additive : ce fichier
 -- ne touche à aucune table, aucune politique et aucune fonction
 -- existantes. Il n'en avait pas le droit — l'application Pro, l'app
 -- iPhone et le portail client partagent cette base et continuent de
@@ -198,10 +204,19 @@ insert into public.platform_admin_permissions (key, label, is_write) values
   ('platform.audit.read',        'Lire le journal des actions admin',      false),
   ('platform.admins.read',       'Voir la liste des administrateurs',      false),
   ('platform.admins.manage',     'Créer, modifier, révoquer un admin',     true),
-  -- Aucune interface n'ouvre les données métier dans ce jalon. La
-  -- permission existe parce que la matrice de la spec p.30 en a besoin :
-  -- « Billing : ne peut pas ouvrir les données client » n'a de sens que
-  -- si quelqu'un le peut.
+  -- Aucune interface n'ouvre les données métier dans ce jalon, et
+  -- AUCUN RÔLE DE TRAVAIL NE PORTE CETTE PERMISSION (voir le semis de
+  -- la matrice, plus bas). Elle existe pour deux raisons : « Billing :
+  -- ne peut pas ouvrir les données client » (spec p.30) n'a de sens que
+  -- si la permission existe, et la spec p.36 exige « pas de données
+  -- métier sensibles exposées dans les listes Admin ». La consigne de
+  -- cette phase est plus nette encore : par défaut, AUCUN accès aux
+  -- données métier d'un client. Un droit accordé d'avance est un droit
+  -- que le premier écran du jalon suivant trouvera déjà ouvert — sans
+  -- consentement, sans session d'assistance bornée, sans que personne
+  -- ait eu à décider. Il se rajoutera avec le mécanisme qui
+  -- l'accompagne (milestone Admin 4 : support, sessions d'assistance,
+  -- journal).
   ('customer.data.read',         'Ouvrir les données métier d''un client', false),
   ('billing.subscriptions.read', 'Voir les abonnements',                   false),
   ('billing.subscriptions.write','Modifier un abonnement',                 true),
@@ -261,8 +276,20 @@ begin
   end if;
 
   -- « Billing : ne peut pas ouvrir les données client. » (spec p.30)
-  if new.role = 'billing_admin' and new.permission like 'customer.%' then
-    raise exception 'Moindre privilège (spec p.30) : la facturation n''ouvre pas les données client — permission % refusée.', new.permission
+  --
+  -- La règle est écrite pour QUATRE rôles et non pour le seul
+  -- `billing_admin` que la spec nomme, parce que le défaut voulu est
+  -- l'inverse d'une liste d'exclusions : par défaut, AUCUN accès aux
+  -- données métier d'un client. Ne fermer que la porte nommée revenait
+  -- à laisser les trois autres ouvertes, et `customer.data.read` est
+  -- déclarée `is_write = false` — la règle de l'analyste en lecture
+  -- seule, plus bas, ne mord donc pas dessus. Seuls `super_admin` et
+  -- `support` peuvent en théorie la recevoir ; aujourd'hui aucun des
+  -- deux rôles de travail ne l'a, et l'accorder à `support` sera un
+  -- geste délibéré, le jour où le mécanisme qui l'encadre existera.
+  if new.role in ('billing_admin', 'product_admin', 'security_admin', 'read_only_analyst')
+     and new.permission like 'customer.%' then
+    raise exception 'Moindre privilège (spec p.30) : le rôle « % » n''ouvre pas les données client — permission % refusée.', new.role, new.permission
       using errcode = '23514';
   end if;
 
@@ -297,14 +324,25 @@ insert into public.platform_admin_role_permissions (role, permission)
 select 'super_admin', key from public.platform_admin_permissions
 on conflict do nothing;
 
--- support : voit les clients et peut ouvrir leurs données pour les
--- aider, LIT les abonnements pour comprendre — et n'en change aucun.
+-- support : voit QUI sont les clients — des métadonnées et des
+-- nombres — et LIT les abonnements pour comprendre, sans en changer
+-- aucun.
+--
+-- `customer.data.read` n'y figure PAS, et c'est le seul écart assumé
+-- avec la lecture naturelle de la spec p.30. Le défaut demandé est
+-- « aucun accès aux données métier d'un client » ; le mécanisme qui
+-- rendrait cet accès acceptable — consentement, session d'assistance
+-- bornée dans le temps, écriture dans `admin_audit_events` avec son
+-- motif — appartient au milestone Admin 4. Accorder le droit avant le
+-- garde-fou, c'est livrer le garde-fou sans le droit qu'il encadre.
+-- Aucune interface de ce jalon ne consulte cette permission : la
+-- retirer ne retire rien à personne aujourd'hui, et la rajouter sera
+-- une ligne à écrire ce jour-là.
 insert into public.platform_admin_role_permissions (role, permission) values
   ('support', 'platform.dashboard.read'),
   ('support', 'platform.users.read'),
   ('support', 'platform.organizations.read'),
   ('support', 'platform.search'),
-  ('support', 'customer.data.read'),
   ('support', 'billing.subscriptions.read')
 on conflict do nothing;
 
@@ -735,8 +773,23 @@ begin
   -- `count(distinct)` obligatoire : un même compte peut être membre de
   -- plusieurs entreprises (l'unicité ne porte que sur le couple
   -- (organization_id, user_id)).
+  --
+  -- LES DEUX JOINTURES NE SONT PAS DÉCORATIVES : ce chiffre est le
+  -- NUMÉRATEUR d'une barre dont `v_total_users` est le dénominateur, et
+  -- deux populations différentes donnent un pourcentage qui n'a aucun
+  -- sens. Sans elles, un compte effacé en douceur resterait « membre »
+  -- (l'effacement Supabase pose `deleted_at`, il ne supprime pas la
+  -- ligne, donc le `on delete cascade` de la clé étrangère ne se
+  -- déclenche JAMAIS) et la barre pouvait afficher « 1 sur 1 · 100 % »
+  -- là où la vérité est 0 %. Une entreprise archivée sortant déjà de
+  -- `v_orgs`, ses membres doivent en sortir aussi : « utilisateur Pro »
+  -- veut dire « rattaché à une entreprise VIVANTE ».
   select count(distinct om.user_id) into v_pro_users
-  from public.organization_members om where om.archived_at is null;
+  from public.organization_members om
+  join auth.users u on u.id = om.user_id and u.deleted_at is null
+  join public.business_organizations o
+    on o.id = om.organization_id and o.archived_at is null
+  where om.archived_at is null;
 
   -- INSTANTANÉ, pas historique : `auth.sessions` ne contient que les
   -- sessions VIVANTES — la ligne disparaît à la déconnexion. Cette
@@ -746,7 +799,18 @@ begin
   from auth.sessions s
   where coalesce(s.refreshed_at at time zone 'UTC', s.updated_at) >= now() - interval '30 minutes';
 
-  select count(*) into v_subs from public.organization_subscriptions;
+  -- MÊME POPULATION QUE `v_orgs`, pour la même raison qu'au-dessus :
+  -- ce chiffre est le numérateur de la barre « entreprises dont
+  -- l'abonnement est suivi », dont `v_orgs` est le dénominateur. Une
+  -- entreprise archivée qui garderait son abonnement compté ferait
+  -- afficher « 1 sur 1 · 100 % » alors que la seule entreprise vivante
+  -- n'a rien. Rien n'annule l'abonnement à l'archivage — la table n'est
+  -- écrite par aucune ligne du dépôt — donc l'état « archivée +
+  -- active » est atteignable et durable.
+  select count(*) into v_subs
+  from public.organization_subscriptions s
+  join public.business_organizations o
+    on o.id = s.organization_id and o.archived_at is null;
 
   -- Requêtes IA du mois. Le zéro est ici une VÉRITÉ et non un défaut :
   -- `consume_pro_ai_quota` crée la ligne de période au premier appel,
@@ -772,12 +836,25 @@ begin
   -- et les abonnements existeront, elle rendra le vrai chiffre sans
   -- qu'on y revienne. En attendant elle rend NULL, et deux garde-fous
   -- l'y obligent.
+  --
+  -- LES ENTREPRISES ARCHIVÉES SONT EXCLUES, ici comme partout ailleurs
+  -- dans cette fonction. C'était le seul endroit où l'argent ne suivait
+  -- pas la même définition que le reste de l'écran : le MRR d'un client
+  -- parti s'affichait à côté d'un décompte d'entreprises qui, lui, ne
+  -- le contenait plus. Le choix inverse — facturer encore une
+  -- entreprise archivée — serait défendable, mais il faudrait alors
+  -- aligner `v_orgs` : ce qu'on ne veut pas, c'est que les deux
+  -- définitions divergent en silence sur l'écran de direction.
   select count(*) into v_subs_billable
   from public.organization_subscriptions s
+  join public.business_organizations o
+    on o.id = s.organization_id and o.archived_at is null
   where s.status in ('active', 'pastDue');
 
   select count(*) into v_unpriced
   from public.organization_subscriptions s
+  join public.business_organizations o
+    on o.id = s.organization_id and o.archived_at is null
   join public.organization_plans p on p.key = s.plan
   where s.status in ('active', 'pastDue')
     and p.monthly_price_cents is null;
@@ -795,6 +872,8 @@ begin
   else
     select sum(p.monthly_price_cents) into v_mrr
     from public.organization_subscriptions s
+    join public.business_organizations o
+      on o.id = s.organization_id and o.archived_at is null
     join public.organization_plans p on p.key = s.plan
     where s.status in ('active', 'pastDue');
   end if;
@@ -813,7 +892,10 @@ begin
     v_pro_trials := null;
   else
     select count(*) into v_pro_trials
-    from public.organization_subscriptions s where s.status = 'trialing';
+    from public.organization_subscriptions s
+    join public.business_organizations o
+      on o.id = s.organization_id and o.archived_at is null
+    where s.status = 'trialing';
   end if;
 
   -- ---- Les motifs des inconnus ----------------------------------
@@ -826,7 +908,7 @@ begin
     ('mrr_cents',
      case when v_mrr is null then
        case when v_subs_billable = 0
-         then 'Aucun abonnement d''entreprise suivi : organization_subscriptions est vide et aucune ligne de code du dépôt ne l''écrit (startCheckout rend « unavailable »). 0 € serait un fait faux.'
+         then 'Aucun abonnement facturable sur une entreprise vivante : organization_subscriptions est vide et aucune ligne de code du dépôt ne l''écrit (startCheckout rend « unavailable »). 0 € serait un fait faux.'
          else 'Au moins un forfait actif n''a pas de prix (organization_plans.monthly_price_cents est NULL) : la somme serait silencieusement trop basse.'
        end
      end),
@@ -834,7 +916,7 @@ begin
      case when v_arr is null then 'Dérivé du MRR, inconnu tant que le MRR l''est.' end),
     ('pro_trials',
      case when v_pro_trials is null then
-       'organization_subscriptions n''est écrite par personne : le statut « trialing » existe dans la contrainte, aucune ligne ne le porte.'
+       'Aucun abonnement suivi sur une entreprise vivante : organization_subscriptions n''est écrite par personne, et le statut « trialing » n''existe que dans la contrainte. « 0 essai » se lirait « personne n''essaie » au lieu de « on ne suit aucun essai ».'
      end),
     ('mobile_trials',
      'Le webhook Apple n''écrit que subscribed / expired / revoked : un essai gratuit y est enregistré comme « subscribed », indiscernable d''un abonnement payé.'),
@@ -954,12 +1036,48 @@ begin
     -- On compte des ABONNÉS, pas des lignes — et on retombe sur la
     -- transaction d'origine quand le webhook n'a pas su rattacher un
     -- compte : `count(distinct user_id)` seul rendrait ces
-    -- événements-là invisibles.
+    -- événements-là invisibles (le webhook n'écrit JAMAIS `user_id`,
+    -- cf. apple-subscription-webhook/index.ts).
+    --
+    -- UN SEUL TYPE D'ÉVÉNEMENT, ET C'EST LE POINT DÉLICAT DE CETTE
+    -- FONCTION. `event_type` est recopié tel quel depuis
+    -- `payload.notificationType` d'Apple (App Store Server
+    -- Notifications V2). Trois types y ressemblent à une conversion
+    -- sans en être une :
+    --
+    --   • DID_RENEW est envoyé à CHAQUE reconduction automatique d'un
+    --     abonné DÉJÀ payant. Le compter ferait apparaître, à mille
+    --     abonnés mensuels, une trentaine de « conversions » par jour
+    --     en régime permanent — un chiffre faux, gonflé, et d'apparence
+    --     parfaitement légitime. C'est le mode de défaillance le plus
+    --     dangereux : il n'apparaîtra qu'au premier vrai client.
+    --   • OFFER_REDEEMED s'applique aussi à un abonné existant qui
+    --     utilise une offre promotionnelle.
+    --   • INITIAL_BUY est un type de la V1 : ce webhook ne l'écrit
+    --     jamais.
+    --
+    -- Reste SUBSCRIBED, la seule notification qui marque le début d'un
+    -- abonnement. RÉSERVE ASSUMÉE : Apple distingue un premier achat
+    -- (sous-type INITIAL_BUY) d'un réabonnement (sous-type RESUBSCRIBE)
+    -- par le SOUS-TYPE, que le webhook ne stocke pas — il n'écrit ni
+    -- `subtype` ni le `signedDate` d'Apple. Un client qui revient est
+    -- donc compté comme une conversion. La correction demande une
+    -- colonne `subtype` sur `subscription_events` ET une modification
+    -- du webhook : les deux sont hors du périmètre de ce jalon, et la
+    -- réserve est écrite à l'écran à côté du chiffre.
     select count(distinct coalesce(e.user_id::text, e.original_transaction_id)) into v_premium
     from public.subscription_events e
     where e.occurred_at >= v_since
-      and e.event_type in ('SUBSCRIBED', 'INITIAL_BUY', 'DID_RENEW', 'OFFER_REDEEMED');
+      and e.event_type = 'SUBSCRIBED';
 
+    -- Les trois types qui mettent FIN à un droit. DID_CHANGE_RENEWAL_STATUS
+    -- (sous-type AUTO_RENEW_DISABLED) est délibérément absent : il dit
+    -- « cette personne a décoché le renouvellement », pas « elle a
+    -- cessé de payer » — elle reste abonnée jusqu'à l'échéance, et le
+    -- compter ici ferait une résiliation le jour de l'intention PUIS
+    -- une seconde le jour de l'expiration. Le sous-type n'étant de
+    -- toute façon pas stocké, on ne pourrait pas distinguer une
+    -- désactivation d'une RÉactivation du renouvellement.
     select count(distinct coalesce(e.user_id::text, e.original_transaction_id)) into v_mobile_cancel
     from public.subscription_events e
     where e.occurred_at >= v_since
@@ -1118,11 +1236,20 @@ begin
       )
       and (
         v_filter is null
+        -- « Rattaché à une entreprise » veut dire une entreprise
+        -- VIVANTE, ici comme dans le KPI `pro_users` : sans la jointure
+        -- sur `business_organizations`, la carte du tableau de bord et
+        -- cette liste compteraient deux populations différentes, et
+        -- c'est la carte qui renvoie vers cette liste.
         or (v_filter = 'pro' and exists (
               select 1 from public.organization_members m
+              join public.business_organizations o
+                on o.id = m.organization_id and o.archived_at is null
               where m.user_id = u.id and m.archived_at is null))
         or (v_filter = 'sans_organisation' and not exists (
               select 1 from public.organization_members m
+              join public.business_organizations o
+                on o.id = m.organization_id and o.archived_at is null
               where m.user_id = u.id and m.archived_at is null))
         or (v_filter = 'premium' and exists (
               select 1 from public.subscription_entitlements e
@@ -1159,18 +1286,29 @@ begin
     -- présence dans une organisation prouve l'usage de Pro, rien ne
     -- prouve l'usage de Mobile. Donc 'pro' ou INCONNU — jamais
     -- 'mobile' par défaut, qui serait une invention.
+    -- Les quatre colonnes qui suivent ne comptent que les entreprises
+    -- VIVANTES, comme le filtre ci-dessus et comme le KPI `pro_users` :
+    -- une entreprise archivée a été effacée en douceur, elle ne
+    -- rattache plus personne.
     case when exists (
       select 1 from public.organization_members m
+      join public.business_organizations o
+        on o.id = m.organization_id and o.archived_at is null
       where m.user_id = b.id and m.archived_at is null
     ) then 'pro' else null end::text,
     (select count(*) from public.organization_members m
+      join public.business_organizations o
+        on o.id = m.organization_id and o.archived_at is null
       where m.user_id = b.id and m.archived_at is null),
     (select array_agg(o.name order by o.name)
        from public.organization_members m
        join public.business_organizations o on o.id = m.organization_id
-      where m.user_id = b.id and m.archived_at is null),
+      where m.user_id = b.id and m.archived_at is null
+        and o.archived_at is null),
     (select array_agg(distinct s.plan)
        from public.organization_members m
+       join public.business_organizations o
+         on o.id = m.organization_id and o.archived_at is null
        join public.organization_subscriptions s on s.organization_id = m.organization_id
       where m.user_id = b.id and m.archived_at is null),
     (select max(e.plan) from public.subscription_entitlements e
@@ -1322,13 +1460,20 @@ begin
     o.business_type,
     s.plan,
     s.status,
+    -- Les comptes effacés en douceur sont exclus des DEUX compteurs :
+    -- l'effacement Supabase pose `deleted_at` sans supprimer la ligne,
+    -- donc le `on delete cascade` de `organization_members` ne se
+    -- déclenche jamais et un compte fermé resterait un « membre » —
+    -- avec un décompte plus élevé que le total d'utilisateurs de la
+    -- plateforme, qui lui les exclut.
     (select count(*) from public.organization_members m
+       join auth.users u on u.id = m.user_id and u.deleted_at is null
       where m.organization_id = o.id and m.archived_at is null),
     -- « Nombre utilisateurs actifs » : membres dont la dernière
     -- connexion est récente. C'est un proxy de connexion, pas d'usage —
     -- rien dans cette base ne date un geste métier par utilisateur.
     (select count(*) from public.organization_members m
-       join auth.users u on u.id = m.user_id
+       join auth.users u on u.id = m.user_id and u.deleted_at is null
       where m.organization_id = o.id and m.archived_at is null
         and u.last_sign_in_at >= now() - v_idle),
     pl.max_users,
@@ -1539,11 +1684,22 @@ begin
   loop
     execute format('revoke all on function %s from public', f);
     execute format('revoke all on function %s from anon', f);
-    -- `authenticated` et personne d'autre. Le contrôle réel est dans la
-    -- fonction : posséder l'`execute` ne donne aucun droit à qui n'est
-    -- pas administrateur de plateforme — ces fonctions LÈVENT, elles ne
-    -- rendent pas une liste vide (une liste vide se confondrait avec
-    -- « aucune donnée »).
+    -- On rend l'`execute` à `authenticated`, et à lui seul de façon
+    -- explicite.
+    --
+    -- PRÉCISION QUI ÉVITE UNE FAUSSE CONFIANCE : `service_role` en
+    -- conserve un, hérité du défaut de Supabase sur toute fonction
+    -- créée dans `public`. Le retirer serait cosmétique — vérifié en
+    -- transaction annulée, `service_role` SANS jeton reçoit 42501 sur
+    -- `admin_platform_kpis()`, `admin_list_users()` et
+    -- `record_admin_event()`, parce que `auth.uid()` y est nul. C'est
+    -- le contrôle d'identité À L'INTÉRIEUR de la fonction qui refuse,
+    -- pas le droit d'exécution. Posséder la clé n'est pas être
+    -- autorisé.
+    --
+    -- Et le contrôle réel est bien celui-là : ces fonctions LÈVENT,
+    -- elles ne rendent pas une liste vide — une liste vide se
+    -- confondrait avec « aucune donnée ».
     execute format('grant execute on function %s to authenticated', f);
   end loop;
 end $$;
