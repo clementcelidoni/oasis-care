@@ -45,6 +45,10 @@ create temp table res(nom text, attendu text, obtenu text) on commit drop;
 create temp table ids(k text, v uuid) on commit drop;
 grant all on res to authenticated;
 grant all on ids to authenticated;
+-- `anon` aussi : la section sur les droits d'exécution éprouve les
+-- fonctions SANS session, et doit pouvoir consigner son verdict.
+grant all on res to anon;
+grant all on ids to anon;
 
 -- ============================================================
 -- Fixtures — deux entreprises, trois comptes
@@ -535,6 +539,112 @@ select 'Hors de la plage horaire autorisée, on refuse','false',
 update public.ai_autopilot_rules set allowed_hours = null
  where organization_id = (select v from ids where k='orgA') and action_type = 'createInvoiceDraft';
 
+
+-- ---------- CE QUE L'APPELANT NE CHOISIT PAS ----------
+--
+-- LE TROU LE PLUS PROFOND DE CETTE FONCTION N'ÉTAIT PAS UNE CONDITION
+-- MANQUANTE : c'était une condition évaluée sur ce que l'appelant
+-- déclarait. Les deux tests qui suivent ne prouvent pas qu'une règle
+-- ferme ; ils prouvent qu'on ne peut pas la contourner en changeant un
+-- argument.
+
+-- 1. L'AGENT. Facturation reste au niveau 1 (elle ne part pas seule),
+--    Executive passe au niveau 4. La règle d'autopilote de
+--    `createInvoiceDraft` est active et son plafond est levé. Il suffit
+--    alors de dire « executive » pour obtenir un brouillon de facture
+--    automatique — sauf si l'agent vient du CATALOGUE.
+update public.ai_agent_settings set autonomy_level = 1, enabled = true
+ where organization_id = (select v from ids where k='orgA') and agent = 'billing';
+update public.ai_agent_settings set autonomy_level = 4, enabled = true
+ where organization_id = (select v from ids where k='orgA') and agent = 'executive';
+
+insert into res
+select 'Le catalogue attribue createInvoiceDraft à la Facturation','billing',
+       (select agent from public.ai_action_catalog where action_type = 'createInvoiceDraft');
+
+insert into res
+select 'Facturation au niveau 1 : rien ne part seul','false',
+       public.ai_may_autoexecute((select v from ids where k='orgA'),
+         'billing', 'createInvoiceDraft', 100000)::text;
+
+insert into res
+select 'Dire « executive » ne relève pas le niveau de la Facturation','false',
+       public.ai_may_autoexecute((select v from ids where k='orgA'),
+         'executive', 'createInvoiceDraft', 100000)::text;
+
+-- Et l'inverse est vrai aussi : c'est bien Facturation, et elle seule,
+-- qui ouvre la porte de SON action.
+update public.ai_agent_settings set autonomy_level = 4
+ where organization_id = (select v from ids where k='orgA') and agent = 'billing';
+update public.ai_agent_settings set autonomy_level = 1
+ where organization_id = (select v from ids where k='orgA') and agent = 'executive';
+
+insert into res
+select 'Facturation au niveau 4 : son action peut partir','true',
+       public.ai_may_autoexecute((select v from ids where k='orgA'),
+         'billing', 'createInvoiceDraft', 100000)::text;
+
+insert into res
+select 'Un agent annoncé qui ne colle pas au catalogue est refusé','false',
+       public.ai_may_autoexecute((select v from ids where k='orgA'),
+         'quote_pricing', 'createInvoiceDraft', 100000)::text;
+
+-- SANS AGENT ANNONCÉ DU TOUT, LA FONCTION SAIT ENCORE RÉPONDRE. C'est
+-- ce test, et lui seul, qui prouve que le réglage d'autonomie est lu
+-- sur `ai_action_catalog.agent` : si la fonction lisait l'argument, elle
+-- ne trouverait aucune ligne de réglage et refuserait.
+insert into res
+select 'Sans agent annoncé, c''est le catalogue qui tranche','true',
+       public.ai_may_autoexecute((select v from ids where k='orgA'),
+         null, 'createInvoiceDraft', 100000)::text;
+
+-- 2. LA CIBLE. Rien en base n'empêche d'écrire dans `allowed_clients`
+--    l'identifiant d'un client d'une AUTRE entreprise : aucune clé
+--    étrangère ne peut l'interdire, la colonne est un tableau d'UUID.
+--    Le déclencheur `ai_actions_check_target` refusait déjà cette
+--    cible ; l'autopilote, lui, l'acceptait. Deux gardes, deux réponses
+--    opposées sur la même cible.
+update public.ai_autopilot_rules
+   set allowed_clients = array[(select v from ids where k='clientB')]
+ where organization_id = (select v from ids where k='orgA') and action_type = 'createInvoiceDraft';
+
+-- Relu par `ai_entity_organization`, qui voit sans la RLS : depuis la
+-- peau du patron de A, la ligne de ce client est invisible, et c'est
+-- précisément ce qui rendait le contournement crédible.
+insert into res
+select 'Ce client appartient bien à l''autre entreprise','true',
+       (public.ai_entity_organization('customer', (select v from ids where k='clientB'))
+        = (select v from ids where k='orgB'))::text;
+
+insert into res
+select 'Une cible d''une autre entreprise ne part jamais seule','false',
+       public.ai_may_autoexecute((select v from ids where k='orgA'),
+         'billing', 'createInvoiceDraft', 100000,
+         'customer', (select v from ids where k='clientB'))::text;
+
+-- La même cible, refusée par le déclencheur : les deux gardes disent
+-- désormais la même chose.
+do $$
+declare refuse boolean := false;
+begin
+  begin
+    insert into public.ai_actions (organization_id, action_type, agent,
+                                   target_entity_type, target_entity_id, risk_level)
+    values ((select v from ids where k='orgA'), 'createInvoiceDraft', 'billing',
+            'customer', (select v from ids where k='clientB'), 'medium');
+  exception when others then refuse := true; end;
+  insert into res values ('Le déclencheur refuse la même cible','true',refuse::text);
+end $$;
+
+-- Une cible INTROUVABLE (un UUID qui n'existe nulle part) ferme aussi.
+insert into res
+select 'Une cible introuvable ne part jamais seule','false',
+       public.ai_may_autoexecute((select v from ids where k='orgA'),
+         'billing', 'createInvoiceDraft', 100000,
+         'customer', '00000000-0000-4000-8000-0000000000ff')::text;
+
+update public.ai_autopilot_rules set allowed_clients = null
+ where organization_id = (select v from ids where k='orgA') and action_type = 'createInvoiceDraft';
 -- ---------- Rejouer les défauts n'écrase aucun choix ----------
 update public.ai_autopilot_rules set maximum_amount_cents = 777
  where organization_id = (select v from ids where k='orgA') and action_type = 'quoteFollowUp';
@@ -674,6 +784,75 @@ begin
   insert into res values ('On ne répond pas deux fois à la même demande','true',refuse::text);
 end $$;
 
+
+-- ---------- « APPROUVÉ » NE S'ÉCRIT PAS À LA MAIN ----------
+--
+-- La RLS d'écriture de ces deux tables n'exige que `projects.manage`.
+-- Le conducteur de travaux de A l'a, et n'a PAS `invoice.create` : il
+-- ne peut pas répondre à une demande par la fonction, mais rien ne
+-- l'empêchait d'écrire `status = 'approved'` par PostgREST, dans l'une
+-- ou l'autre table. Le registre affichait alors « approuvée » pour une
+-- action dont le droit n'a jamais été vérifié.
+
+insert into ids select 'action3', gen_random_uuid();
+insert into public.ai_actions (id, organization_id, action_type, agent, risk_level)
+select (select v from ids where k='action3'), (select v from ids where k='orgA'),
+       'createInvoiceDraft', 'billing', 'medium';
+insert into ids
+select 'appro3', public.ai_request_approval((select v from ids where k='action3'));
+
+reset role;
+select set_config('request.jwt.claims',
+  json_build_object('sub','c0000072-0000-4000-8000-000000000072')::text, true);
+set local role authenticated;
+
+insert into res
+select 'Le conducteur de travaux n''a pas le droit de facturer','false',
+       public.has_permission((select v from ids where k='orgA'), 'invoice.create')::text;
+
+do $$
+declare refuse boolean := false;
+begin
+  begin
+    update public.ai_action_approvals set status = 'approved', responded_by = auth.uid(), responded_at = now()
+     where id = (select v from ids where k='appro3');
+  exception when others then refuse := true;
+  end;
+  insert into res values ('On n''approuve pas une demande sans le droit de l''action','true',refuse::text);
+end $$;
+
+do $$
+declare refuse boolean := false;
+begin
+  begin
+    update public.ai_actions set status = 'approved'
+     where id = (select v from ids where k='action3');
+  exception when others then refuse := true;
+  end;
+  insert into res values ('Une action sans approbation ne passe pas à « approuvée »','true',refuse::text);
+end $$;
+
+reset role;
+select set_config('request.jwt.claims',
+  json_build_object('sub','a0000072-0000-4000-8000-000000000072')::text, true);
+set local role authenticated;
+
+insert into res
+select 'La demande forgée est restée en attente','pending',
+       (select status from public.ai_action_approvals where id = (select v from ids where k='appro3'));
+insert into res
+select 'Et l''action aussi','awaiting_approval',
+       (select status from public.ai_actions where id = (select v from ids where k='action3'));
+
+-- LE CHEMIN LÉGITIME PASSE TOUJOURS. Le déclencheur vérifie un FAIT —
+-- « existe-t-il une approbation approuvée et signée ? » — et non le nom
+-- de la fonction qui écrit : n'importe quel appelant qui respecte
+-- l'invariant est accepté, y compris un futur exécuteur SQL.
+select public.ai_answer_approval((select v from ids where k='appro3'), true);
+
+insert into res
+select 'Le patron, lui, approuve et l''action suit','approved',
+       (select status from public.ai_actions where id = (select v from ids where k='action3'));
 -- ---------- 1. Le cloisonnement, vu de A ----------
 -- A écrit chez A, la RLS est satisfaite — mais la cible est chez B.
 do $$
@@ -935,6 +1114,79 @@ select 'Aucune action de B n''a été créée','0',
        (select count(*)::text from public.ai_actions
         where organization_id = (select v from ids where k='orgB'));
 
+
+-- ============================================================
+-- LES DROITS D'EXÉCUTION — CE QUE POSTGREST EXPOSE
+-- ============================================================
+-- POSTGRESQL DONNE `EXECUTE` À `PUBLIC` PAR DÉFAUT, et Supabase publie
+-- toute fonction de `public` en RPC. Une fonction `security definer`
+-- sans contrôle d'appartenance devient alors un point d'entrée ouvert à
+-- la clé anonyme — qui est publique par construction, puisqu'elle
+-- voyage dans le bundle du navigateur.
+--
+-- CES TESTS NE LISENT PAS LA MIGRATION, ILS INTERROGENT LE CATALOGUE.
+-- Un `revoke` oublié, ou un `create or replace` ultérieur qui remettrait
+-- les droits par défaut, se voit ici et nulle part ailleurs.
+
+insert into res
+select 'ai_ensure_org_defaults n''est pas exposée à anon','false',
+       has_function_privilege('anon', 'public.ai_ensure_org_defaults(uuid)', 'execute')::text;
+
+insert into res
+select 'ai_ensure_org_defaults n''est pas exposée aux comptes connectés','false',
+       has_function_privilege('authenticated', 'public.ai_ensure_org_defaults(uuid)', 'execute')::text;
+
+insert into res
+select 'ai_entity_organization n''est pas exposée à anon','false',
+       has_function_privilege('anon', 'public.ai_entity_organization(text, uuid)', 'execute')::text;
+
+-- Elle DOIT rester ouverte aux comptes connectés : le déclencheur
+-- `ai_actions_check_target` n'est pas `security definer` et s'exécute
+-- avec les droits de l'appelant.
+insert into res
+select 'ai_entity_organization reste ouverte aux comptes connectés','true',
+       has_function_privilege('authenticated', 'public.ai_entity_organization(text, uuid)', 'execute')::text;
+
+-- LA PREUVE PAR L'APPEL, et pas seulement par le catalogue. Sans
+-- session, sans compte : l'écriture chez n'importe quelle entreprise
+-- doit être refusée. Le scénario complet était : supprimer sa règle
+-- d'autopilote, puis la voir renaître `enabled = true` parce que le
+-- catalogue met `autopilot_default_on` à vrai pour trois actions.
+delete from public.ai_autopilot_rules
+ where organization_id = (select v from ids where k='orgA') and action_type = 'createInvoiceDraft';
+
+set local role anon;
+select set_config('request.jwt.claims', '', true);
+
+do $$
+declare refuse boolean := false;
+begin
+  begin perform public.ai_ensure_org_defaults((select v from ids where k='orgA'));
+  exception when others then refuse := true; end;
+  insert into res values ('Sans session, on n''écrit pas les réglages d''une entreprise','true',refuse::text);
+end $$;
+
+do $$
+declare refuse boolean := false;
+begin
+  begin perform public.ai_entity_organization('customer', (select v from ids where k='clientA'));
+  exception when others then refuse := true; end;
+  insert into res values ('Sans session, on n''apprend pas à qui appartient un client','true',refuse::text);
+end $$;
+
+reset role;
+
+insert into res
+select 'La règle supprimée n''est pas revenue toute seule','0',
+       (select count(*)::text from public.ai_autopilot_rules
+        where organization_id = (select v from ids where k='orgA') and action_type = 'createInvoiceDraft');
+
+-- LE DÉCLENCHEUR, LUI, CONTINUE DE SEMER. Il passe par
+-- `ai_seed_org_defaults`, `security definer` appartenant à `postgres`,
+-- qui garde son droit. La preuve est en tête de ce fichier : les deux
+-- entreprises créées par `create_professional_organization` ont bien
+-- leurs quatre réglages d'agent, et cette migration a déjà retiré le
+-- droit d'appel avant que le test ne commence.
 select nom, attendu, obtenu,
        case when attendu = obtenu then 'OK' else 'ÉCHEC' end as verdict
 from res;

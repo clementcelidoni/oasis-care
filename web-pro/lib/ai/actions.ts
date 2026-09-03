@@ -38,6 +38,22 @@ import {
  * d'écriture ne passe pas par le modèle.
  */
 
+/**
+ * Une action préparée par l'Action Engine, telle que la fonction Edge
+ * la rend. Elle N'EST PAS ENCORE EXÉCUTÉE : elle attend le clic, et
+ * c'est `confirmerActionsOasis` qui le porte.
+ */
+export type EngineAction = {
+  actionId: string;
+  approvalId: string | null;
+  actionType: string;
+  agent: string;
+  risk: string;
+  requiresConfirmation: boolean;
+  status: string;
+  resume: { titre: string; lignes: { label: string; valeur: string }[] } | null;
+};
+
 export type AskResult =
   | { status: "idle" }
   | {
@@ -46,6 +62,16 @@ export type AskResult =
       answer: string;
       toolsUsed: string[];
       proposals: Proposal[];
+      /**
+       * LES ACTIONS DE L'ACTION ENGINE, ET LE CHAÎNON QUI MANQUAIT.
+       *
+       * La fonction Edge enregistrait ces demandes d'approbation depuis
+       * la conversation, répondait « confirmez », et AUCUN bouton
+       * n'existait : les lignes expiraient au bout de vingt-quatre
+       * heures sans que personne ait pu les voir. « Prépare les
+       * factures » écrivait en base et ne produisait jamais de facture.
+       */
+      actions: EngineAction[];
     }
   | { status: "error"; question: string; message: string };
 
@@ -79,6 +105,152 @@ export async function askOasis(_previous: AskResult, formData: FormData): Promis
     answer,
     toolsUsed: Array.isArray(data?.toolsUsed) ? (data.toolsUsed as string[]) : [],
     proposals: readProposals(data?.proposals),
+    actions: readEngineActions(data?.actions),
+  };
+}
+
+/**
+ * Les actions préparées, lues défensivement.
+ *
+ * On ne garde que celles qui attendent réellement une réponse : une
+ * action sans `approvalId` n'a pas de demande d'approbation, un bouton
+ * n'aurait rien à consommer. Le RÉSUMÉ AFFICHÉ NE VIENT PAS DU MODÈLE —
+ * il est composé en Deno par `resumeFacture`, à partir de la réponse
+ * SQL — mais il repasse par le navigateur, donc chaque champ est
+ * revérifié ici avant d'être rendu.
+ */
+function readEngineActions(value: unknown): EngineAction[] {
+  if (!Array.isArray(value)) return [];
+  const actions: EngineAction[] = [];
+  for (const entry of value) {
+    if (typeof entry !== "object" || entry === null) continue;
+    const row = entry as Record<string, unknown>;
+    if (typeof row.actionId !== "string") continue;
+    if (typeof row.approvalId !== "string") continue;
+    if (row.status !== "awaiting_approval") continue;
+
+    const resumeBrut = row.resume as { titre?: unknown; lignes?: unknown } | undefined;
+    const lignes = Array.isArray(resumeBrut?.lignes)
+      ? resumeBrut.lignes
+          .filter(
+            (l): l is { label: string; valeur: string } =>
+              typeof l === "object" &&
+              l !== null &&
+              typeof (l as { label?: unknown }).label === "string" &&
+              typeof (l as { valeur?: unknown }).valeur === "string",
+          )
+          .slice(0, 12)
+      : [];
+
+    actions.push({
+      actionId: row.actionId,
+      approvalId: row.approvalId,
+      actionType: typeof row.actionType === "string" ? row.actionType : "",
+      agent: typeof row.agent === "string" ? row.agent : "",
+      risk: typeof row.risk === "string" ? row.risk : "medium",
+      requiresConfirmation: row.requiresConfirmation !== false,
+      status: row.status,
+      resume:
+        typeof resumeBrut?.titre === "string" ? { titre: resumeBrut.titre, lignes } : null,
+    });
+  }
+  return actions;
+}
+
+export type ConfirmActionsResult =
+  | { status: "idle" }
+  | { status: "done"; message: string; executees: number; echecs: number }
+  | { status: "error"; message: string };
+
+/**
+ * RÉPONDRE AUX ACTIONS PRÉPARÉES DEPUIS LA CONVERSATION.
+ *
+ * Le second appel HTTP que la fonction Edge documente et implémente
+ * depuis le début, et que rien n'émettait. Trois choses le rendent sûr,
+ * et aucune n'est ici :
+ *
+ *   • l'organisation vient de la session, jamais du formulaire ;
+ *   • `handleConfirm` relit chaque approbation filtrée sur cette
+ *     organisation, appelle `ai_answer_approval` — qui oppose le droit
+ *     que le CATALOGUE attache à l'action, et l'expiration —, puis
+ *     RELIT le statut de la ligne avant d'exécuter ;
+ *   • les paramètres de l'action (le devis à facturer) sont pris sur la
+ *     ligne, pas sur la requête.
+ *
+ * Un identifiant forgé ne donne donc accès qu'à ce que l'utilisateur
+ * pouvait déjà valider dans le centre de décision.
+ *
+ * AUCUN MODÈLE N'EST APPELÉ sur ce chemin, et aucun quota n'est
+ * consommé : un clic ne coûte pas un jeton, et l'exécution ne doit pas
+ * dépendre d'une API tierce qui peut être en panne.
+ */
+export async function confirmerActionsOasis(
+  _previous: ConfirmActionsResult,
+  formData: FormData,
+): Promise<ConfirmActionsResult> {
+  const organization = await requireOrganization();
+
+  const ok = String(formData.get("ok") ?? "") === "1";
+  let approvalIds: string[];
+  try {
+    const parsed: unknown = JSON.parse(String(formData.get("approvalIds") ?? "[]"));
+    if (!Array.isArray(parsed)) throw new Error("forme inattendue");
+    approvalIds = parsed.filter((v): v is string => typeof v === "string");
+  } catch {
+    return { status: "error", message: "Les actions à confirmer sont illisibles. Reposez la question." };
+  }
+  if (approvalIds.length === 0) {
+    return { status: "error", message: "Aucune action à confirmer." };
+  }
+
+  const supabase = await createClient();
+  const { data, error } = await supabase.functions.invoke("oasis-pro-ai", {
+    body: {
+      organizationId: organization.organizationId,
+      confirm: { approvalIds, ok },
+    },
+  });
+
+  if (error) {
+    return { status: "error", message: await readFunctionError(error) };
+  }
+
+  const results = Array.isArray(data?.results)
+    ? (data.results as { status?: unknown; message?: unknown }[])
+    : [];
+  const executees = results.filter((r) => r.status === "executed").length;
+  const echecs = results.filter((r) => r.status !== "executed" && r.status !== "rejected").length;
+
+  for (const path of ["/oasis-ai", "/oasis-ai/decisions", "/oasis-ai/historique", "/factures"]) {
+    revalidatePath(path);
+  }
+
+  if (!ok) {
+    return {
+      status: "done",
+      message: "Refusé. Rien n'a été écrit.",
+      executees: 0,
+      echecs: 0,
+    };
+  }
+
+  // LE PREMIER MESSAGE D'ÉCHEC EST REMONTÉ TEL QUEL. Ceux de Postgres
+  // sont écrits en français (0069) : « Demande expirée le 03/09 à
+  // 14:12 » se lit, « non-2xx status code » non.
+  const premierEchec = results.find(
+    (r) => r.status !== "executed" && r.status !== "rejected" && typeof r.message === "string",
+  );
+
+  return {
+    status: "done",
+    executees,
+    echecs,
+    message:
+      echecs === 0
+        ? executees === 1
+          ? "C'est fait. Le brouillon est créé, et rien n'a été envoyé."
+          : `C'est fait. ${executees} brouillons créés, et rien n'a été envoyé.`
+        : `${executees} sur ${executees + echecs} ont abouti. ${String(premierEchec?.message ?? "")}`.trim(),
   };
 }
 

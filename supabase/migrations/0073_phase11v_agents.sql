@@ -432,7 +432,12 @@ begin
   --
   --   • le chantier SANS AUCUN COÛT SAISI n'a pas de marge réelle non
   --     plus : sa marge serait de 100 %, et une ligne à +100 % tire
-  --     vers le haut toute la moyenne. C'est une DIVERGENCE DÉLIBÉRÉE
+  --     vers le haut toute la moyenne. « SANS COÛT SAISI » SE MESURE
+  --     SUR LA VALEUR, PAS SUR LA PRÉSENCE DE LIGNES : vingt heures
+  --     pointées et validées par un salarié dont la fiche ne porte
+  --     aucun coût horaire font vingt lignes et zéro euro, et
+  --     `total_cents` est une colonne générée à partir de ce zéro.
+  --     C'est une DIVERGENCE DÉLIBÉRÉE
   --     avec `pro_analytics_landscaper`, qui l'inclut à coût zéro. Les
   --     deux fonctions de ce fichier appliquent la même règle —
   --     `ai_finance_margin_breakdown` documente ce choix en détail — et
@@ -455,16 +460,18 @@ begin
          + coalesce((select l.validated_cents from public.project_labor_from_time l
                       where l.project_id = f.id), 0))::bigint as cost_cents,
         (exists (select 1 from public.project_costs c
-                  where c.project_id = f.id and c.organization_id = p_organization_id)
+                  where c.project_id = f.id and c.organization_id = p_organization_id
+                    and c.total_cents <> 0)
          or exists (select 1 from public.time_entries te
                      where te.project_id = f.id and te.organization_id = p_organization_id
-                       and te.validated and te.kind = 'work' and te.hours > 0)) as a_des_couts
+                       and te.validated and te.kind = 'work'
+                       and te.hours > 0 and te.total_cents <> 0)) as a_des_couts
       from finished f
       left join public.quote_totals qt on qt.quote_id = f.quote_id
     )
     select
       sum(sale_cents - cost_cents) filter (where sale_cents is not null and a_des_couts)::bigint,
-      public.margin_percent(
+      public.ai_margin_pct(
         (sum(cost_cents) filter (where sale_cents is not null and a_des_couts))::bigint,
         (sum(sale_cents) filter (where sale_cents is not null and a_des_couts))::bigint),
       count(*) filter (where sale_cents is not null and a_des_couts)::int,
@@ -851,7 +858,13 @@ begin
       end as base_cout_estime,
 
       (coalesce(ac.cents, 0) + coalesce(mo.cents, 0))::bigint as cout_reel_cents,
-      (ac.lignes is not null or coalesce(mo.heures, 0) > 0) as a_des_couts_reels,
+      -- LE DRAPEAU PORTE SUR LA VALEUR, PAS SUR LA PRÉSENCE DE LIGNES.
+      -- `time_entries.hourly_cost_cents` vaut 0 par défaut et
+      -- `total_cents` en est la colonne générée : vingt heures pointées
+      -- et validées sur une fiche salarié sans coût horaire font vingt
+      -- lignes et zéro euro. Compter ces lignes comme « coût connu »
+      -- rendait 100 % de marge, avec une confiance « high ».
+      (coalesce(ac.cents, 0) <> 0 or coalesce(mo.cents, 0) <> 0) as a_des_couts_reels,
 
       res.heures_prevues,
       mo.heures as heures_reelles,
@@ -929,7 +942,7 @@ begin
       sum(m.cout_reel_cents) filter (where m.a_des_couts_reels)::bigint as cout_reel_cents,
       sum(m.vendu_ht_cents - m.cout_reel_cents)
         filter (where m.a_des_couts_reels)::bigint as marge_reelle_cents,
-      public.margin_percent(
+      public.ai_margin_pct(
         (sum(m.cout_reel_cents) filter (where m.a_des_couts_reels))::bigint,
         (sum(m.vendu_ht_cents) filter (where m.a_des_couts_reels))::bigint) as taux_reel_pct
     from mesures m
@@ -972,10 +985,12 @@ begin
       t.id, t.number, t.name,
       qt.total_excluding_vat_cents as vendu,
       (exists (select 1 from public.project_costs c
-                where c.project_id = t.id and c.organization_id = p_organization_id)
+                where c.project_id = t.id and c.organization_id = p_organization_id
+                  and c.total_cents <> 0)
        or exists (select 1 from public.time_entries te
                    where te.project_id = t.id and te.organization_id = p_organization_id
-                     and te.validated and te.kind = 'work' and te.hours > 0)) as a_couts,
+                     and te.validated and te.kind = 'work'
+                     and te.hours > 0 and te.total_cents <> 0)) as a_couts,
       (exists (select 1 from public.project_resources r
                 where r.project_id = t.id and r.organization_id = p_organization_id
                   and r.planned_unit_cost_cents > 0)
@@ -1115,10 +1130,12 @@ begin
                     where te.project_id = p.id and te.organization_id = p_organization_id
                       and te.validated and te.kind = 'work'), 0))::bigint as cout_reel,
       (exists (select 1 from public.project_costs c
-                where c.project_id = p.id and c.organization_id = p_organization_id)
+                where c.project_id = p.id and c.organization_id = p_organization_id
+                  and c.total_cents <> 0)
        or exists (select 1 from public.time_entries te
                    where te.project_id = p.id and te.organization_id = p_organization_id
-                     and te.validated and te.kind = 'work' and te.hours > 0)) as a_couts
+                     and te.validated and te.kind = 'work'
+                     and te.hours > 0 and te.total_cents <> 0)) as a_couts
     from public.projects p
     join public.quote_totals qt on qt.quote_id = p.quote_id
     where p.organization_id = p_organization_id
@@ -1133,17 +1150,17 @@ begin
       (sum(cout_estime) filter (where cout_estime is not null))::bigint,
       (sum(vendu) filter (where cout_estime is not null))::bigint),
     'margeReelleCents', sum(vendu - cout_reel) filter (where a_couts)::bigint,
-    'tauxMarqueReelPct', public.margin_percent(
+    'tauxMarqueReelPct', public.ai_margin_pct(
       (sum(cout_reel) filter (where a_couts))::bigint,
       (sum(vendu) filter (where a_couts))::bigint),
     'ecartPoints', case
-      when public.margin_percent((sum(cout_reel) filter (where a_couts))::bigint,
-                                 (sum(vendu) filter (where a_couts))::bigint) is not null
+      when public.ai_margin_pct((sum(cout_reel) filter (where a_couts))::bigint,
+                                (sum(vendu) filter (where a_couts))::bigint) is not null
        and public.margin_percent((sum(cout_estime) filter (where cout_estime is not null))::bigint,
                                  (sum(vendu) filter (where cout_estime is not null))::bigint) is not null
       then round(
-        public.margin_percent((sum(cout_reel) filter (where a_couts))::bigint,
-                              (sum(vendu) filter (where a_couts))::bigint)
+        public.ai_margin_pct((sum(cout_reel) filter (where a_couts))::bigint,
+                             (sum(vendu) filter (where a_couts))::bigint)
         - public.margin_percent((sum(cout_estime) filter (where cout_estime is not null))::bigint,
                                 (sum(vendu) filter (where cout_estime is not null))::bigint), 2) end)
     into v_global
@@ -1242,10 +1259,12 @@ begin
                     where te.project_id = p.id and te.organization_id = p_organization_id
                       and te.validated and te.kind = 'work'), 0))::bigint as cout_reel_cents,
       (exists (select 1 from public.project_costs c
-                where c.project_id = p.id and c.organization_id = p_organization_id)
+                where c.project_id = p.id and c.organization_id = p_organization_id
+                  and c.total_cents <> 0)
        or exists (select 1 from public.time_entries te
                    where te.project_id = p.id and te.organization_id = p_organization_id
-                     and te.validated and te.kind = 'work' and te.hours > 0)) as a_des_couts
+                     and te.validated and te.kind = 'work'
+                     and te.hours > 0 and te.total_cents <> 0)) as a_des_couts
     from public.projects p
     left join public.quote_totals qt on qt.quote_id = p.quote_id
     where p.organization_id = p_organization_id
@@ -1392,16 +1411,34 @@ begin
     'prets', count(*) filter (where e ->> 'statut' = 'pret')::int,
     'aVerifier', count(*) filter (where e ->> 'statut' = 'aVerifier')::int,
     'bloques', count(*) filter (where e ->> 'statut' = 'bloque')::int,
+    -- PAS DE `coalesce(..., 0)` ICI, ET C'EST LE SUJET. `sum()` ignore
+    -- les NULL : sur un lot dont AUCUN dossier n'est chiffré — une
+    -- intervention clôturée sans chantier n'a par construction aucun
+    -- montant —, il rend NULL, et un `coalesce` fabriquerait un
+    -- « 0,00 € » que l'écran imprimerait sous le libellé « chiffre
+    -- d'affaires facturable ». La seule chose à facturer de
+    -- l'entreprise vaudrait alors officiellement zéro euro. NULL veut
+    -- dire « on ne sait pas combien » ; c'est la réponse juste, et
+    -- l'écran sait afficher un tiret.
     'montantPretHtCents',
-      coalesce(sum((e ->> 'montantFacturableHtCents')::bigint)
-               filter (where e ->> 'statut' = 'pret'), 0)::bigint,
+      (sum((e ->> 'montantFacturableHtCents')::bigint)
+       filter (where e ->> 'statut' = 'pret'))::bigint,
     'montantAVerifierHtCents',
-      coalesce(sum((e ->> 'montantFacturableHtCents')::bigint)
-               filter (where e ->> 'statut' = 'aVerifier'), 0)::bigint,
+      (sum((e ->> 'montantFacturableHtCents')::bigint)
+       filter (where e ->> 'statut' = 'aVerifier'))::bigint,
     -- Combien de dossiers n'ont AUCUN montant. Sans ce compte, un total
     -- de 38 450 € laisserait croire qu'il couvre les dix dossiers.
     'dossiersSansMontant',
-      count(*) filter (where e -> 'montantFacturableHtCents' = 'null'::jsonb)::int)
+      count(*) filter (where e -> 'montantFacturableHtCents' = 'null'::jsonb)::int,
+    -- Le même compte, découpé : c'est celui-là que le brief transporte
+    -- avec son montant, pour que « 10 dossiers, 38 450 € » ne laisse
+    -- pas croire que les 38 450 € couvrent les dix.
+    'pretsSansMontant',
+      count(*) filter (where e ->> 'statut' = 'pret'
+                         and e -> 'montantFacturableHtCents' = 'null'::jsonb)::int,
+    'aVerifierSansMontant',
+      count(*) filter (where e ->> 'statut' = 'aVerifier'
+                         and e -> 'montantFacturableHtCents' = 'null'::jsonb)::int)
     into v_resume
   from jsonb_array_elements(v_candidats) e;
 
@@ -1576,10 +1613,12 @@ begin
                            where te.project_id = p.id and te.organization_id = v_org
                              and te.validated and te.kind = 'work'), 0))::bigint as cout_reel_cents,
              (exists (select 1 from public.project_costs c
-                       where c.project_id = p.id and c.organization_id = v_org)
+                       where c.project_id = p.id and c.organization_id = v_org
+                         and c.total_cents <> 0)
               or exists (select 1 from public.time_entries te
                           where te.project_id = p.id and te.organization_id = v_org
-                            and te.validated and te.kind = 'work' and te.hours > 0)) as a_des_couts
+                            and te.validated and te.kind = 'work'
+                            and te.hours > 0 and te.total_cents <> 0)) as a_des_couts
       from public.projects p
       join public.quotes q2 on q2.id = p.quote_id and q2.organization_id = v_org
       join public.quote_totals qt on qt.quote_id = q2.id
@@ -1622,7 +1661,7 @@ begin
       -- ont vraiment rapporté, et non ce qu'ils promettaient. Rendue
       -- NULL si aucun d'eux n'a de coût saisi.
       percentile_cont(0.50) within group (
-        order by public.margin_percent(r.cout_reel_cents, r.vendu_ht_cents))
+        order by public.ai_margin_pct(r.cout_reel_cents, r.vendu_ht_cents))
         filter (where r.a_des_couts),
       count(*) filter (where r.a_des_couts)::int,
       coalesce(jsonb_agg(jsonb_build_object(
@@ -1631,7 +1670,7 @@ begin
         'venduHtCents', r.vendu_ht_cents,
         'heuresDevisees', r.heures,
         'tauxMarqueReelPct', case when r.a_des_couts
-          then public.margin_percent(r.cout_reel_cents, r.vendu_ht_cents) end)
+          then public.ai_margin_pct(r.cout_reel_cents, r.vendu_ht_cents) end)
         order by r.actual_end_on desc), '[]'::jsonb)
       into v_nb, v_min, v_q1, v_mediane, v_q3, v_max, v_marge_med, v_nb_couts, v_liste
     from retenus r;
@@ -2018,8 +2057,16 @@ begin
         'titre', 'Facturer ' || (v_billing -> 'resume' ->> 'prets') || ' dossier(s) prêt(s)',
         'impactCents', (v_billing -> 'resume' ->> 'montantPretHtCents')::bigint,
         'impactTexte', 'Chiffre d''affaires HT immédiatement facturable',
+        -- Combien de ces dossiers n'ont AUCUN montant connu. Sans ce
+        -- nombre, « 10 dossiers, 38 450 € » laisse croire que les
+        -- 38 450 € couvrent les dix.
+        'dossiersSansMontant', (v_billing -> 'resume' ->> 'pretsSansMontant')::int,
         'confiance', v_billing ->> 'confiance',
-        'pourquoi', (v_billing -> 'resume' ->> 'prets') || ' dossier(s) terminé(s), sans facture, sans réserve détectée.',
+        'pourquoi', (v_billing -> 'resume' ->> 'prets') || ' dossier(s) terminé(s), sans facture, sans réserve détectée.'
+          || case when (v_billing -> 'resume' ->> 'pretsSansMontant')::int > 0
+                  then ' ' || (v_billing -> 'resume' ->> 'pretsSansMontant')
+                       || ' d''entre eux n''ont aucun montant connu : le total ne les couvre pas.'
+                  else '' end,
         'siRienNestFait', 'Le chiffre d''affaires reste hors des comptes et la trésorerie n''entre pas.',
         'donneesUtilisees', jsonb_build_array('projects', 'quotes', 'invoices', 'time_entries', 'project_costs'),
         'actionRecommandee', 'Créer les brouillons de facture puis les relire.',
@@ -2032,8 +2079,13 @@ begin
         'titre', 'Vérifier ' || (v_billing -> 'resume' ->> 'aVerifier') || ' dossier(s) facturable(s) sous réserve',
         'impactCents', (v_billing -> 'resume' ->> 'montantAVerifierHtCents')::bigint,
         'impactTexte', 'Chiffre d''affaires HT facturable après vérification',
+        'dossiersSansMontant', (v_billing -> 'resume' ->> 'aVerifierSansMontant')::int,
         'confiance', 'medium',
-        'pourquoi', 'Pointages non validés, réception manquante ou dépassement de coût : le montant n''est pas arrêté.',
+        'pourquoi', 'Pointages non validés, réception manquante ou dépassement de coût : le montant n''est pas arrêté.'
+          || case when (v_billing -> 'resume' ->> 'aVerifierSansMontant')::int > 0
+                  then ' ' || (v_billing -> 'resume' ->> 'aVerifierSansMontant')
+                       || ' d''entre eux n''ont aucun montant connu.'
+                  else '' end,
         'siRienNestFait', 'Ces chantiers vieillissent et leurs coûts deviennent plus difficiles à reconstituer.',
         'donneesUtilisees', jsonb_build_array('projects', 'quotes', 'time_entries', 'project_costs'),
         'actionRecommandee', 'Lever les réserves dossier par dossier avant de facturer.',
@@ -2158,10 +2210,12 @@ begin
                              where te.project_id = p.id and te.organization_id = p_organization_id
                                and te.validated and te.kind = 'work'), 0))::bigint as cout,
                (exists (select 1 from public.project_costs c
-                         where c.project_id = p.id and c.organization_id = p_organization_id)
+                         where c.project_id = p.id and c.organization_id = p_organization_id
+                           and c.total_cents <> 0)
                 or exists (select 1 from public.time_entries te
                             where te.project_id = p.id and te.organization_id = p_organization_id
-                              and te.validated and te.kind = 'work' and te.hours > 0)) as a_couts
+                              and te.validated and te.kind = 'work'
+                              and te.hours > 0 and te.total_cents <> 0)) as a_couts
         from public.projects p
         join public.quote_totals qt on qt.quote_id = p.quote_id
         where p.organization_id = p_organization_id
@@ -2171,8 +2225,8 @@ begin
       )
       select
         count(*) filter (where a_couts)::int,
-        public.margin_percent((sum(cout) filter (where a_couts))::bigint,
-                              (sum(vendu) filter (where a_couts))::bigint),
+        public.ai_margin_pct((sum(cout) filter (where a_couts))::bigint,
+                             (sum(vendu) filter (where a_couts))::bigint),
         -- Le manque à gagner : ce que ces chantiers auraient rapporté
         -- de plus au taux cible. Un écart en points ne se lit pas ;
         -- des euros, si.
@@ -2198,11 +2252,20 @@ begin
   end if;
 
   -- ---------- LE CLASSEMENT ----------
-  select coalesce(jsonb_agg(x.ligne order by x.score desc nulls last, x.ligne ->> 'titre'), '[]'::jsonb)
+  -- LES LIGNES SANS IMPACT CHIFFRÉ NE SONT PAS PERDUES. Leur score est
+  -- NULL — on ne fabrique pas un montant pour les classer — et elles
+  -- passent après les lignes chiffrées ; entre elles, c'est le poids de
+  -- catégorie qui décide, pour qu'une urgence non chiffrable ne se
+  -- retrouve pas derrière une information.
+  select coalesce(jsonb_agg(x.ligne order by x.score desc nulls last, x.poids desc, x.ligne ->> 'titre'), '[]'::jsonb)
     into v_top
   from (
     select
       e.value as ligne,
+      case e.value ->> 'categorie'
+        when 'urgent' then 1.30 when 'important' then 1.15
+        when 'opportunite' then 1.00 when 'optimisation' then 0.90
+        else 0.50 end as poids,
       -- Poids de catégorie, puis poids des objectifs d'entreprise.
       (e.value ->> 'impactCents')::numeric
       * case e.value ->> 'categorie'
@@ -2302,13 +2365,49 @@ begin
   v_prio  := public.ai_get_daily_priorities(p_organization_id);
   v_brief := public.ai_executive_brief(p_organization_id);
 
-  -- ---------- URGENT ----------
-  -- Les lignes du brief classées « urgent » gardent leur montant et
-  -- leur explication : le Daily n'est qu'une mise en pages.
-  select coalesce(jsonb_agg(e.value), '[]'::jsonb) into v_urgent
-  from jsonb_array_elements(v_brief -> 'actionsPrioritaires') e
-  where e.value ->> 'categorie' = 'urgent';
+  -- ---------- LES LIGNES DU BRIEF, TOUTES ----------
+  --
+  -- ON ROUTE PAR CATÉGORIE, PUIS PAR AGENT, AVEC UN `else` QUI ATTRAPE
+  -- LE RESTE. La version précédente filtrait trois cas nommés — urgent,
+  -- quote_pricing non urgent, finance non urgent — et abandonnait
+  -- silencieusement tout le reste. Une ligne `billing` / `important`
+  -- (« Vérifier N dossier(s) facturable(s) sous réserve », avec son
+  -- montant HT) était calculée par le brief puis perdue ici : l'écran
+  -- affichait « Rien ne réclame une décision ce matin » alors que la
+  -- base venait de dire le contraire, et il l'affichait dans le sens
+  -- rassurant. C'est le pire mode de panne de tout ce fichier.
+  --
+  -- Le `else` n'est donc pas de la prudence de style : c'est ce qui
+  -- garantit que la prochaine catégorie ou le prochain agent ajouté au
+  -- brief atterrisse quelque part au lieu de disparaître. Le test de
+  -- 0073 compare le nombre de lignes du brief au nombre d'éléments
+  -- affichés : aucune ligne classée ne peut être absente.
+  with lignes as (
+    select e.value as ligne,
+      case
+        when e.value ->> 'categorie' = 'urgent'            then 'URGENT'
+        when e.value ->> 'agent' = 'quote_pricing'         then 'COMMERCIAL'
+        when e.value ->> 'agent' in ('billing', 'finance') then 'FINANCE'
+        else 'INFORMATION'
+      end as rubrique
+    from jsonb_array_elements(v_brief -> 'actionsPrioritaires') e
+  )
+  select
+    coalesce(jsonb_agg(ligne) filter (where rubrique = 'URGENT'), '[]'::jsonb),
+    coalesce(jsonb_agg(ligne) filter (where rubrique = 'COMMERCIAL'), '[]'::jsonb),
+    coalesce(jsonb_agg(ligne) filter (where rubrique = 'FINANCE'), '[]'::jsonb),
+    coalesce(jsonb_agg(ligne) filter (where rubrique = 'INFORMATION'), '[]'::jsonb)
+    into v_urgent, v_commerce, v_finance, v_info
+  from lignes;
 
+  -- ---------- URGENT : ce que le brief ne voit pas ----------
+  --
+  -- LES CINQ LIGNES QUE CETTE FONCTION FABRIQUE ELLE-MÊME PORTENT LES
+  -- MÊMES QUATRE CHAMPS QUE CELLES DU BRIEF. Le critère de validation
+  -- de la page 49 dit « voir Pourquoi ? pour CHAQUE recommandation » ;
+  -- `Explanation.tsx` affiche « Non renseigné » quand ils manquent, ce
+  -- qui est honnête et ne vaut pas le critère. Un test de 0073 refuse
+  -- désormais tout élément sans `pourquoi` ni `siRienNestFait`.
   v_n := jsonb_array_length(coalesce(v_prio -> 'chantiersEnRetard', '[]'::jsonb));
   if v_n > 0 then
     v_urgent := v_urgent || jsonb_build_array(jsonb_build_object(
@@ -2317,23 +2416,24 @@ begin
       'impactCents', null,
       'impactTexte', 'Impact non chiffrable : un retard de chantier ne se convertit pas en euros sans hypothèse.',
       'confiance', 'high',
+      'pourquoi', v_n || ' chantier(s) en cours dont la date de fin prévue est dépassée.',
+      'siRienNestFait', 'Le retard se propage aux chantiers suivants, déjà planifiés, et le client l''apprend par lui-même.',
+      'donneesUtilisees', jsonb_build_array('projects'),
+      'actionRecommandee', 'Reprendre chaque chantier en retard : replanifier, ou repousser la date de fin et prévenir le client.',
       'detail', v_prio -> 'chantiersEnRetard'));
   end if;
 
   -- ---------- COMMERCIAL ----------
-  select coalesce(jsonb_agg(e.value), '[]'::jsonb) into v_commerce
-  from jsonb_array_elements(v_brief -> 'actionsPrioritaires') e
-  where e.value ->> 'agent' = 'quote_pricing'
-    and e.value ->> 'categorie' <> 'urgent';
-
-  v_n := jsonb_array_length(coalesce(v_prio -> 'devisQuiExpirent', '[]'::jsonb));
-  if v_n > 0 then
-    v_commerce := v_commerce || jsonb_build_array(jsonb_build_object(
-      'agent', 'quote_pricing', 'categorie', 'urgent',
-      'titre', v_n || ' devis arrive(nt) à échéance sous sept jours',
-      'confiance', 'high',
-      'detail', v_prio -> 'devisQuiExpirent'));
-  end if;
+  --
+  -- RIEN N'EST AJOUTÉ ICI, ET C'EST UNE SUPPRESSION VOLONTAIRE.
+  -- `v_prio -> 'devisQuiExpirent'` produisait une seconde ligne « N
+  -- devis arrive(nt) à échéance sous sept jours » alors que le brief
+  -- émet déjà « N devis expire(nt) sous sept jours » sur exactement les
+  -- mêmes devis et la même fenêtre de sept jours : même fait, affiché
+  -- dans deux rubriques, et compté deux fois par le « N recommandations
+  -- ce matin » de l'écran. La version du brief porte en plus le montant
+  -- HT et l'explication. Le détail brut reste dans
+  -- `sources.prioritesDuJour`, que l'écran affiche déjà plus bas.
 
   -- ---------- PLANNING ----------
   v_n := jsonb_array_length(coalesce(v_prio -> 'interventionsDuJour', '[]'::jsonb));
@@ -2341,7 +2441,13 @@ begin
     v_planning := v_planning || jsonb_build_array(jsonb_build_object(
       'agent', 'executive', 'categorie', 'information',
       'titre', v_n || ' intervention(s) prévue(s) aujourd''hui',
+      'impactCents', null,
+      'impactTexte', 'Information de planning : aucun montant ne s''y rattache.',
       'confiance', 'high',
+      'pourquoi', 'Interventions planifiées sur la journée d''aujourd''hui, heure de Paris.',
+      'siRienNestFait', 'Une intervention non préparée la veille se découvre le matin : matériel manquant, équipe mal affectée.',
+      'donneesUtilisees', jsonb_build_array('field_interventions'),
+      'actionRecommandee', 'Vérifier les affectations et le matériel avant le départ des équipes.',
       'detail', v_prio -> 'interventionsDuJour'));
   end if;
 
@@ -2350,8 +2456,13 @@ begin
       'agent', 'billing', 'categorie', 'important',
       'titre', (v_prio -> 'pointagesAValider' ->> 'nombre') || ' pointage(s) à valider ('
                || coalesce(v_prio -> 'pointagesAValider' ->> 'heures', '0') || ' h)',
+      'impactCents', null,
+      'impactTexte', 'Impact non chiffré : tant qu''un pointage n''est pas validé, son coût n''est pas arrêté.',
       'confiance', 'high',
       'pourquoi', 'Un pointage non validé n''entre dans aucun coût de chantier : la marge affichée est incomplète tant qu''il reste en attente.',
+      'siRienNestFait', 'Les marges annoncées restent fausses vers le haut, et les chantiers concernés se facturent sur un coût incomplet.',
+      'donneesUtilisees', jsonb_build_array('time_entries'),
+      'actionRecommandee', 'Valider les pointages depuis l''écran Temps, en commençant par les chantiers à facturer.',
       'detail', v_prio -> 'pointagesAValider'));
   end if;
 
@@ -2360,17 +2471,17 @@ begin
     v_planning := v_planning || jsonb_build_array(jsonb_build_object(
       'agent', 'executive', 'categorie', 'information',
       'titre', v_n || ' réception(s) fournisseur attendue(s)',
+      'impactCents', null,
+      'impactTexte', 'Impact non chiffré ici : le montant engagé figure dans la photo financière, pas dans cette ligne.',
       'confiance', 'high',
+      'pourquoi', 'Commandes fournisseurs envoyées dont la date de livraison prévue est atteinte ou dépassée.',
+      'siRienNestFait', 'Une livraison non pointée bloque le chantier qui l''attend, et le stock affiché reste faux.',
+      'donneesUtilisees', jsonb_build_array('purchase_orders'),
+      'actionRecommandee', 'Pointer les réceptions arrivées, relancer les fournisseurs en retard.',
       'detail', v_prio -> 'receptionsAttendues'));
   end if;
 
-  -- ---------- FINANCE ----------
-  select coalesce(jsonb_agg(e.value), '[]'::jsonb) into v_finance
-  from jsonb_array_elements(v_brief -> 'actionsPrioritaires') e
-  where e.value ->> 'agent' = 'finance'
-    and e.value ->> 'categorie' <> 'urgent';
-
-  -- ---------- INFORMATION ----------
+  -- ---------- INFORMATION : ce que le brief ne voit pas ----------
   -- Les décisions déjà ouvertes par les agents et jamais tranchées.
   -- Elles ne sont pas des recommandations neuves : elles disent que le
   -- Decision Center a du retard.
@@ -2388,7 +2499,11 @@ begin
                       from public.ai_decisions d
                       where d.organization_id = p_organization_id
                         and d.status in ('new', 'reviewed')),
-      'impactTexte', 'Somme des impacts CHIFFRÉS ; les décisions sans montant n''y figurent pas.'));
+      'impactTexte', 'Somme des impacts CHIFFRÉS ; les décisions sans montant n''y figurent pas.',
+      'pourquoi', v_n || ' décision(s) ouverte(s) par les agents et jamais tranchée(s).',
+      'siRienNestFait', 'Une décision non tranchée expire : le constat qui l''a fait naître reste vrai, et il faudra le refaire.',
+      'donneesUtilisees', jsonb_build_array('ai_decisions'),
+      'actionRecommandee', 'Ouvrir le centre de décision et répondre : appliquer, reporter ou ignorer.'));
   end if;
 
   -- ---------- L'ASSEMBLAGE ----------

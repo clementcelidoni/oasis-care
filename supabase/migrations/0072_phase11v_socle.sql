@@ -1345,14 +1345,44 @@ $$;
  *   3. `montant_sous_plafond` — le montant tient sous le plafond
  *   4. `droit_utilisateur`  — l'utilisateur détient le droit de l'action
  *
- * Et cinq autres, qui ne sont pas du zèle :
+ * Et sept autres, qui ne sont pas du zèle :
  *
  *   5. `membre`             — l'appelant appartient à l'organisation
  *   6. `action_connue`      — l'action figure au catalogue
  *   7. `action_eligible`    — le catalogue l'autorise en autopilote
  *   8. `type_dans_la_regle` — la liste blanche de la règle, si elle existe
  *   9. `cible_autorisee`    — les listes clients/fournisseurs, si elles existent
- *  10. `heure_autorisee`    — la plage horaire, si elle existe
+ *  10. `cible_meme_organisation` — la cible appartient bien à l'organisation
+ *  11. `heure_autorisee`    — la plage horaire, si elle existe
+ *  12. `agent_annonce_coherent` — l'agent annoncé est celui du catalogue
+ *
+ * ─── CE QUE L'APPELANT NE CHOISIT PAS ───
+ *
+ * Trois trous ont été bouchés le 2026-09-03, et ils avaient la même
+ * forme : la fonction se laissait dicter ce qu'elle devait opposer.
+ *
+ *   • L'AGENT. `agent_niveau_4` lisait `ai_agent_settings` pour l'agent
+ *     NOMMÉ PAR L'APPELANT. Une entreprise qui mettait Executive au
+ *     niveau 4 en laissant Facturation sur « advise » croyait avoir
+ *     fermé la facturation automatique : il suffisait de dire
+ *     « executive » en demandant un `createInvoiceDraft`. L'agent vient
+ *     désormais de `ai_action_catalog.agent`, et de nulle part ailleurs ;
+ *     `p_agent` n'est plus qu'une DÉCLARATION que la fonction vérifie —
+ *     s'il ne colle pas au catalogue, elle refuse.
+ *
+ *   • L'ORGANISATION DE LA CIBLE. `cible_autorisee` comparait un UUID
+ *     de client à `allowed_clients` sans jamais vérifier à qui ce
+ *     client appartient — et rien en base n'empêche d'écrire dans
+ *     `allowed_clients` l'identifiant d'un client d'une autre
+ *     entreprise. Le déclencheur `ai_actions_check_target`, lui,
+ *     refusait. Deux gardes, deux réponses opposées sur la même cible :
+ *     désormais une seule.
+ *
+ * ─── SUR LE COMPTE DE CONDITIONS ───
+ *
+ * `c_conditions` doit suivre le nombre de clés ci-dessous. En ajouter
+ * une sans le mettre à jour fait refuser TOUT : c'est le comportement
+ * voulu, la panne est visible et fermée.
  *
  * ─── LE TROU QU'ON A BOUCHÉ ───
  *
@@ -1388,20 +1418,28 @@ declare
   v_rule public.ai_autopilot_rules;
   v_checks jsonb;
   v_hour int;
+  v_cible_org uuid;
   -- Le nombre de conditions ci-dessous. Si quelqu'un en retire une, le
   -- compte ne colle plus et la fonction refuse tout — panne visible
   -- plutôt que relâchement silencieux.
-  c_conditions constant int := 10;
+  c_conditions constant int := 12;
 begin
   select * into v_catalog from public.ai_action_catalog where action_type = p_action_type;
 
+  -- L'AGENT VIENT DU CATALOGUE. `p_agent` est une déclaration de
+  -- l'appelant, vérifiée plus bas ; elle ne sert jamais à choisir la
+  -- ligne de réglages qu'on va lui opposer.
   select * into v_setting from public.ai_agent_settings
-   where organization_id = p_organization_id and agent = p_agent;
+   where organization_id = p_organization_id and agent = v_catalog.agent;
 
   select * into v_rule from public.ai_autopilot_rules
    where organization_id = p_organization_id and action_type = p_action_type;
 
   v_hour := extract(hour from (now() at time zone 'Europe/Paris'))::int;
+
+  -- L'organisation RÉELLE de la cible, vue sans la RLS — la même
+  -- réponse que celle qu'oppose `ai_actions_check_target`.
+  v_cible_org := public.ai_entity_organization(p_target_entity_type, p_target_entity_id);
 
   v_checks := jsonb_build_object(
 
@@ -1415,9 +1453,17 @@ begin
       v_catalog.autopilot_eligible,
 
     -- 1. Niveau d'autonomie 4, et agent allumé. Un agent éteint au
-    --    niveau 4 est un agent éteint.
+    --    niveau 4 est un agent éteint. `v_setting` a été chargé sur
+    --    `v_catalog.agent` : c'est l'agent PROPRIÉTAIRE de l'action qui
+    --    doit être au niveau 4, pas celui que l'appelant préfère.
     'agent_niveau_4',
       v_setting.enabled and v_setting.autonomy_level = 4,
+
+    -- L'agent annoncé doit être celui du catalogue. Il ne sert plus à
+    -- rien d'autre qu'à être vérifié : un appelant qui se trompe se
+    -- fait refuser au lieu d'ouvrir une porte.
+    'agent_annonce_coherent',
+      p_agent is null or p_agent = v_catalog.agent,
 
     -- 2. Une règle d'autopilote active pour ce type d'action.
     'regle_active',
@@ -1451,6 +1497,13 @@ begin
         or (p_target_entity_type = 'supplier'
             and p_target_entity_id = any (v_rule.allowed_suppliers))),
 
+    -- Une cible d'une autre entreprise ferme, comme le déclencheur
+    -- d'insertion. Sans cette ligne, une liste blanche renseignée avec
+    -- l'identifiant d'un client du voisin — que rien en base
+    -- n'interdit d'écrire — autorisait l'autopilote sur cette cible.
+    'cible_meme_organisation',
+      p_target_entity_id is null or v_cible_org = p_organization_id,
+
     'heure_autorisee',
       v_rule.allowed_hours is null or v_rule.allowed_hours @> v_hour,
 
@@ -1472,6 +1525,13 @@ begin
   );
 
 exception when others then
+  -- LE REFUS EST LA BONNE RÉPONSE, LE SILENCE NON. Sans cette trace, un
+  -- vrai bug ici se lirait « l'autopilote ne part jamais » et personne
+  -- ne saurait pourquoi. `raise warning` n'interrompt rien et n'annule
+  -- rien : il écrit dans le journal Postgres, et la fonction rend
+  -- toujours `false`.
+  raise warning 'ai_may_autoexecute a refusé sur erreur (% / %) : %',
+    p_organization_id, p_action_type, sqlerrm;
   return false;
 end;
 $$;
@@ -1613,6 +1673,112 @@ begin
    where id = p_event_id;
 end;
 $$;
+
+-- ============================================================
+-- 12 bis. « APPROUVÉ » NE S'ÉCRIT PAS À LA MAIN
+-- ============================================================
+-- LA RLS D'ÉCRITURE DE CES DEUX TABLES N'EXIGE QUE `projects.manage`
+-- (section 14, régime du chantier). Un conducteur de travaux SANS
+-- `invoice.create` ne peut donc pas passer par `ai_answer_approval` —
+-- elle lui oppose le droit du catalogue — mais il peut écrire
+-- `status = 'approved'` directement par PostgREST, dans les deux
+-- tables. Aucun exécuteur de cette itération ne consomme cet état
+-- forgé : les deux surfaces (le web et la fonction Edge) passent
+-- d'abord par `ai_answer_approval`. Mais le registre afficherait
+-- « approuvée » pour une action dont le droit n'a jamais été vérifié,
+-- et l'exécuteur SQL que réclament les prochaines itérations le
+-- croirait.
+--
+-- ON NE POSE PAS UN JETON DE SESSION. Un marqueur `set_config` posé par
+-- `ai_answer_approval` et relu par le déclencheur marcherait, mais il
+-- protège une FONCTION plutôt qu'un FAIT : le jour où une seconde
+-- fonction légitime doit approuver, on la fait entrer dans le club, et
+-- l'invariant redevient une liste de noms. Ici, le déclencheur vérifie
+-- LE FAIT :
+--
+--   • une DEMANDE ne passe à « approuvée » que si celui qui écrit
+--     détient le droit que le CATALOGUE attache à l'action ;
+--   • une ACTION ne passe à « approuvée » que s'il existe déjà une
+--     demande approuvée qui la désigne, et qui porte le nom de son
+--     répondant.
+--
+-- N'importe quel chemin qui respecte l'invariant passe donc, et aucun
+-- autre. Les autres transitions — `executing`, `executed`, `failed`,
+-- `rejected`, `expired` — ne sont pas touchées : ce sont des
+-- constatations, pas des autorisations, et elles s'écrivent depuis le
+-- web et depuis la fonction Edge après l'exécution.
+
+create or replace function public.ai_action_approvals_guard_approved()
+returns trigger
+language plpgsql
+set search_path = public
+as $$
+declare
+  v_permission text;
+begin
+  if new.status <> 'approved' then
+    return new;
+  end if;
+  if tg_op = 'UPDATE' and old.status = 'approved' then
+    return new;   -- déjà approuvée : on ne rejoue pas le contrôle
+  end if;
+
+  select c.required_permission into v_permission
+  from public.ai_actions a
+  join public.ai_action_catalog c on c.action_type = a.action_type
+  where a.id = new.action_id;
+
+  if v_permission is null then
+    raise exception 'Action hors catalogue : impossible de savoir quel droit son approbation exige.';
+  end if;
+
+  if not public.has_permission(new.organization_id, v_permission) then
+    raise exception 'Approuver cette action demande le droit « % », que vous n''avez pas.', v_permission;
+  end if;
+
+  return new;
+end;
+$$;
+
+drop trigger if exists ai_action_approvals_guard_approved_trg on public.ai_action_approvals;
+create trigger ai_action_approvals_guard_approved_trg
+  before insert or update on public.ai_action_approvals
+  for each row execute function public.ai_action_approvals_guard_approved();
+
+create or replace function public.ai_actions_guard_approved()
+returns trigger
+language plpgsql
+set search_path = public
+as $$
+begin
+  if new.status <> 'approved' then
+    return new;
+  end if;
+  if tg_op = 'UPDATE' and old.status = 'approved' then
+    return new;
+  end if;
+
+  -- `security invoker` : la demande est cherchée sous la RLS de celui
+  -- qui écrit, ce qui est exactement ce qu'on veut — une demande
+  -- invisible ne vaut pas approbation.
+  if not exists (
+    select 1 from public.ai_action_approvals ap
+    where ap.action_id = new.id
+      and ap.organization_id = new.organization_id
+      and ap.status = 'approved'
+      and ap.responded_by is not null
+  ) then
+    raise exception 'Aucune approbation enregistrée pour cette action : elle ne peut pas passer à « approuvée ».';
+  end if;
+
+  return new;
+end;
+$$;
+
+drop trigger if exists ai_actions_guard_approved_trg on public.ai_actions;
+create trigger ai_actions_guard_approved_trg
+  before insert or update on public.ai_actions
+  for each row execute function public.ai_actions_guard_approved();
 
 -- ============================================================
 -- 13. Les défauts d'une entreprise
@@ -1765,6 +1931,41 @@ alter table public.business_events enable row level security;
 drop policy if exists "Members read business events" on public.business_events;
 create policy "Members read business events" on public.business_events
   for select using (public.is_organization_member(organization_id));
+
+-- ============================================================
+-- 14 bis. LES DROITS D'EXÉCUTION DES FONCTIONS
+-- ============================================================
+-- POSTGRESQL DONNE `EXECUTE` À `PUBLIC` PAR DÉFAUT, et Supabase expose
+-- toute fonction de `public` en RPC PostgREST. Une fonction
+-- `security definer` sans contrôle d'appartenance est donc, sans rien
+-- écrire de plus, un point d'entrée ouvert à la clé anonyme — laquelle
+-- est publique par construction, puisqu'elle voyage dans le bundle du
+-- navigateur. Les deux qui suivent ont été fermées le 2026-09-03.
+--
+-- `ai_ensure_org_defaults` — écriture non authentifiée chez n'importe
+-- quelle entreprise. Elle est `security definer` (le déclencheur tire
+-- avant que le premier membre existe, la RLS n'aurait personne à qui
+-- donner raison), elle ne vérifie donc rien, et ses `on conflict do
+-- nothing` ne protègent que les lignes PRÉSENTES : une règle
+-- d'autopilote supprimée renaît `enabled = true` pour les trois actions
+-- que le catalogue met à `autopilot_default_on`. Un contrôle
+-- `is_organization_member` à l'intérieur ne conviendrait PAS : au
+-- moment du déclencheur, il n'y a pas encore de membre. On lui retire
+-- donc le droit d'être appelée depuis l'extérieur — le déclencheur, lui,
+-- passe par `ai_seed_org_defaults`, `security definer` appartenant à
+-- `postgres`, et la boucle de peuplement tourne en migration.
+--
+-- `ai_entity_organization` — elle rend l'organisation propriétaire de
+-- neuf types d'entités à qui lui donne un UUID. Pour un membre, elle ne
+-- divulgue rien ; pour `anon`, elle répond « ce client appartient à
+-- l'entreprise X ». Elle reste ouverte à `authenticated` parce que le
+-- déclencheur `ai_actions_check_target` n'est PAS `security definer` et
+-- s'exécute donc avec les droits de l'appelant.
+
+revoke execute on function public.ai_ensure_org_defaults(uuid) from public, anon, authenticated;
+
+revoke execute on function public.ai_entity_organization(text, uuid) from public, anon;
+grant  execute on function public.ai_entity_organization(text, uuid) to authenticated;
 
 -- ============================================================
 -- 15. CE QUI N'EST PAS DANS CE FICHIER, ET POURQUOI

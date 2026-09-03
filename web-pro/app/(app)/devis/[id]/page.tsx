@@ -12,6 +12,7 @@ import { QuoteEditor } from "./QuoteEditor";
 import { StatusBar } from "./StatusBar";
 import { ToProjectBar } from "./ToProjectBar";
 import { ToInvoiceBar } from "./ToInvoiceBar";
+import { AnalysePanel } from "./AnalysePanel";
 
 /**
  * §11E — la fiche d'un devis.
@@ -202,6 +203,17 @@ export default async function QuotePage({
         editable={clientMode ? false : editable}
         clientMode={clientMode}
       />
+
+      {/*
+        §11V — le panneau d'analyse. Prix, marge, déplacement, chantiers
+        comparables, risques, recommandation : le critère de validation
+        de la page 50 de la spec.
+
+        Masqué en mode client, comme les marges et les notes internes :
+        montrer au client qu'Oasis juge notre propre prix insuffisant
+        serait une négociation qu'on aurait menée contre soi-même.
+      */}
+      {!clientMode && <AnalysePanel quoteId={quote.id} />}
 
       {/* L'historique des versions raconte les allers-retours de
           chiffrage : ce n'est pas une information pour le client. */}

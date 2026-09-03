@@ -958,6 +958,76 @@ select 'Les pointages en attente sont au planning, avec leur raison','1',
        (select count(*)::text from daily, jsonb_array_elements(j -> 'rubriques') r,
              jsonb_array_elements(r.value -> 'elements') e
         where r.value ->> 'code' = 'PLANNING' and e.value ->> 'titre' like '%pointage%');
+-- ---------- LES TROIS INVARIANTS DU DAILY ----------
+--
+-- Ils ne portent sur aucun chiffre métier : ils portent sur la MISE EN
+-- PAGES elle-même, et c'est pour cela qu'ils survivront à un changement
+-- de jeu d'essai. Les trois défauts qu'ils ferment ont tous été trouvés
+-- sur des données réelles.
+
+-- 1. AUCUNE LIGNE DU BRIEF N'EST PERDUE. L'aiguillage précédent ne
+--    connaissait que trois cas nommés ; une ligne `billing` /
+--    `important` — « Vérifier N dossier(s) facturable(s) sous
+--    réserve », avec son montant — était calculée puis jetée, et
+--    l'écran affichait « Rien ne réclame une décision ce matin » alors
+--    que la base venait de dire le contraire.
+insert into res
+select 'Aucune ligne du brief n''est perdue par le Daily','0',
+       (select count(*)::text
+        from brief, jsonb_array_elements(brief.j -> 'actionsPrioritaires') b
+        where not exists (
+          select 1 from daily, jsonb_array_elements(daily.j -> 'rubriques') r,
+               jsonb_array_elements(r.value -> 'elements') e
+          where e.value ->> 'titre' = b.value ->> 'titre'));
+
+-- 2. CHAQUE ÉLÉMENT AFFICHÉ SAIT DIRE POURQUOI. Le critère de
+--    validation de la page 49 exige « Pourquoi ? » sur CHAQUE
+--    recommandation ; `Explanation.tsx` écrit « Non renseigné » quand
+--    le champ manque, ce qui est honnête et ne vaut pas le critère.
+insert into res
+select 'Chaque élément du Daily porte son « pourquoi »','0',
+       (select count(*)::text from daily, jsonb_array_elements(daily.j -> 'rubriques') r,
+             jsonb_array_elements(r.value -> 'elements') e
+        where e.value ->> 'pourquoi' is null);
+insert into res
+select 'Chaque élément du Daily porte son « si rien n''est fait »','0',
+       (select count(*)::text from daily, jsonb_array_elements(daily.j -> 'rubriques') r,
+             jsonb_array_elements(r.value -> 'elements') e
+        where e.value ->> 'siRienNestFait' is null);
+insert into res
+select 'Chaque élément du Daily nomme les données utilisées','0',
+       (select count(*)::text from daily, jsonb_array_elements(daily.j -> 'rubriques') r,
+             jsonb_array_elements(r.value -> 'elements') e
+        where e.value -> 'donneesUtilisees' is null
+           or jsonb_array_length(e.value -> 'donneesUtilisees') = 0);
+insert into res
+select 'Chaque élément du Daily propose une action','0',
+       (select count(*)::text from daily, jsonb_array_elements(daily.j -> 'rubriques') r,
+             jsonb_array_elements(r.value -> 'elements') e
+        where e.value ->> 'actionRecommandee' is null);
+
+-- 3. LE MÊME FAIT N'EST PAS AFFICHÉ DEUX FOIS. Le brief émettait
+--    « N devis expire(nt) sous sept jours » et le Daily rajoutait
+--    « N devis arrive(nt) à échéance sous sept jours » — mêmes devis,
+--    même fenêtre, deux rubriques, et le compteur du matin annonçait
+--    une recommandation de plus qu'il n'y a de faits. La clé de
+--    comparaison neutralise les chiffres : c'est le motif qui doit être
+--    unique, pas la phrase.
+insert into res
+select 'Aucun fait n''est affiché deux fois dans le Daily','0',
+       (select coalesce(sum(n - 1), 0)::text from (
+          select count(*) as n
+          from daily, jsonb_array_elements(daily.j -> 'rubriques') r,
+               jsonb_array_elements(r.value -> 'elements') e
+          group by coalesce(e.value ->> 'agent', ''),
+                   regexp_replace(e.value ->> 'titre', '[0-9]+', '#', 'g')
+          having count(*) > 1) d);
+insert into res
+select 'Le devis qui expire n''est annoncé qu''une fois','1',
+       (select count(*)::text from daily, jsonb_array_elements(daily.j -> 'rubriques') r,
+             jsonb_array_elements(r.value -> 'elements') e
+        where e.value ->> 'titre' like '%sept jours%');
+
 
 -- ============================================================
 -- LA CEINTURE, SANS LES BRETELLES
@@ -1195,6 +1265,239 @@ select 'Aucune action n''a été créée non plus','0',
        (select count(*)::text from public.ai_actions
         where organization_id in (select v from ids where k in ('orgA','orgB')));
 
+
+-- ============================================================
+-- L'ENTREPRISE D — LE COÛT QUI EXISTE ET NE VAUT RIEN
+-- ============================================================
+-- UNE ENTREPRISE À PART, ET PAS UNE LIGNE DE PLUS CHEZ A. Ces deux
+-- pièges ne se voient que sur un jeu minuscule : ajoutés au décor de A,
+-- ils se noieraient dans les autres chantiers et les assertions
+-- existantes bougeraient toutes.
+--
+-- PIÈGE 1 — LE POINTAGE VALIDÉ À ZÉRO EURO. `time_entries
+-- .hourly_cost_cents` est NOT NULL DEFAULT 0 et `total_cents` en est la
+-- colonne générée : une fiche salarié sans coût horaire produit vingt
+-- heures pointées, validées, et zéro euro de coût. Un drapeau
+-- « a des coûts » qui teste la PRÉSENCE de lignes répond alors « coût
+-- connu », le `sum()` rend 0, et la marge sort à 100 % avec une
+-- confiance « high ». C'est la mutation qui manquait aux quinze
+-- autres : elle survivait aux 128 tests.
+--
+-- PIÈGE 2 — LE MONTANT INCONNU RAMENÉ À ZÉRO. Une intervention
+-- clôturée sans chantier sort « à vérifier » sans montant possible :
+-- aucun lien intervention → facture n'existe. `sum()` ignore les NULL,
+-- et un `coalesce(..., 0)` par-dessus fabriquait « 0,00 € de chiffre
+-- d'affaires facturable » — la seule chose à facturer de l'entreprise
+-- valait officiellement zéro euro.
+
+insert into auth.users (id, instance_id, aud, role, email, encrypted_password,
+                        email_confirmed_at, created_at, updated_at,
+                        raw_app_meta_data, raw_user_meta_data)
+values ('d0000073-0000-4000-8000-000000000073','00000000-0000-0000-0000-000000000000',
+        'authenticated','authenticated','p11v-agents-d@test.invalid','',now(),now(),now(),'{}','{}');
+
+select set_config('request.jwt.claims',
+  json_build_object('sub','d0000073-0000-4000-8000-000000000073')::text, true);
+insert into ids select 'orgD', public.create_professional_organization('Agents D','landscaper');
+
+insert into public.organization_kpi_targets
+  (organization_id, period_start, period_end, margin_target_pct)
+select v, (select d from cfg where k='today') - 30, (select d from cfg where k='today') + 30, 35
+from ids where k='orgD';
+
+insert into ids select 'cliD', gen_random_uuid();
+insert into public.crm_customers (id, organization_id, display_name, kind, lifecycle_stage)
+select (select v from ids where k='cliD'), (select v from ids where k='orgD'), 'Résidence des Pins', 'company', 'customer';
+
+-- LA FICHE SALARIÉ SANS COÛT HORAIRE. Rien ne l'interdit en base, et
+-- c'est l'état par défaut d'un salarié qu'on vient de créer.
+insert into ids select 'empD', gen_random_uuid();
+insert into public.employees (id, organization_id, first_name, last_name, hourly_cost_cents)
+select (select v from ids where k='empD'), (select v from ids where k='orgD'), 'Paul', 'Sans-Coût', 0;
+
+insert into ids select 'QD', gen_random_uuid();
+insert into public.quotes (id, organization_id, customer_id, number, title, status, issued_on, decided_at)
+select (select v from ids where k='QD'), (select v from ids where k='orgD'), (select v from ids where k='cliD'),
+       'DV-D1', 'Création jardin', 'accepted',
+       (select d from cfg where k='today') - 40, now() - interval '35 days';
+insert into public.quote_lines (organization_id, quote_id, position, description, unit, quantity,
+                                unit_sale_price_cents, unit_cost_cents, vat_rate)
+select (select v from ids where k='orgD'), (select v from ids where k='QD'), 1, 'Création', 'u', 1, 1000000, 0, 20;
+
+insert into ids select 'PJD', gen_random_uuid();
+insert into public.projects (id, organization_id, customer_id, quote_id, number, name, status, actual_end_on)
+select (select v from ids where k='PJD'), (select v from ids where k='orgD'), (select v from ids where k='cliD'),
+       (select v from ids where k='QD'), 'CH-D1', 'Résidence — création', 'handedOver',
+       (select d from cfg where k='today') - 2;
+
+-- VINGT HEURES POINTÉES ET VALIDÉES. À zéro euro.
+insert into public.time_entries (organization_id, employee_id, project_id, worked_on, hours,
+                                 hourly_cost_cents, kind, validated)
+select (select v from ids where k='orgD'), (select v from ids where k='empD'), (select v from ids where k='PJD'),
+       (select d from cfg where k='today') - 3, 20, 0, 'work', true;
+
+-- LA FACTURE DU CHANTIER. Elle est là pour que le SEUL dossier
+-- facturable de D soit l'intervention, dont le montant est par
+-- construction inconnu : c'est la seule façon d'obtenir un total
+-- entièrement non chiffré, celui que le `coalesce(..., 0)` transformait
+-- en « 0,00 € de chiffre d'affaires facturable ».
+insert into ids select 'ID1', gen_random_uuid();
+insert into public.invoices (id, organization_id, customer_id, quote_id, project_id, status)
+select (select v from ids where k='ID1'), (select v from ids where k='orgD'),
+       (select v from ids where k='cliD'), (select v from ids where k='QD'),
+       (select v from ids where k='PJD'), 'draft';
+insert into public.invoice_lines (organization_id, invoice_id, position, description, unit, quantity,
+                                  unit_price_cents, vat_rate)
+select (select v from ids where k='orgD'), (select v from ids where k='ID1'), 1, 'Création', 'u', 1, 1000000, 20;
+update public.invoices
+   set number = 'FA-D1', status = 'paid',
+       issued_on = (select d from cfg where k='today') - 1,
+       issued_at = now() - interval '1 day',
+       due_on = (select d from cfg where k='today') + 29
+ where id = (select v from ids where k='ID1');
+
+-- L'intervention clôturée sans chantier : rien ne permet de dire ce
+-- qu'elle vaut.
+insert into public.field_interventions (organization_id, customer_id, kind, title, status,
+                                        scheduled_start, scheduled_end, actual_end)
+select v, (select v from ids where k='cliD'), 'maintenance', 'Passage entretien', 'done',
+       now() - interval '20 days', now() - interval '20 days', now() - interval '20 days'
+from ids where k='orgD';
+
+-- DEUX LIGNES DE PLANNING, pour que le Daily de D contienne aussi des
+-- éléments qu'il fabrique lui-même : sans elles, les invariants
+-- d'explication ne porteraient que sur les lignes reprises du brief.
+insert into public.field_interventions (organization_id, customer_id, kind, title, status,
+                                        scheduled_start, scheduled_end)
+select v, (select v from ids where k='cliD'), 'maintenance', 'Tonte du matin', 'scheduled',
+       (select d from cfg where k='today') + time '08:00', (select d from cfg where k='today') + time '11:00'
+from ids where k='orgD';
+
+insert into ids select 'fouD', gen_random_uuid();
+insert into public.suppliers (id, organization_id, name)
+select (select v from ids where k='fouD'), (select v from ids where k='orgD'), 'Pépinière du Nord';
+insert into ids select 'poD', gen_random_uuid();
+insert into public.purchase_orders (id, organization_id, supplier_id, number, status, ordered_on, expected_on)
+select (select v from ids where k='poD'), (select v from ids where k='orgD'), (select v from ids where k='fouD'),
+       'CF-D1', 'sent', (select d from cfg where k='today') - 5, (select d from cfg where k='today');
+insert into public.purchase_order_lines (organization_id, purchase_order_id, position, description, unit,
+                                         quantity, unit_cost_cents, vat_rate)
+select (select v from ids where k='orgD'), (select v from ids where k='poD'), 1, 'Charme commun', 'u', 10, 5000, 20;
+
+set local role authenticated;
+
+create temp table snapd(j jsonb) on commit drop;
+insert into snapd
+select public.ai_finance_snapshot((select v from ids where k='orgD'),
+         (select d from cfg where k='today') - 20, (select d from cfg where k='today'));
+
+insert into res
+select 'D : vingt heures à zéro euro ne font pas 100 % de marge','true',
+       (select (j -> 'margeChantier' -> 'tauxMarquePct' = 'null'::jsonb)::text from snapd);
+insert into res
+select 'D : et pas 10 000 € de marge inventés non plus','true',
+       (select (j -> 'margeChantier' -> 'margeCents' = 'null'::jsonb)::text from snapd);
+insert into res
+select 'D : le compteur qui prévient compte bien ce chantier','1',
+       (select j -> 'margeChantier' ->> 'chantiersSansCoutReel' from snapd);
+
+create temp table brkd(j jsonb) on commit drop;
+insert into brkd
+select public.ai_finance_margin_breakdown((select v from ids where k='orgD'),
+         (select d from cfg where k='today') - 20, (select d from cfg where k='today'));
+
+insert into res
+select 'D : le détail de marge dit la même chose que la photo','true',
+       (select (j -> 'global' -> 'tauxMarqueReelPct' = 'null'::jsonb)::text from brkd);
+insert into res
+select 'D : aucun écart de +60 points n''est annoncé','true',
+       (select (j -> 'global' -> 'ecartPoints' = 'null'::jsonb)::text from brkd);
+insert into res
+select 'D : le périmètre compte le chantier sans coût réel','1',
+       (select j -> 'perimetre' ->> 'chantiersSansCoutReel' from brkd);
+
+create temp table billd(j jsonb) on commit drop;
+insert into billd select public.ai_billing_candidates((select v from ids where k='orgD'));
+
+insert into res
+select 'D : l''intervention est le seul dossier « à vérifier »','1',
+       (select j -> 'resume' ->> 'aVerifier' from billd);
+insert into res
+select 'D : le chantier facturé ne repasse pas en facturable','0',
+       (select j -> 'resume' ->> 'prets' from billd);
+insert into res
+select 'D : et son montant est INCONNU, pas zéro','true',
+       (select (j -> 'resume' -> 'montantAVerifierHtCents' = 'null'::jsonb)::text from billd);
+insert into res
+select 'D : le nombre de dossiers non chiffrés est dit','1',
+       (select j -> 'resume' ->> 'aVerifierSansMontant' from billd);
+insert into res
+select 'D : et le total des dossiers prêts est nul, pas zéro','true',
+       (select (j -> 'resume' -> 'montantPretHtCents' = 'null'::jsonb)::text from billd);
+
+create temp table briefd(j jsonb) on commit drop;
+insert into briefd select public.ai_executive_brief((select v from ids where k='orgD'));
+
+insert into res
+select 'D : le brief n''annonce pas 0 € à vérifier','true',
+       (select (e.value -> 'impactCents' = 'null'::jsonb)::text
+        from briefd, jsonb_array_elements(j -> 'actionsPrioritaires') e
+        where e.value ->> 'titre' like 'Vérifier %');
+insert into res
+select 'D : et il transporte le nombre de dossiers non chiffrés','1',
+       (select e.value ->> 'dossiersSansMontant'
+        from briefd, jsonb_array_elements(j -> 'actionsPrioritaires') e
+        where e.value ->> 'titre' like 'Vérifier %');
+-- L'ALERTE DE MARGE RESTE ÉTEINTE, ET C'EST JUSTE. Avec le coût compté
+-- à zéro, elle l'était pour la mauvaise raison : 100 % > 35 %. Elle
+-- l'est maintenant parce que la marge réelle est INCONNUE — et le
+-- chantier est compté dans `chantiersSansCoutReel`, qui, lui, se voit.
+insert into res
+select 'D : aucune marge réalisée n''est annoncée sur un coût inconnu','0',
+       (select count(*)::text from briefd, jsonb_array_elements(j -> 'actionsPrioritaires') e
+        where e.value ->> 'titre' like 'Marge réalisée%');
+
+create temp table dailyd(j jsonb) on commit drop;
+insert into dailyd select public.ai_oasis_daily((select v from ids where k='orgD'));
+
+-- LE CAS EXACT QUI FAISAIT AFFICHER « RIEN CE MATIN ». La ligne
+-- `billing` / `important` doit atterrir dans une rubrique.
+insert into res
+select 'D : le Daily n''est pas vide alors que la base parle','true',
+       (select (jsonb_array_length(j -> 'rubriques') > 0)::text from dailyd);
+insert into res
+select 'D : la ligne « à vérifier » est affichée quelque part','1',
+       (select count(*)::text from dailyd, jsonb_array_elements(j -> 'rubriques') r,
+             jsonb_array_elements(r.value -> 'elements') e
+        where e.value ->> 'titre' like 'Vérifier %');
+insert into res
+select 'D : aucune ligne du brief n''est perdue non plus','0',
+       (select count(*)::text
+        from briefd, jsonb_array_elements(briefd.j -> 'actionsPrioritaires') b
+        where not exists (
+          select 1 from dailyd, jsonb_array_elements(dailyd.j -> 'rubriques') r,
+               jsonb_array_elements(r.value -> 'elements') e
+          where e.value ->> 'titre' = b.value ->> 'titre'));
+insert into res
+select 'D : chaque élément du Daily porte son « pourquoi »','0',
+       (select count(*)::text from dailyd, jsonb_array_elements(j -> 'rubriques') r,
+             jsonb_array_elements(r.value -> 'elements') e
+        where e.value ->> 'pourquoi' is null);
+insert into res
+select 'D : chaque élément du Daily dit ce qui arrive si rien n''est fait','0',
+       (select count(*)::text from dailyd, jsonb_array_elements(j -> 'rubriques') r,
+             jsonb_array_elements(r.value -> 'elements') e
+        where e.value ->> 'siRienNestFait' is null);
+-- La rubrique PLANNING est fabriquée ICI, pas reprise du brief : c'est
+-- elle qui met les cinq lignes propres à `ai_oasis_daily` sous le même
+-- contrôle d'explication que les autres.
+insert into res
+select 'D : le planning du jour est affiché','2',
+       (select count(*)::text from dailyd, jsonb_array_elements(j -> 'rubriques') r,
+             jsonb_array_elements(r.value -> 'elements') e
+        where r.value ->> 'code' = 'PLANNING');
+
+reset role;
 select nom, attendu, obtenu,
        case when attendu = obtenu then 'OK' else 'ÉCHEC' end as verdict
 from res;

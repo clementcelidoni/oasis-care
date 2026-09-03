@@ -172,12 +172,29 @@ function lineRows(items: Record<string, unknown>[], priceKey: string): SummaryRo
     rows.push({ label: "…", value: `et ${items.length - 12} autre(s) ligne(s)` });
   }
 
-  const total = items.reduce((sum, line) => {
+  // UNE LIGNE SANS PRIX N'EN VAUT PAS ZÉRO. Le `?? 0` d'avant faisait
+  // afficher un « Total HT » d'apparence complète, plus bas que la
+  // réalité, juste au-dessus du bouton de confirmation — sur le chiffre
+  // même dont ce commentaire dit qu'il est celui sur lequel on décide.
+  // On sépare donc ce qui est chiffré de ce qui ne l'est pas, comme
+  // `totaliser()` de `lib/travel/cost.ts` le fait déjà.
+  let total = 0;
+  let sansPrix = 0;
+  for (const line of items) {
     const quantity = num(line, "quantity") ?? 1;
-    const price = num(line, priceKey) ?? 0;
-    return sum + Math.round(quantity * price);
-  }, 0);
-  rows.push({ label: "Total HT", value: money(total) });
+    const price = num(line, priceKey);
+    if (price === null) sansPrix += 1;
+    else total += Math.round(quantity * price);
+  }
+
+  rows.push(
+    sansPrix === 0
+      ? { label: "Total HT", value: money(total) }
+      : {
+          label: "Total HT",
+          value: `au moins ${money(total)} — ${sansPrix} ligne(s) sans prix`,
+        },
+  );
 
   return rows;
 }
