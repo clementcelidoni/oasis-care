@@ -30,6 +30,10 @@ import { createClient } from "@/lib/supabase/client";
  *    google). Un champ « mot de passe » demanderait quelque chose que
  *    personne n'a.
  *
+ * 2 bis. Elle ne propose pas Apple non plus — voir le commentaire de
+ *    `signInWithProvider`. Un administrateur doit être identifiable par
+ *    son adresse ; le relais privé d'Apple rend cela impossible.
+ *
  * 3. Elle ne transporte pas de paramètre `next`. Le Control Center a
  *    une seule porte et une seule destination, la racine. Une
  *    redirection paramétrée serait une surface de redirection ouverte
@@ -95,7 +99,24 @@ export default function LoginPage() {
     setStatus("sent");
   }
 
-  async function signInWithProvider(provider: "google" | "apple") {
+  /**
+   * Google et lien magique. PAS Apple, et ce n'est pas un oubli.
+   *
+   * « Se connecter avec Apple » impose à l'éditeur de proposer « Masquer
+   * mon adresse e-mail », qui délivre une adresse de relais du type
+   * f5d8z7b5jt@privaterelay.appleid.com. C'est très bien pour un
+   * particulier qui s'inscrit sur l'iPhone — il y en a déjà un dans
+   * cette base — et inutilisable pour une console d'administration :
+   *   • on ne reconnaît pas un collègue derrière une adresse aléatoire ;
+   *   • `platform_admins` se peuple à la main, en désignant une adresse
+   *     qu'on doit pouvoir écrire de mémoire ;
+   *   • et le jour où quelqu'un quitte l'équipe, on cherche qui révoquer.
+   *
+   * Le compte reste le même partout : quelqu'un qui s'est créé un compte
+   * par Apple sur l'iPhone se connecte ici par lien magique, sur la même
+   * adresse réelle, et retrouve la même session.
+   */
+  async function signInWithProvider(provider: "google") {
     setError(null);
     const { error } = await client().auth.signInWithOAuth({
       provider,
@@ -139,13 +160,6 @@ export default function LoginPage() {
         ) : (
           <>
             <div className="flex flex-col gap-2">
-              <button
-                type="button"
-                onClick={() => signInWithProvider("apple")}
-                className={providerButton}
-              >
-                Continuer avec Apple
-              </button>
               <button
                 type="button"
                 onClick={() => signInWithProvider("google")}

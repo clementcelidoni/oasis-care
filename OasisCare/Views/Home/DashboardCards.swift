@@ -474,20 +474,44 @@ struct FrequencySuggestionCard: View {
     var suggestions: [SmartWateringService.FrequencySuggestion]
     var onApply: (SmartWateringService.FrequencySuggestion) -> Void
 
-    var body: some View {
-        VStack(alignment: .leading, spacing: 10) {
-            Label("Suggestion Oasis AI", systemImage: "sparkles")
-                .font(.headline)
-                .foregroundStyle(.purple)
+    /// Les refus de CETTE session. La persistance vit dans
+    /// `WateringSuggestionDismissals`, mais UserDefaults n'est pas
+    /// observable : sans cet état, la ligne resterait à l'écran jusqu'au
+    /// prochain chargement, et « Garder » donnerait à nouveau
+    /// l'impression de ne rien faire.
+    @State private var refusees: Set<String> = []
 
-            VStack(spacing: 10) {
-                ForEach(suggestions) { suggestion in
-                    row(suggestion)
+    private var visibles: [SmartWateringService.FrequencySuggestion] {
+        suggestions.filter { suggestion in
+            !refusees.contains(
+                WateringSuggestionDismissals.identifier(
+                    plantID: suggestion.plant.id,
+                    configuredDays: suggestion.configuredDays
+                )
+            )
+        }
+    }
+
+    var body: some View {
+        // La carte entière disparaît quand tout a été refusé : garder un
+        // en-tête « Suggestion » au-dessus du vide serait pire que rien.
+        if visibles.isEmpty {
+            EmptyView()
+        } else {
+            VStack(alignment: .leading, spacing: 10) {
+                Label("Suggestion Oasis AI", systemImage: "sparkles")
+                    .font(.headline)
+                    .foregroundStyle(.purple)
+
+                VStack(spacing: 10) {
+                    ForEach(visibles) { suggestion in
+                        row(suggestion)
+                    }
                 }
             }
+            .padding()
+            .background(Color.purple.opacity(0.08), in: RoundedRectangle(cornerRadius: 16, style: .continuous))
         }
-        .padding()
-        .background(Color.purple.opacity(0.08), in: RoundedRectangle(cornerRadius: 16, style: .continuous))
     }
 
     private func row(_ suggestion: SmartWateringService.FrequencySuggestion) -> some View {
@@ -501,7 +525,21 @@ struct FrequencySuggestionCard: View {
                 Button("Passer à \(suggestion.actualAverageDays) j") { onApply(suggestion) }
                     .buttonStyle(.borderedProminent)
                     .controlSize(.small)
-                Button("Garder \(suggestion.configuredDays) j") {}
+                Button("Garder \(suggestion.configuredDays) j") {
+                    WateringSuggestionDismissals.dismiss(
+                        plantID: suggestion.plant.id,
+                        configuredDays: suggestion.configuredDays
+                    )
+                    withAnimation {
+                        _ = refusees.insert(
+                            WateringSuggestionDismissals.identifier(
+                                plantID: suggestion.plant.id,
+                                configuredDays: suggestion.configuredDays
+                            )
+                        )
+                    }
+                    Haptics.success()
+                }
                     .buttonStyle(.bordered)
                     .controlSize(.small)
             }

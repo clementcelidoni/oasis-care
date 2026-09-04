@@ -108,6 +108,15 @@ enum SmartWateringService {
             let average = intervals.reduce(0, +) / intervals.count
             guard abs(average - schedule.frequencyDays) >= minDayDifferenceToSuggest else { continue }
 
+            // « Garder N j » veut dire quelque chose, et ce filtre est ce
+            // qui le lui fait vouloir dire. Sans lui, refuser une
+            // suggestion la faisait réapparaître au chargement suivant du
+            // tableau de bord — c'est-à-dire tout de suite.
+            guard !WateringSuggestionDismissals.isDismissed(
+                plantID: plant.id,
+                configuredDays: schedule.frequencyDays
+            ) else { continue }
+
             results.append(FrequencySuggestion(plant: plant, schedule: schedule, configuredDays: schedule.frequencyDays, actualAverageDays: average))
         }
         return results

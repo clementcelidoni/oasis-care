@@ -59,6 +59,19 @@ targets:
           - Default
         com.apple.developer.nfc.readersession.formats:
           - TAG
+        # HomeKit. Sans cette clé, HMHomeManager rend une liste de
+        # maisons VIDE — toujours, silencieusement, même avec
+        # NSHomeKitUsageDescription posé et le délégué correctement
+        # branché. C'est exactement le symptôme constaté : « l'application
+        # ne trouve jamais les maisons alors que j'en ai. »
+        #
+        # ATTENTION : cette ligne ne suffit pas à elle seule. La
+        # capacité HomeKit doit AUSSI être activée sur l'App ID dans le
+        # portail développeur Apple, sinon la signature échoue avec
+        # « provisioning profile doesn't include the
+        # com.apple.developer.homekit entitlement » — le même passage
+        # obligé que Sign in with Apple en Phase 3A.
+        com.apple.developer.homekit: true
     settings:
       base:
         PRODUCT_BUNDLE_IDENTIFIER: com.oasisrarecare.app

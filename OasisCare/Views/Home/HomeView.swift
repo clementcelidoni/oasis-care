@@ -195,6 +195,13 @@ struct HomeView: View {
                                         for: suggestion.plant,
                                         in: modelContext
                                     )
+                                    // Le refus éventuel portait sur l'ANCIENNE
+                                    // fréquence. Elle n'existe plus : la décision
+                                    // qu'il enregistrait ne veut plus rien dire.
+                                    WateringSuggestionDismissals.forget(
+                                        plantID: suggestion.plant.id,
+                                        configuredDays: suggestion.configuredDays
+                                    )
                                     Haptics.success()
                                 }
                             }
