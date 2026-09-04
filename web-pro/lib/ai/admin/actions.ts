@@ -4,246 +4,61 @@ import { revalidatePath } from "next/cache";
 import { createClient, getCurrentUser } from "@/lib/supabase/server";
 import { requireOrganization } from "@/lib/auth/organization";
 import { flash } from "@/lib/ui/flash";
-import { routeurModeles } from "@/lib/ai/model/router";
-import { CHOIX_PRODUIT, estChoixSurcharge } from "./carte.ts";
-import { lireMontantEuros, type LectureMontant } from "./montants.ts";
-import {
-  LIBELLES_AGENT,
-  LIBELLES_NIVEAU,
-  MOTIF_MINIMUM,
-  cleCatalogueDeLaCleSql,
-  estCleAgentSql,
-} from "./types.ts";
 
 /**
- * §11V — LES ÉCRITURES DE L'ADMINISTRATION IA ET DES RETOURS.
+ * §11V / §11X — LE SEUL GESTE D'ÉCRITURE QUI RESTE AU CLIENT ICI :
+ * DONNER SON AVIS.
  *
- * Trois gestes, et un principe commun : L'ORGANISATION VIENT DE LA
- * SESSION, jamais d'un champ caché. `requireOrganization()` à chaque
- * fois. Un `organizationId` posté serait la chose évidente à écrire et
- * la chose évidente à trafiquer.
+ * ══════════════════════════════════════════════════════════════════
+ * DEUX ÉCRITURES SONT PARTIES, ET ELLES NE SONT PAS DÉPLACÉES : ELLES
+ * SONT SUPPRIMÉES
+ * ══════════════════════════════════════════════════════════════════
  *
- * Le droit, lui, est vérifié DEUX FOIS et ce n'est pas de la
- * redondance : la politique RLS de 0076 est la barrière réelle
- * (`organization.manageUsers` pour `ai_cost_limits` et
- * `ai_model_overrides`), le contrôle en TypeScript sert seulement à
- * rendre un message français plutôt qu'un refus Postgres. Retirer le
- * contrôle TypeScript dégraderait le message ; retirer la politique
- * ouvrirait la porte.
+ * Ce fichier portait `enregistrerSurchargeModele` (choisir le modèle
+ * d'un agent) et `enregistrerPlafondsIA` (fixer les trois plafonds de
+ * dépense). Les deux écrivaient dans `ai_model_overrides` et
+ * `ai_cost_limits` sous l'identité du gestionnaire de l'entreprise
+ * cliente, avec pour seule barrière la permission
+ * `organization.manageUsers`.
+ *
+ * C'était un plafond dont la partie plafonnée tenait la manette : le
+ * même écran permettait de basculer les agents sur le modèle le plus
+ * cher ET de relever, vider ou supprimer la limite censée l'en
+ * empêcher — alors que la facture du fournisseur arrive chez l'éditeur.
+ *
+ * La migration 0080 a fermé ce chemin EN BASE : plus aucune politique
+ * d'écriture sur ces deux tables, plus aucun droit `insert/update/
+ * delete` pour `authenticated`, et quatre fonctions `security definer`
+ * réservées aux administrateurs de plateforme à la place. Les deux
+ * Server Actions ne seraient donc plus refusées poliment : elles
+ * échoueraient sur un « permission denied for table ai_cost_limits »
+ * que personne ne comprendrait. Un bouton qui promet une action
+ * devenue impossible est pire qu'un bouton absent — d'où leur retrait,
+ * et celui des deux écrans qui les appelaient.
+ *
+ * Le réglage lui-même n'a pas disparu du produit : il se fait
+ * désormais depuis le Control Center, l'application de l'éditeur.
+ *
+ * ══════════════════════════════════════════════════════════════════
+ * CE QUI RESTE, ET POURQUOI IL RESTE
+ * ══════════════════════════════════════════════════════════════════
+ *
+ * Un pouce 👍 / 👎 sur une recommandation engage le jugement d'un
+ * salarié sur SON assistant. C'est une donnée du client, écrite par le
+ * client, sur son propre travail. Rien à voir avec le choix d'un
+ * moteur.
+ *
+ * Le principe qui gouvernait déjà ce fichier ne change pas :
+ * L'ORGANISATION VIENT DE LA SESSION, jamais d'un champ caché.
+ * `requireOrganization()` à chaque fois. Un `organizationId` posté
+ * serait la chose évidente à écrire et la chose évidente à trafiquer.
  */
 
-const CHEMIN_CONFIG = "/parametres/ia";
-const CHEMIN_COUTS = "/parametres/ia/couts";
-const CHEMIN_DECISIONS = "/oasis-ai/decisions";
-
-// ==================================================================
-// 1. Déplacer un agent d'un niveau (spec p. 26)
-// ==================================================================
-
-/**
- * Écrit — ou retire — la surcharge de modèle d'un agent.
- *
- * ─── POURQUOI LE MOTIF EST OBLIGATOIRE POUR POSER, ET PAS POUR LEVER ───
- *
- * La migration 0076 le dit à propos de la colonne `reason` : « Une
- * surcharge sans motif, relue six mois plus tard, ne se lève jamais :
- * personne n'ose défaire ce qu'il ne comprend pas. » On prend
- * l'argument au sérieux, mais dans un seul sens. Exiger une
- * justification pour REVENIR au réglage du produit ajouterait un
- * obstacle sur le geste de secours — celui qu'on fait à sept heures du
- * matin quand un modèle répond mal. Poser une dérogation se motive ;
- * la retirer, non.
- *
- * ─── POURQUOI UN NIVEAU EN ENTRÉE ET UN IDENTIFIANT EN BASE ───
- *
- * L'écran raisonne en niveaux, parce que c'est le vocabulaire du
- * produit. `ai_model_overrides.model` attend un identifiant, parce que
- * SQL ne connaît aucun niveau. La traduction se fait ICI, en un seul
- * endroit, avec les identifiants du routeur — donc en tenant compte des
- * variables `OASIS_MODEL_*` du jour. Écrire l'identifiant a une
- * conséquence assumée, expliquée dans `carte.ts` : la surcharge FIGE ce
- * nom, et l'écran surveille qu'il reste aligné.
- */
-export async function enregistrerSurchargeModele(formData: FormData) {
-  const organization = await requireOrganization();
-
-  if (!organization.permissions.includes("organization.manageUsers")) {
-    await flash("error", "Seul un administrateur peut changer l'aiguillage des modèles.");
-    return;
-  }
-
-  const agent = String(formData.get("agent") ?? "");
-  const choix = String(formData.get("niveau") ?? "");
-  const motifBrut = String(formData.get("motif") ?? "").trim();
-
-  if (!estCleAgentSql(agent)) {
-    // Les dix autres agents du catalogue ne sont pas surchargeables en
-    // base (contrainte `ai_is_supported_agent`, 0072). L'écran ne leur
-    // propose pas de sélecteur ; si la requête arrive quand même, on le
-    // dit plutôt que de laisser Postgres répondre par un `check`.
-    await flash(
-      "error",
-      "Cet agent ne se surcharge pas en base : son niveau se change par variable d'environnement.",
-    );
-    return;
-  }
-
-  if (!estChoixSurcharge(choix)) {
-    await flash("error", "Niveau inconnu.");
-    return;
-  }
-
-  const libelle = LIBELLES_AGENT[cleCatalogueDeLaCleSql(agent)];
-  const supabase = await createClient();
-
-  // ---- Revenir au réglage du produit -------------------------------
-  if (choix === CHOIX_PRODUIT) {
-    const { error } = await supabase
-      .from("ai_model_overrides")
-      .delete()
-      .eq("organization_id", organization.organizationId)
-      .eq("agent", agent);
-
-    if (error) {
-      await flash("error", messageLisible(error.message));
-      return;
-    }
-
-    await flash("success", `${libelle} suit de nouveau le réglage du produit.`);
-    revalidatePath(CHEMIN_CONFIG);
-    return;
-  }
-
-  if (motifBrut.length < MOTIF_MINIMUM) {
-    await flash(
-      "error",
-      `Indiquez pourquoi ${libelle} déroge au réglage du produit : une dérogation sans motif ne se lève jamais.`,
-    );
-    return;
-  }
-
-  const modele = routeurModeles().modelePourNiveau(choix);
-  const user = await getCurrentUser();
-
-  const { error } = await supabase.from("ai_model_overrides").upsert(
-    {
-      organization_id: organization.organizationId,
-      agent,
-      model: modele,
-      reason: motifBrut,
-      updated_at: new Date().toISOString(),
-      // La colonne n'a pas de déclencheur qui l'impose : sans cette
-      // ligne, une dérogation n'aurait pas d'auteur. `created_at` n'est
-      // volontairement pas envoyé — l'`on conflict do update` de
-      // PostgREST ne touche que les colonnes fournies, et la date de
-      // première pose doit survivre à une modification.
-      updated_by: user?.id ?? null,
-    },
-    { onConflict: "organization_id,agent" },
-  );
-
-  if (error) {
-    await flash("error", messageLisible(error.message));
-    return;
-  }
-
-  // Le libellé français, pas la valeur du sélecteur. « advanced » est la
-  // graphie interne des trois niveaux ; l'écran écrit « Avancé » partout
-  // ailleurs, et un message de confirmation qui emploie un autre mot que
-  // celui de la page laisse croire qu'il parle d'autre chose.
-  await flash(
-    "success",
-    `${libelle} est désormais aiguillé sur le niveau « ${LIBELLES_NIVEAU[choix].toLowerCase()} ».`,
-  );
-  revalidatePath(CHEMIN_CONFIG);
-}
-
-// ==================================================================
-// 2. Les plafonds de dépense (spec p. 19)
-// ==================================================================
-
-/**
- * Écrit les trois plafonds — ou les retire.
- *
- * ─── TOUT OU RIEN ───
- *
- * Une saisie illisible sur un seul des trois champs annule l'ensemble
- * de l'enregistrement. Écrire deux plafonds sur trois laisserait un
- * budget à moitié configuré, avec un message d'erreur qui ne dirait pas
- * lesquels ont pris — et l'administrateur repartirait en croyant avoir
- * tout réglé.
- *
- * ─── VIDE, ZÉRO, ILLISIBLE ───
- *
- * Les trois sont distincts, et c'est tout l'objet de `lireMontantEuros`
- * (voir `montants.ts`) : un champ vide retire le plafond, un zéro
- * délibéré coupe l'IA, une frappe incompréhensible ne écrit rien.
- */
-export async function enregistrerPlafondsIA(formData: FormData) {
-  const organization = await requireOrganization();
-
-  if (!organization.permissions.includes("organization.manageUsers")) {
-    await flash("error", "Seul un administrateur peut fixer les plafonds de dépense IA.");
-    return;
-  }
-
-  const champs: { nom: string; libelle: string; lecture: LectureMontant }[] = [
-    { nom: "jour", libelle: "plafond journalier", lecture: lireMontantEuros(String(formData.get("jour") ?? "")) },
-    { nom: "mois", libelle: "plafond mensuel", lecture: lireMontantEuros(String(formData.get("mois") ?? "")) },
-    { nom: "agent", libelle: "plafond mensuel par agent", lecture: lireMontantEuros(String(formData.get("agent") ?? "")) },
-  ];
-
-  const illisible = champs.find((c) => c.lecture.etat === "illisible");
-  if (illisible && illisible.lecture.etat === "illisible") {
-    await flash(
-      "error",
-      `« ${illisible.lecture.saisie} » n'est pas un montant lisible pour le ${illisible.libelle}. ${illisible.lecture.raison} Rien n'a été enregistré.`,
-    );
-    return;
-  }
-
-  const cents = (nom: string): number | null => {
-    const champ = champs.find((c) => c.nom === nom);
-    return champ && champ.lecture.etat === "montant" ? champ.lecture.cents : null;
-  };
-
-  const user = await getCurrentUser();
-  const supabase = await createClient();
-
-  const { error } = await supabase.from("ai_cost_limits").upsert(
-    {
-      organization_id: organization.organizationId,
-      daily_organization_limit_cents: cents("jour"),
-      monthly_organization_limit_cents: cents("mois"),
-      per_agent_limit_cents: cents("agent"),
-      updated_at: new Date().toISOString(),
-      updated_by: user?.id ?? null,
-    },
-    { onConflict: "organization_id" },
-  );
-
-  if (error) {
-    await flash("error", messageLisible(error.message));
-    return;
-  }
-
-  const poses = champs.filter((c) => c.lecture.etat === "montant").length;
-  const aZero = champs.some((c) => c.lecture.etat === "montant" && c.lecture.cents === 0);
-
-  await flash(
-    aZero ? "info" : "success",
-    aZero
-      ? "Plafonds enregistrés. Un plafond à zéro coupe l'IA : les appels concernés seront refusés."
-      : poses === 0
-        ? "Plafonds retirés : plus aucune limite de dépense IA."
-        : `${poses} plafond${poses > 1 ? "s" : ""} enregistré${poses > 1 ? "s" : ""}.`,
-  );
-  revalidatePath(CHEMIN_COUTS);
-}
-
-// ==================================================================
-// 3. Les retours utilisateur (spec p. 25)
-// ==================================================================
+// §11W : le centre de décision a fusionné dans l'écran « Aujourd'hui ».
+// Seule la CIBLE du rafraîchissement change ici — laisser l'ancien
+// chemin aurait fait d'un pouce 👍/👎 un clic sans effet visible, la
+// page portant la carte n'étant plus jamais invalidée.
+const CHEMIN_DECISIONS = "/oasis-ai";
 
 /**
  * 👍 utile · 👎 inutile · et éventuellement « Pourquoi ? ».
@@ -369,9 +184,6 @@ function messageLisible(message: string): string {
   }
   if (message.includes("does not exist") || message.includes("schema cache")) {
     return "Cette partie d'Oasis n'est pas encore installée sur cette base : la migration 0076 reste à appliquer.";
-  }
-  if (message.includes("ai_is_supported_agent")) {
-    return "La base n'accepte pas encore de surcharge pour cet agent.";
   }
   return message;
 }

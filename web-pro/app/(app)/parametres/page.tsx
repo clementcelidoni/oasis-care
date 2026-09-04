@@ -221,34 +221,31 @@ export default async function SettingsPage() {
         />
       </div>
 
-      {/* §11V p. 26 « Créer dans administration technique : AI
-          Configuration ». La carte n'apparaît qu'aux administrateurs :
-          l'écran derrière affiche les identifiants de modèle, et la
-          page 27 interdit que l'utilisateur métier les voie. Une carte
-          menant à un refus serait de toute façon une porte fermée
-          annoncée comme une porte. */}
-      {canManage && (
-        <>
-          <SectionHeader
-            title="Intelligence artificielle"
-            description="Le réglage interne d'Oasis AI : quel modèle, à quel coût, dans quelles limites."
-          />
-          <div className="mb-10 grid gap-3 sm:grid-cols-2">
-            <ActionCard
-              href="/parametres/ia"
-              icon={<Icon name="ai" />}
-              title="Configuration IA"
-              description="Quel niveau de modèle chaque agent demande, et si ces modèles existent vraiment."
-            />
-            <ActionCard
-              href="/parametres/ia/couts"
-              icon={<Icon name="analytics" />}
-              title="Coûts et plafonds IA"
-              description="Ce qu'Oasis AI consomme, sa répartition entre les trois niveaux, et jusqu'où il peut aller."
-            />
-          </div>
-        </>
-      )}
+      {/* §11X — UNE SEULE CARTE, ET ELLE N'EST PLUS RÉSERVÉE.
+          Il y en avait deux, réservées aux administrateurs :
+          « Configuration IA » (quel modèle pour quel agent) et
+          « Coûts et plafonds IA ». Les deux écrans sont partis dans le
+          Control Center, parce que le choix du modèle et le plafond de
+          dépense engagent la facture de l'éditeur, pas celle du client
+          — et la migration 0080 a fermé l'écriture en base. Les laisser
+          ici aurait produit deux liens vers des boutons qui échouent.
+          Reste ce qui appartient vraiment au client : ce qu'il
+          consomme. La réserve aux administrateurs tombe avec son motif
+          (l'ancien écran affichait les identifiants de modèle, que la
+          page 27 interdit de montrer) ; seule la ventilation nominative
+          reste derrière `organization.manageUsers`, dans l'écran. */}
+      <SectionHeader
+        title="Intelligence artificielle"
+        description="Ce que vos équipes demandent à Oasis, et où vous en êtes de votre forfait."
+      />
+      <div className="mb-10 grid gap-3 sm:grid-cols-2">
+        <ActionCard
+          href="/parametres/ia"
+          icon={<Icon name="ai" />}
+          title="Consommation d'Oasis AI"
+          description="Questions posées sur votre forfait du mois, sollicitations par agent et par décision, et ce qui n'a pas abouti."
+        />
+      </div>
 
       {/* §43 — le seul réglage qui vit sur cette page. */}
       <ModulesPanel

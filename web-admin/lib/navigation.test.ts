@@ -49,7 +49,7 @@ test("un rôle ne voit que les entrées que sa permission ouvre", () => {
   assert.equal(groups[0].label, "Vue d'ensemble");
 });
 
-test("le super-administrateur voit les six entrées du jalon 1", () => {
+test("le super-administrateur voit toutes les entrées livrées", () => {
   const groups = visibleNavigation(PLATFORM_PERMISSIONS);
   const hrefs = groups.flatMap((group) => group.items.map((item) => item.href));
 
@@ -60,18 +60,61 @@ test("le super-administrateur voit les six entrées du jalon 1", () => {
     "/utilisateurs/mobile",
     "/utilisateurs/pro",
     "/organisations",
+    "/ia",
+    "/ia/couts",
+    "/ia/plafonds",
   ]);
 });
 
-test("aucune section hors jalon 1 n'est déclarée", () => {
-  // La spec p.5-6 propose neuf sections. Le jalon 1 en livre deux, et
-  // une entrée qui mène à une page vide est pire qu'une entrée absente.
-  // Ce test échoue le jour où quelqu'un ajoute « Abonnements » ou
+test("aucune section sans écran n'est déclarée", () => {
+  // La spec p.5-6 propose neuf sections. Trois sont livrées, et une
+  // entrée qui mène à une page vide est pire qu'une entrée absente. Ce
+  // test échoue le jour où quelqu'un ajoute « Abonnements » ou
   // « Feature Flags » avant que l'écran n'existe.
   assert.deepEqual(
     ADMIN_NAVIGATION.map((group) => group.label),
-    ["Vue d'ensemble", "Clients"],
+    ["Vue d'ensemble", "Clients", "IA"],
   );
+});
+
+/**
+ * LE PIÈGE DE SEMIS, transformé en test.
+ *
+ * `ai.config.read` a été ajoutée au catalogue APRÈS 0075, et les
+ * permissions du super-administrateur y avaient été semées par jointure
+ * au moment où 0075 s'exécutait. Une migration qui se contenterait
+ * d'insérer la permission livrerait trois écrans que PERSONNE ne
+ * pourrait ouvrir — et sans erreur : les liens disparaîtraient
+ * simplement du menu.
+ *
+ * Ce test ne peut pas vérifier la base. Il vérifie l'autre moitié : que
+ * les trois entrées IA dépendent bien d'une clé du catalogue, et que
+ * `visibleNavigation` les fait apparaître dès qu'on la porte. Si un
+ * jour la section disparaît du Control Center sans que ce test tombe,
+ * la cause est en base, pas ici — et c'est une information.
+ */
+test("la section IA apparaît avec la seule permission ai.config.read", () => {
+  const groups = visibleNavigation(["ai.config.read"]);
+  assert.equal(groups.length, 1);
+  assert.equal(groups[0].label, "IA");
+  assert.deepEqual(
+    groups[0].items.map((item) => item.href),
+    ["/ia", "/ia/couts", "/ia/plafonds"],
+  );
+});
+
+/**
+ * Les entrées IA portent la permission de LECTURE, pas une permission
+ * d'écriture. Un menu qui exigerait `ai.models.write` cacherait
+ * l'aiguillage à la facturation, et les plafonds au produit — alors que
+ * les deux doivent voir l'ensemble et n'écrire que leur moitié.
+ */
+test("le menu IA n'exige aucun droit d'écriture", () => {
+  const permissionsIa = ADMIN_NAVIGATION.filter((group) => group.label === "IA")
+    .flatMap((group) => group.items)
+    .map((item) => item.permission);
+
+  assert.deepEqual([...new Set(permissionsIa)], ["ai.config.read"]);
 });
 
 test("la recherche globale a sa propre permission, distincte de la lecture des listes", () => {

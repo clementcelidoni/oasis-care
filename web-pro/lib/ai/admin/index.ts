@@ -1,16 +1,28 @@
 /**
- * §11V — LA PORTE D'ENTRÉE DE L'ADMINISTRATION IA.
+ * §11X — LA PORTE D'ENTRÉE DE LA CONSOMMATION IA, CÔTÉ CLIENT.
  *
- * Deux surfaces vivent derrière ce dossier :
+ * ══════════════════════════════════════════════════════════════════
+ * CE DOSSIER A CHANGÉ DE MÉTIER
+ * ══════════════════════════════════════════════════════════════════
  *
- *   • `/parametres/ia` — la page « AI Configuration » de la spec p. 26 :
- *     la carte agent → modèle, modifiable, et le contrôle de
- *     disponibilité des trois identifiants ; puis, sous
- *     `/parametres/ia/couts`, le tableau de bord des coûts de la
- *     p. 18-19 et les plafonds de la p. 19.
+ * Il servait « AI Configuration » (spec p. 26) et le « Dashboard coût
+ * IA » (p. 18-19) : le choix des modèles, les dérogations par
+ * entreprise, le contrôle de disponibilité des identifiants, la grille
+ * tarifaire et les plafonds de dépense en euros. Tout cela est le
+ * métier de L'ÉDITEUR — c'est lui qui paie le fournisseur — et vit
+ * désormais dans le Control Center. La migration 0080 l'a acté en
+ * base : plus aucune écriture possible depuis Oasis Care Pro.
  *
- *   • les retours 👍 / 👎 de la p. 25, posés sur les recommandations du
- *     centre de décision.
+ * Reste ici ce qui appartient au client, et rien d'autre :
+ *
+ *   • ce qu'il consomme — questions posées sur son forfait mensuel,
+ *     appels, jetons, ventilation par agent, par personne, par
+ *     décision, et les refus qui ont interrompu son IA ;
+ *   • les retours 👍 / 👎 de ses équipes (p. 25) ;
+ *   • le ROUTAGE lui-même — `routage.ts` et les clés d'agent de
+ *     `types.ts` : le moteur reste dans Oasis Care Pro, seule
+ *     l'interface de réglage est partie. `lib/ai/runtime/supabase.ts`
+ *     en dépend à chaque requête.
  *
  * DEUX MODULES NE SONT PAS RÉEXPORTÉS ICI, pour la même raison qu'en
  * `lib/ai/runtime` :
@@ -23,61 +35,33 @@
  *   `./actions.ts` — il porte `"use server"`. Réexporter une Server
  *                    Action à travers une barrière la rend joignable
  *                    depuis n'importe quel import du module ; les
- *                    écrans les importent par leur chemin, ce qui rend
+ *                    écrans l'importent par son chemin, ce qui rend
  *                    visible qui appelle quoi.
  */
 
 export {
-  AGENTS_PAGE_26,
   AGENTS_SQL,
   LIBELLES_AGENT,
   LIBELLES_AGENT_HORS_CATALOGUE,
-  LIBELLES_NIVEAU,
-  MISSIONS_AGENT,
-  MOTIF_MINIMUM,
-  NIVEAUX_ATTENDUS_PAGE_26,
-  NIVEAU_LIVRE,
-  TEINTES_NIVEAU,
-  USAGES_NIVEAU,
-  agentsHorsPage26,
+  LIBELLES_PANNE_CLIENT,
   cleCatalogueDeLaCleSql,
   cleSqlDeLAgent,
   estCleAgentSql,
+  libellePanneClient,
   nomAgentDuJournal,
   type CleAgentSql,
 } from "./types.ts";
 
 export {
-  CHOIX_PRODUIT,
-  choixCourant,
-  construireCarte,
-  estChoixSurcharge,
-  type CarteAgents,
-  type ChoixSurcharge,
-  type LigneCarte,
-  type SourceModele,
-  type SurchargeOrganisation,
-} from "./carte.ts";
-
-export {
-  DEPENSE_VIDE,
-  PLAFOND_MAX_CENTIMES,
-  ajouterAppel,
-  estMinorant,
-  lireMontantEuros,
-  moyenneCents,
-  type Depense,
-  type LectureMontant,
-} from "./montants.ts";
-
-export {
-  agregerAppels,
+  VOLUME_VIDE,
+  agregerConsommation,
   debutDuJourParis,
   type AppelIA,
+  type Consommation,
   type LignePanne,
   type LigneVentilation,
-  type TableauCouts,
-} from "./agregation.ts";
+  type Volume,
+} from "./consommation.ts";
 
 export {
   appliquerSurcharges,

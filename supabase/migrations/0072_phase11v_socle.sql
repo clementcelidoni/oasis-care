@@ -1397,6 +1397,20 @@ $$;
  * Le `exception when others then return false` final n'est pas de la
  * paresse : une fonction qui décide de se passer d'humain doit tomber
  * du côté fermé. Un plantage ici doit valoir « non », jamais « oui ».
+ *
+ * ══════════════════════════════════════════════════════════════════
+ * CETTE VERSION EST AMENDÉE PAR 0076 § 6 bis — NE LA REJOUEZ PAS SEULE
+ * ══════════════════════════════════════════════════════════════════
+ *
+ * Il manquait ici une condition, et son absence était atteignable : AUCUNE
+ * des douze ne regarde le niveau de risque. Elles comparent le montant
+ * au plafond de la RÈGLE, jamais à un seuil de risque — si bien qu'une
+ * action classée `high` pouvait partir seule dès lors que l'entreprise
+ * avait relevé son plafond d'autopilote, ce que la page 15-16 interdit.
+ *
+ * 0076 remplace cette fonction par une version à TREIZE conditions, la
+ * treizième étant `risque_confirmable`. Rejouer 0072 après 0076
+ * réintroduirait le défaut : rejouez 0076 derrière.
  */
 create or replace function public.ai_may_autoexecute(
   p_organization_id uuid,

@@ -10,11 +10,17 @@ import { cleSqlDeLAgent, type CleAgentSql } from "./types.ts";
  * QUI MENT
  * ══════════════════════════════════════════════════════════════════
  *
- * L'écran `/parametres/ia` écrit dans `ai_model_overrides` (0076). Un
- * sélecteur qui range une ligne que personne ne consulte serait
- * précisément le « bouton menteur » que ce dépôt refuse ailleurs : un
- * administrateur croirait avoir déplacé Finance sur le modèle avancé,
- * et rien n'aurait bougé.
+ * `ai_model_overrides` (0076) ne s'écrit plus depuis Oasis Care Pro :
+ * la migration 0080 a retiré toute politique d'écriture au client et
+ * réservé le geste à `admin_set_ai_model_override`, dans le Control
+ * Center — c'est l'éditeur qui paie le fournisseur, c'est à lui de
+ * choisir le modèle. Le MOTEUR, lui, reste ici, et c'est ce fichier.
+ *
+ * Une dérogation rangée dans une table que personne ne consulte serait
+ * précisément le « bouton menteur » que ce dépôt refuse ailleurs — et
+ * la version éditeur est pire que l'ancienne version client : elle est
+ * motivée, journalisée, réputée active, et plus aucun écran côté client
+ * n'afficherait l'aiguillage réel pour démentir.
  *
  * `OasisAgentRunner` prend son routeur par un PORT étroit
  * (`PortRoutage` : `resolve` + `modelePourNiveau`). La décoration tient

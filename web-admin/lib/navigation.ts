@@ -118,6 +118,58 @@ export const ADMIN_NAVIGATION: AdminNavGroup[] = [
       },
     ],
   },
+  /**
+   * ------------------------------------------------------------------
+   * IA — la section que la spec p.5 annonçait, et qui arrive avec 0080
+   * ------------------------------------------------------------------
+   * Ces trois écrans EXISTAIENT, du mauvais côté : dans Oasis Care Pro,
+   * ouverts au gestionnaire d'une entreprise cliente. Il pouvait y
+   * choisir le modèle que l'éditeur paie, et relever le plafond de
+   * dépense censé l'en empêcher. La spec p.16 le disait déjà : « Ne pas
+   * exposer cette configuration aux clients ordinaires. »
+   *
+   * Les trois entrées portent la MÊME permission de lecture,
+   * `ai.config.read`. Les droits d'ÉCRITURE, eux, sont séparés
+   * (`ai.models.write` au produit, `ai.costLimits.write` à la
+   * facturation) et ne se vérifient pas ici : un menu ne protège rien,
+   * et les formulaires de chaque page s'effacent d'eux-mêmes pour un
+   * rôle qui ne peut pas écrire.
+   *
+   * ATTENTION AU PIÈGE DE SEMIS, qui joue précisément ici : tant que la
+   * migration 0080 n'est pas appliquée, `ai.config.read` n'est portée
+   * par PERSONNE — pas même par le super-administrateur, dont les
+   * permissions ont été semées par jointure au moment de 0075. Ces
+   * trois entrées disparaîtraient alors du menu sans un mot. C'est
+   * pourquoi les pages, elles, ne se contentent pas de refuser : elles
+   * distinguent « migration absente » de « rôle trop étroit » et le
+   * disent (voir `lib/ia/source.ts`, `diagnostiquerSocleIa`).
+   */
+  {
+    label: "IA",
+    items: [
+      {
+        label: "Routeur de modèles",
+        href: "/ia",
+        icon: "circuit",
+        permission: "ai.config.read",
+        hint: "Quel modèle pour quel agent, et chez qui",
+      },
+      {
+        label: "Coûts IA",
+        href: "/ia/couts",
+        icon: "gauge",
+        permission: "ai.config.read",
+        hint: "Ce que l'IA consomme, toutes organisations",
+      },
+      {
+        label: "Plafonds et quotas",
+        href: "/ia/plafonds",
+        icon: "coins",
+        permission: "ai.config.read",
+        hint: "Les bornes de dépense, par entreprise",
+      },
+    ],
+  },
 ];
 
 /**

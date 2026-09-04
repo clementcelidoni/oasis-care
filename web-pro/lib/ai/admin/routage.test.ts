@@ -10,13 +10,19 @@ import { appliquerSurcharges } from "./routage.ts";
 import type { CleAgentSql } from "./types.ts";
 
 /**
- * §11V — LA SURCHARGE D'ENTREPRISE, RENDUE EFFECTIVE.
+ * §11V / §11X — LA SURCHARGE POSÉE PAR L'ÉDITEUR, RENDUE EFFECTIVE.
  *
- * Ce que ces tests défendent : le sélecteur de `/parametres/ia` ne
- * devient pas un bouton menteur le jour où les agents des étapes 9 à 12
- * arrivent — il suffira de décorer le routeur, et ce décorateur fait ce
- * qu'il annonce, y compris dans le cas désagréable où l'identifiant
- * surchargé ne correspond plus à rien.
+ * Ce que ces tests défendent : la dérogation qu'un administrateur de
+ * plateforme pose sur une entreprise (0080) fait exactement ce qu'elle
+ * annonce sur le prochain appel — y compris dans le cas désagréable où
+ * l'identifiant surchargé ne correspond plus à rien.
+ *
+ * Le décorateur, lui, n'a pas bougé d'un caractère avec le déménagement
+ * de l'écran : le MOTEUR reste dans Oasis Care Pro, seule l'interface
+ * de réglage est partie. C'est même pour cela que la migration 0080 a
+ * conservé la politique de lecture « Members read » sur
+ * `ai_model_overrides` — sans elle, `lireSurchargesModeles()` rendrait
+ * une carte vide et la dérogation disparaîtrait sans erreur.
  */
 
 function port(env: Record<string, string> = {}): {
@@ -130,52 +136,42 @@ test("un agent hors catalogue traverse le décorateur sans dommage", () => {
 });
 
 // ==================================================================
-// LE FIL TENDU : l'écran et le moteur doivent raconter la même chose
+// LE FIL TENDU : la surcharge de l'éditeur doit atteindre le moteur
 // ==================================================================
 
 /**
- * `runnerAgents()` décore désormais son routeur avec les surcharges de
- * l'entreprise, et le bandeau d'attente de `/parametres/ia` a donc été
- * retiré le même jour. Ce test reste — il garde les deux fichiers
- * accordés dans les DEUX sens, y compris le jour où quelqu'un
- * débrancherait la ligne.
+ * CE TEST A CHANGÉ DE CAMP LE JOUR OÙ L'ÉCRAN DE RÉGLAGE EST PARTI.
  *
- * Ce test défend les deux sens de la phrase, parce que les deux
- * mensonges coûtent cher et qu'aucun ne se voit à l'œil nu :
+ * Il vérifiait auparavant que `/parametres/ia/CarteAgents.tsx` et
+ * `runtime/supabase.ts` racontaient la même histoire : tant que le
+ * moteur ignorait `ai_model_overrides`, l'écran devait porter un
+ * bandeau « enregistrée, pas encore appliquée », et le retirer le jour
+ * où la ligne serait branchée. Cet écran n'existe plus dans Oasis Care
+ * Pro : le choix du modèle appartient à l'éditeur et se règle depuis le
+ * Control Center (migration 0080 — plus aucune politique d'écriture
+ * pour le client sur `ai_model_overrides`).
  *
- *   • brancher le décorateur sans retirer le bandeau ferait croire
- *     qu'un réglage est sans effet alors qu'il vient d'en prendre un —
- *     et quelqu'un le reposerait une seconde fois, ou renoncerait ;
+ * Ce qui reste, c'est la moitié qui porte le risque, et elle est
+ * DEVENUE PLUS GRAVE, pas moins :
  *
- *   • retirer le bandeau sans brancher le décorateur rendrait au
- *     sélecteur le statut de bouton menteur que tout `routage.ts`
- *     existe pour lui refuser.
+ *   Une dérogation posée par l'éditeur est désormais délibérée, motivée
+ *   et journalisée (`admin_set_ai_model_override`, 0080). Si personne
+ *   ne décore le routeur avec `appliquerSurcharges`, elle est
+ *   enregistrée, tracée, réputée active — et sans le moindre effet sur
+ *   un appel. Le client, lui, ne peut plus s'en apercevoir : il n'a
+ *   plus d'écran qui affiche l'aiguillage de ses agents.
  *
- * On ne teste donc pas un état figé : on teste que les deux fichiers
- * s'accordent. Le jour où la ligne est branchée, ce test échoue et
- * indique la phrase à retirer — ce qui est exactement le rappel qu'on
- * voudrait recevoir ce jour-là.
+ * On ne teste donc plus un accord entre deux fichiers : on teste que le
+ * fil est branché. Le jour où quelqu'un débranche cette ligne pour
+ * simplifier un import, ce test le dit tout de suite.
  */
-test("le bandeau « enregistrée, pas encore appliquée » dit la vérité du moteur", () => {
+test("le moteur applique bien les surcharges lues en base", () => {
   const racineWeb = join(dirname(fileURLToPath(import.meta.url)), "..", "..", "..");
-
   const moteur = readFileSync(join(racineWeb, "lib", "ai", "runtime", "supabase.ts"), "utf8");
-  const ecran = readFileSync(
-    join(racineWeb, "app", "(app)", "parametres", "ia", "CarteAgents.tsx"),
-    "utf8",
-  );
 
-  const moteurLitLesSurcharges = moteur.includes("appliquerSurcharges");
-  // « pas encore appliquée » et non la phrase entière : dans le source
-  // JSX l'apostrophe s'écrit `&apos;`, et un test qui chercherait le
-  // texte tel qu'il s'affiche ne le trouverait jamais.
-  const ecranAnnonceLAttente = ecran.includes("pas encore appliquée");
-
-  assert.equal(
-    ecranAnnonceLAttente,
-    !moteurLitLesSurcharges,
-    moteurLitLesSurcharges
-      ? "runnerAgents() lit désormais les surcharges : retirez le bandeau d'attente de CarteAgents.tsx, la dérogation est réellement appliquée."
-      : "runnerAgents() ignore toujours ai_model_overrides : CarteAgents.tsx doit continuer à dire que la dérogation est enregistrée et pas encore appliquée.",
+  assert.ok(
+    moteur.includes("appliquerSurcharges"),
+    "runtime/supabase.ts ne décore plus le routeur : une surcharge posée par l'éditeur dans " +
+      "ai_model_overrides serait enregistrée et journalisée sans jamais changer un appel.",
   );
 });

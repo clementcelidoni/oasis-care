@@ -465,8 +465,14 @@ insert into res select 'Aucune vue security definer n''a été créée pour l''a
 -- permission dans un appel de garde, mais rien ne signalerait qu'elle
 -- existe. Ce test fige la liste ; le jour où elle change, il faut
 -- changer les deux fichiers, et l'échec le rappelle.
+--
+-- Les trois clés `ai.*` ont été ajoutées par 0080, quand le choix du
+-- modèle et les plafonds de dépense IA sont revenus à l'éditeur. Ce
+-- test-ci est justement ce qui l'a rappelé : il fige la liste, il a
+-- rougi, et c'est ainsi qu'on a su qu'il fallait aussi toucher
+-- `roles.ts`.
 insert into res select 'Le catalogue de permissions est exactement celui que recopie roles.ts',
-  'billing.payments.write, billing.subscriptions.read, billing.subscriptions.write, customer.data.read, platform.admins.manage, platform.admins.read, platform.audit.read, platform.dashboard.read, platform.organizations.read, platform.search, platform.users.read',
+  'ai.config.read, ai.costLimits.write, ai.models.write, billing.payments.write, billing.subscriptions.read, billing.subscriptions.write, customer.data.read, platform.admins.manage, platform.admins.read, platform.audit.read, platform.dashboard.read, platform.organizations.read, platform.search, platform.users.read',
   (select string_agg(key, ', ' order by key) from public.platform_admin_permissions);
 
 -- Le super-administrateur porte TOUT le catalogue : c'est sa

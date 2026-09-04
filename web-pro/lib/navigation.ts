@@ -175,17 +175,21 @@ export const NAVIGATION: NavGroup[] = [
     items: [
       { label: "Analytics", href: "/analytics", icon: "analytics", permission: "projects.read", milestone: 12 },
       // §11V — l'espace de travail Oasis AI. L'entrée reste SANS
-      // permission, comme depuis 11U : la section « Demander à Oasis »
-      // sert à tout le monde, et le briefing du matin se dégrade
+      // permission, comme depuis 11U : le briefing du matin se dégrade
       // proprement pour un compte qui ne lit pas les chantiers — il dit
       // ce qu'il n'a pas pu regarder au lieu d'afficher un écran vide.
+      //
+      // §11W : le centre de décision A FUSIONNÉ dans cette page. Deux
+      // entrées vers une même adresse auraient été deux fois le même
+      // clic.
       { label: "Oasis AI", href: "/oasis-ai", icon: "ai", milestone: 12 },
-      // Le centre de décision, lui, EXIGE `projects.read` : c'est ce
-      // qu'exige `ai_decisions` (0072, section 14 — l'opérationnel suit
-      // le régime du chantier). Sans ce droit, l'entrée mènerait à une
-      // liste vide sans message, ce qui est le défaut corrigé deux fois
-      // dans cette barre latérale.
-      { label: "Décisions Oasis", href: "/oasis-ai/decisions", icon: "check", permission: "projects.read", milestone: 12 },
+      // Les conversations, elles, EXIGENT `projects.read` : c'est ce
+      // qu'exige la politique RLS d'`ai_conversations` (0079), pour la
+      // même raison que `ai_decisions` avant elle — un fil contient des
+      // marges et des noms de clients. Sans ce droit, l'entrée mènerait
+      // à un rail vide sans message, ce qui est le défaut corrigé deux
+      // fois dans cette barre latérale.
+      { label: "Conversations Oasis", href: "/oasis-ai/conversations", icon: "ai", permission: "projects.read", milestone: 12 },
     ],
   },
   {

@@ -28,7 +28,10 @@ export type IconName =
   | "chevron"
   | "check"
   | "close"
-  | "warning";
+  | "warning"
+  | "circuit"
+  | "gauge"
+  | "coins";
 
 const PATHS: Record<IconName, string> = {
   dashboard: "M4 13h6V4H4v9Zm0 7h6v-5H4v5Zm10 0h6v-9h-6v9Zm0-16v5h6V4h-6Z",
@@ -47,6 +50,14 @@ const PATHS: Record<IconName, string> = {
   check: "m5 13 4.5 4.5L19 7",
   close: "M6 6l12 12M18 6 6 18",
   warning: "M12 3.5 22 20H2L12 3.5Zm0 6v5m0 3h.01",
+  // Un aiguillage : une entrée, trois sorties. C'est exactement ce que
+  // le routeur de modèles fait, et le dessin le dit mieux qu'une puce
+  // d'ordinateur — qui évoquerait le matériel, pas un choix.
+  circuit: "M3 12h4m0 0 4-6h5m-9 6 4 6h5M17 6a1.6 1.6 0 1 0 3.2 0 1.6 1.6 0 1 0-3.2 0M17 18a1.6 1.6 0 1 0 3.2 0 1.6 1.6 0 1 0-3.2 0M1.4 12a1.6 1.6 0 1 0 3.2 0 1.6 1.6 0 1 0-3.2 0",
+  // Un cadran avec son aiguille : la dépense mesurée.
+  gauge: "M4.5 18a9 9 0 1 1 15 0M12 14l4-4",
+  // Deux jetons empilés : un plafond, c'est une pile qu'on ne dépasse pas.
+  coins: "M4 7c0-1.4 3-2.5 6.5-2.5S17 5.6 17 7s-3 2.5-6.5 2.5S4 8.4 4 7Zm0 0v5c0 1.4 3 2.5 6.5 2.5S17 13.4 17 12V7M7 15.5V17c0 1.4 3 2.5 6.5 2.5S20 18.4 20 17v-5",
 };
 
 export function Icon({

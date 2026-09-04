@@ -94,6 +94,34 @@ export const PLATFORM_PERMISSIONS = [
   "billing.subscriptions.read",
   "billing.subscriptions.write",
   "billing.payments.write",
+
+  /**
+   * ----------------------------------------------------------------
+   * LES TROIS CLÉS DE LA MIGRATION 0080 — la gouvernance de l'IA
+   * ----------------------------------------------------------------
+   * Elles ont déménagé d'Oasis Care Pro vers ici, et c'est le sujet
+   * entier de 0080 : le gestionnaire d'une entreprise CLIENTE pouvait
+   * basculer ses agents sur le modèle le plus cher ET relever lui-même
+   * le plafond de dépense censé l'en empêcher. Un plafond que la partie
+   * plafonnée contrôle ne protège de rien, et c'est l'éditeur qui reçoit
+   * la facture du fournisseur.
+   *
+   * POURQUOI TROIS ET PAS UNE. Lire quel modèle tourne chez qui, changer
+   * ce modèle, et lever un plafond ne sont pas le même geste et ne
+   * coûtent pas la même chose. Une permission unique aurait fait de tout
+   * porteur d'un droit de lecture un ordonnateur de dépense.
+   *
+   * Le produit choisit le modèle, la facturation fixe le plafond, et
+   * AUCUN DES DEUX NE TIENT LES DEUX BOUTS — seul le super-administrateur
+   * cumule. C'est la leçon du défaut corrigé : celui qui peut faire
+   * monter la dépense ne doit pas pouvoir lever la borne qui l'arrête.
+   * La règle est écrite deux fois, comme le veut 0075 : par l'absence de
+   * la ligne dans la matrice, et par `platform_admin_matrix_guard()` qui
+   * refuse de l'y insérer.
+   */
+  "ai.config.read",
+  "ai.models.write",
+  "ai.costLimits.write",
 ] as const;
 
 export type PlatformPermission = (typeof PLATFORM_PERMISSIONS)[number];
@@ -118,6 +146,15 @@ export const PERMISSION_LABELS: Record<PlatformPermission, string> = {
   "billing.subscriptions.read": "Voir les abonnements",
   "billing.subscriptions.write": "Modifier un abonnement",
   "billing.payments.write": "Agir sur les paiements",
+
+  // Les libellés recopient ceux que 0080 insère dans
+  // `platform_admin_permissions`. Ce n'est pas de la coquetterie : un
+  // administrateur qui lit « Voir l'aiguillage » sur un écran et
+  // « Consulter la configuration IA » sur un autre croit à deux droits.
+  "ai.config.read":
+    "Voir l'aiguillage des modèles et les plafonds IA de toutes les entreprises",
+  "ai.models.write": "Changer le modèle d'un agent chez une entreprise",
+  "ai.costLimits.write": "Poser, relever ou lever un plafond de dépense IA",
 };
 
 export function isPlatformRole(value: unknown): value is PlatformRole {
