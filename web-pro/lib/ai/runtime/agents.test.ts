@@ -1189,3 +1189,97 @@ test("au niveau 1, un agent ne dépose AUCUNE proposition — comme le réglage 
     "le refus se dit, et il nomme l'écran où le régler",
   );
 });
+
+// ==================================================================
+// §11W — LA MÉMOIRE DE CONVERSATION
+// ==================================================================
+
+test("les tours précédents arrivent VRAIMENT au modèle, dans leur forme native", async () => {
+  // LA SEULE PROMESSE DE §11W, éprouvée là où elle se tient : ce qui
+  // part sur le fil. Sans cette assertion, l'écran pourrait afficher
+  // une conversation pendant que le modèle reçoit une question isolée —
+  // le mensonge exact que l'ancien assistant refusait de construire.
+  const d = decor({
+    scripts: { executive: [{ type: "final", sortie: brief({ estimatedImpactCents: null }) }] },
+  });
+
+  await d.runtime.executer({
+    agent: "executive",
+    question: "Et pour Martin ?",
+    criticite: "ordinaire",
+    historique: [
+      { role: "user", content: "Quelles marges ce mois-ci ?" },
+      {
+        role: "assistant",
+        status: "completed",
+        content: [{ type: "output_text", text: "La marge moyenne est de 22 %." }],
+      },
+    ],
+  });
+
+  const entree = d.modele.pour("executive").entrees.at(-1);
+  assert.ok(entree, "le modèle doit avoir été appelé");
+  assert.ok(Array.isArray(entree), "avec un historique, l'entrée est un TABLEAU d'items");
+
+  assert.equal(entree.length, 3, "deux tours rejoués, puis la question du moment");
+  assert.deepEqual(entree[0], { role: "user", content: "Quelles marges ce mois-ci ?" });
+  assert.equal(entree[1].role, "assistant", "la réponse d'Oasis repart en rôle `assistant`");
+
+  const derniere = entree[2];
+  assert.equal(derniere.role, "user");
+  assert.match(
+    String(derniere.content),
+    /Et pour Martin \?/,
+    "la question du moment reste la dernière, et la seule consigne",
+  );
+});
+
+test("sans historique, l'entrée reste la chaîne qu'elle a toujours été", async () => {
+  // La non-régression du briefing et des spécialistes : ils n'ont pas
+  // de fil, et rien ne doit changer pour eux.
+  const d = decor({
+    scripts: { executive: [{ type: "final", sortie: brief({ estimatedImpactCents: null }) }] },
+  });
+
+  await d.runtime.executer({
+    agent: "executive",
+    question: "Que dois-je faire aujourd'hui ?",
+    criticite: "ordinaire",
+  });
+
+  // Le SDK normalise toujours l'entrée en items avant d'appeler le
+  // modèle : une chaîne devient UN message d'utilisateur. C'est
+  // précisément ce qu'on veut voir ici — un fil neuf n'a pas de passé,
+  // et n'envoie donc pas non plus un passé vide.
+  const entree = d.modele.pour("executive").entrees.at(-1);
+  assert.ok(Array.isArray(entree));
+  assert.equal(entree.length, 1, "un fil neuf n'envoie que la question du moment");
+  assert.equal(entree[0].role, "user");
+});
+
+test("un tour de conversation n'est JAMAIS mis en cache", async () => {
+  // L'empreinte de cache couvre les données lues et les sources — PAS
+  // l'historique, qui voyage à part. Deux fils différents posant la
+  // même question sur les mêmes données produiraient donc la même
+  // empreinte en attendant deux réponses différentes : servir à l'un la
+  // réponse de l'autre serait une FUITE entre deux conversations.
+  const d = decor({
+    scripts: { executive: [{ type: "final", sortie: brief({ estimatedImpactCents: null }) }] },
+  });
+
+  await d.runtime.executer({
+    agent: "executive",
+    question: "Et ensuite ?",
+    criticite: "ordinaire",
+    // Un appelant distrait qui demande un cache malgré l'historique.
+    cache: { cle: "conversation:peu-importe" },
+    historique: [{ role: "user", content: "Quelles marges ?" }],
+  });
+
+  assert.equal(
+    d.lecturesCache.length,
+    0,
+    "le cache ne doit même pas être consulté quand un historique accompagne la question",
+  );
+  assert.equal(d.ecrituresCache.length, 0, "et rien ne doit y être écrit");
+});

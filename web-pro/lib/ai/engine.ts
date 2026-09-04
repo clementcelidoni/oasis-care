@@ -54,7 +54,7 @@ import {
  * dans un prompt.
  */
 
-const DECISIONS_PATH = "/oasis-ai/decisions";
+const DECISIONS_PATH = "/oasis-ai";
 
 // ==================================================================
 // 1. Répondre à une décision (Plus tard · Ignorer · Vue · Close)
@@ -422,7 +422,7 @@ async function approveAndRun(approvalId: string) {
 
   revalidatePath(DECISIONS_PATH);
   revalidatePath("/oasis-ai");
-  revalidatePath("/oasis-ai/historique");
+  revalidatePath("/oasis-ai/reglages");
   revalidatePath("/factures");
 }
 

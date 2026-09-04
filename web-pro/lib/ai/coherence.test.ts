@@ -47,10 +47,22 @@ function lire(chemin: string): string {
 }
 
 const edge = lire(join(racineDepot, "supabase", "functions", "oasis-pro-ai", "index.ts"));
-const ecranAutomatisations = lire(
-  join(racineWeb, "app", "(app)", "oasis-ai", "automatisations", "page.tsx"),
-);
-const ecranAgents = lire(join(racineWeb, "app", "(app)", "oasis-ai", "agents", "page.tsx"));
+
+/**
+ * §11W — LES DEUX ÉCRANS DE RÉGLAGE N'EN FONT PLUS QU'UN.
+ *
+ * « Agents » et « Automatisations » ont fusionné dans
+ * `oasis-ai/reglages/page.tsx` : une règle d'automatisme ne part que si
+ * l'agent est au niveau 4, donc le couplage est structurel et l'écran
+ * est unique. Les deux constantes pointent désormais sur le même
+ * fichier — on les garde SÉPARÉES pour que les assertions ci-dessous
+ * continuent de dire QUELLE promesse elles vérifient, et pour qu'une
+ * refonte qui les redécouperait n'ait qu'un chemin à changer.
+ */
+const ecranReglages = lire(join(racineWeb, "app", "(app)", "oasis-ai", "reglages", "page.tsx"));
+const ecranAutomatisations = ecranReglages;
+const ecranAgents = ecranReglages;
+
 const moteur = lire(join(racineWeb, "lib", "ai", "engine.ts"));
 const carteDecision = lire(
   join(racineWeb, "app", "(app)", "oasis-ai", "decisions", "DecisionCard.tsx"),

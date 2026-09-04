@@ -225,6 +225,32 @@ const MAX_TOOL_ROUNDS = 8;
 // commerciale : Oasis Care Pro n'a pas encore de tarification.
 const AI_REQUESTS_PER_MONTH = 500;
 
+// ────────────────────────────────────────────────────────────────
+// LE NOM SOUS LEQUEL CETTE SURFACE APPARAÎT AU GRAND LIVRE
+// ────────────────────────────────────────────────────────────────
+//
+// `ai_usage_events` (0076) est la SEULE table de la Phase 11V dont la
+// colonne `agent` n'est pas contrainte au catalogue, et c'est
+// délibéré : une dépense doit pouvoir être imputée même quand celui qui
+// l'engage n'est pas l'un des quatre agents.
+//
+// Cette fonction Edge est exactement ce cas. Jusqu'ici, elle
+// n'inscrivait RIEN — et comme elle est la seule surface IA câblée sur
+// un écran, l'onglet « Coûts IA » affichait une dépense proche de zéro
+// pendant que la facture OpenAI montait. Un tableau de bord faux dans
+// le sens rassurant : quelqu'un aurait relevé, ou maintenu, un plafond
+// en lisant un chiffre qui ne correspondait à rien.
+const AGENT_JOURNAL = "edge-assistant";
+
+// La grille tarifaire vit dans le serveur Next.js, par NIVEAU de modèle
+// (`OASIS_AI_TARIF_…`). Ici on ne connaît qu'un identifiant, pas un
+// niveau : on inscrit donc les JETONS, exacts, et AUCUN montant.
+// `estimated_cost_cents` reste `null` — jamais 0 — et
+// `ai_cost_budget_remaining` compte ces appels dans
+// `unpriced_events_*`, ce qui fait dire au tableau de bord « la dépense
+// affichée est un minorant » au lieu de mentir par omission.
+const BASE_TARIF_JOURNAL = null;
+
 // Combien de propositions au plus dans une réponse.
 //
 // Trois. Au-delà, on ne relit plus : on clique. Et c'est précisément le
@@ -1389,6 +1415,25 @@ Deno.serve(async (req: Request) => {
     return jsonResponse({ error: "Assistant indisponible pour le moment (configuration manquante)." }, 500);
   }
 
+  // ---------- LE PLAFOND DE DÉPENSE (p. 19) ----------
+  // AVANT l'appel, comme le demande la page 19 : un contrôle a
+  // posteriori constate un dépassement qu'il aurait pu empêcher. Le
+  // refus est journalisé — sans cette ligne, un plafond qui coupe tout
+  // un après-midi ne laisserait aucune trace, et le tableau de bord
+  // montrerait « aucune activité IA ».
+  const refus = await refusDeBudget(callerClient, organizationId);
+  if (refus !== null) {
+    await journaliserUsage(callerClient, organizationId, {
+      inputTokens: 0,
+      outputTokens: 0,
+      durationMs: 0,
+      success: false,
+      toolCalls: 0,
+      failureReason: "budget_exceeded",
+    });
+    return jsonResponse({ error: refus }, 429);
+  }
+
   const settings = await lireReglagesAgents(callerClient, organizationId);
   const outils = outilsExposes(settings);
 
@@ -1408,7 +1453,38 @@ Deno.serve(async (req: Request) => {
 
   try {
     for (let round = 0; round < MAX_TOOL_ROUNDS; round++) {
-      const payload = await callOpenAI(openaiKey, input, outils.schemas);
+      // UN TOUR = UN APPEL AU MODÈLE = UNE LIGNE AU GRAND LIVRE.
+      // Une seule ligne pour la conversation entière ferait disparaître
+      // le coût réel d'une question qui enchaîne huit tours d'outils —
+      // c'est-à-dire exactement les questions chères.
+      const debut = Date.now();
+      // deno-lint-ignore no-explicit-any
+      let payload: any;
+      try {
+        payload = await callOpenAI(openaiKey, input, outils.schemas);
+      } catch (error) {
+        // L'ÉCHEC AUSSI SE COMPTE. Les jetons d'entrée des tours
+        // précédents sont payés, et le motif de panne dit où chercher.
+        await journaliserUsage(callerClient, organizationId, {
+          inputTokens: 0,
+          outputTokens: 0,
+          durationMs: Date.now() - debut,
+          success: false,
+          toolCalls: toolsUsed.length,
+          failureReason: motifDePanne(error),
+        });
+        throw error;
+      }
+
+      const usage = payload.usage ?? {};
+      await journaliserUsage(callerClient, organizationId, {
+        inputTokens: entierPositif(usage.input_tokens),
+        outputTokens: entierPositif(usage.output_tokens),
+        durationMs: Date.now() - debut,
+        success: true,
+        toolCalls: toolsUsed.length,
+        failureReason: null,
+      });
 
       const calls = (payload.output ?? []).filter(
         // deno-lint-ignore no-explicit-any
@@ -2567,6 +2643,137 @@ function sortiePourLeModele(value: unknown, maxItems: number | undefined): strin
 // ============================================================
 
 class OpenAIError extends Error {}
+
+/**
+ * INSCRIRE UN APPEL AU GRAND LIVRE. Ne lève jamais.
+ *
+ * Les jetons sont déjà payés quand on arrive ici : faire échouer la
+ * réponse parce qu'on n'a pas su l'inscrire ferait perdre les deux.
+ * Mais le trou ne disparaît pas pour autant — il part dans les journaux
+ * du serveur, parce que la seule chose vraiment inacceptable serait
+ * qu'il ne se voie nulle part.
+ *
+ * `ai_record_usage_event` est `security definer` et vérifie
+ * `is_organization_member` : le client porte le jeton de l'appelant,
+ * donc l'auteur de la dépense est celui qui l'engage, et une
+ * organisation qui n'est pas la sienne se fait refuser.
+ */
+async function journaliserUsage(
+  // deno-lint-ignore no-explicit-any
+  client: any,
+  organizationId: string,
+  evenement: {
+    inputTokens: number;
+    outputTokens: number;
+    durationMs: number;
+    success: boolean;
+    toolCalls: number;
+    failureReason: string | null;
+  },
+): Promise<void> {
+  try {
+    const { error } = await client.rpc("ai_record_usage_event", {
+      p_organization_id: organizationId,
+      p_agent: AGENT_JOURNAL,
+      p_model: OPENAI_MODEL,
+      p_input_tokens: entierPositif(evenement.inputTokens),
+      p_output_tokens: entierPositif(evenement.outputTokens),
+      p_duration_ms: entierPositif(evenement.durationMs),
+      p_success: evenement.success,
+      p_tool_calls: entierPositif(evenement.toolCalls),
+      // Jamais 0 pour « inconnu » : la colonne est nullable exprès.
+      p_estimated_cost_cents: null,
+      p_cost_basis: BASE_TARIF_JOURNAL,
+      p_failure_reason: evenement.success ? null : (evenement.failureReason ?? "other"),
+      p_fallback_from_model: null,
+      p_decision_id: null,
+    });
+    if (error) {
+      console.error("journal d'usage IA non inscrit", error.message);
+    }
+  } catch (error) {
+    console.error(
+      "journal d'usage IA non inscrit",
+      error instanceof Error ? error.message : String(error),
+    );
+  }
+}
+
+/** Un entier positif, ou 0. Pour les compteurs de jetons, jamais pour l'argent. */
+function entierPositif(valeur: unknown): number {
+  const n = typeof valeur === "number" ? valeur : Number(valeur);
+  return Number.isFinite(n) && n > 0 ? Math.trunc(n) : 0;
+}
+
+/**
+ * Le vocabulaire fermé de `ai_usage_events.failure_reason` (0076).
+ *
+ * On rend un MOTIF, jamais un fragment du message d'origine : un corps
+ * de réponse d'API peut contenir une clé ou un identifiant, et tout ce
+ * qui entre dans une colonne finit dans une capture d'écran. « other »
+ * reste « other » — le ranger d'office en « provider_error » enverrait
+ * chercher une panne chez OpenAI là où il y a peut-être un bug ici.
+ */
+function motifDePanne(erreur: unknown): string {
+  const texte = erreur instanceof Error ? `${erreur.name} ${erreur.message}` : String(erreur);
+  if (/\b429\b|rate[ _-]?limit|too many requests/i.test(texte)) return "rate_limit";
+  if (/\b404\b|model[_ ]?not[_ ]?found|unknown model/i.test(texte)) return "model_unavailable";
+  if (/timed? ?out|AbortError|TimeoutError/i.test(texte)) return "timeout";
+  if (/\b5\d\d\b|injoignable|fetch failed/i.test(texte)) return "provider_error";
+  return "other";
+}
+
+/**
+ * LE PLAFOND DE DÉPENSE DE LA PAGE 19, APPLIQUÉ ICI AUSSI.
+ *
+ * `ai_cost_limits` existe depuis 0076, mais aucun plafond ne coupait
+ * quoi que ce soit sur cette surface — la seule pourtant branchée sur
+ * un écran. Un administrateur qui posait un plafond posait un réglage
+ * sans effet.
+ *
+ * Rend le message de refus, ou `null` pour laisser passer. EN CAS DE
+ * DOUTE, ON LAISSE PASSER : un budget illisible n'est pas un budget
+ * épuisé, et couper l'assistant parce qu'une lecture a échoué serait
+ * une panne inexplicable pour l'utilisateur. Le quota mensuel de
+ * requêtes, lui, reste la barrière dure.
+ */
+async function refusDeBudget(
+  // deno-lint-ignore no-explicit-any
+  client: any,
+  organizationId: string,
+): Promise<string | null> {
+  const { data, error } = await client.rpc("ai_cost_budget_remaining", {
+    p_organization_id: organizationId,
+    p_agent: AGENT_JOURNAL,
+  });
+  if (error) {
+    console.warn("plafond de dépense IA illisible", error.message);
+    return null;
+  }
+
+  const ligne = Array.isArray(data) ? data[0] : data;
+  if (!ligne) return null;
+
+  const plafonds: { nom: string; limite: unknown; reste: unknown }[] = [
+    { nom: "du jour", limite: ligne.daily_limit_cents, reste: ligne.daily_remaining_cents },
+    { nom: "du mois", limite: ligne.monthly_limit_cents, reste: ligne.monthly_remaining_cents },
+    { nom: "de cet agent", limite: ligne.agent_limit_cents, reste: ligne.agent_remaining_cents },
+  ];
+
+  for (const plafond of plafonds) {
+    // Une limite ABSENTE vaut « aucun plafond », jamais « zéro ».
+    if (plafond.limite === null || plafond.limite === undefined) continue;
+    const reste = Number(plafond.reste);
+    if (!Number.isFinite(reste)) continue;
+    if (reste <= 0) {
+      return (
+        `Le plafond de dépense IA ${plafond.nom} est atteint. ` +
+        "Un administrateur peut le relever dans Paramètres › IA › Coûts."
+      );
+    }
+  }
+  return null;
+}
 
 // deno-lint-ignore no-explicit-any
 async function callOpenAI(apiKey: string, input: any[], tools: Record<string, unknown>[]): Promise<any> {

@@ -36,6 +36,37 @@ import {
  * défaut, pas une fonctionnalité. La façon la plus solide de l'éviter
  * n'est pas une consigne dans le prompt : c'est que le chemin
  * d'écriture ne passe pas par le modèle.
+ *
+ * ══════════════════════════════════════════════════════════════════
+ * §11W — CE QUE PLUS AUCUN ÉCRAN N'APPELLE ICI, ET POURQUOI ON LE
+ * GARDE QUAND MÊME
+ * ══════════════════════════════════════════════════════════════════
+ *
+ * `askOasis` et `confirmerActionsOasis` N'ONT PLUS D'APPELANT dans ce
+ * dépôt web. Leur écran — l'ancien « Demander à Oasis » — a été
+ * remplacé par les conversations, qui passent par le runtime Node
+ * (`lib/ai/conversations/actions.ts` → `runtimeAgents`) et non plus par
+ * la fonction Edge. Le motif est la mémoire : la fonction Edge
+ * reconstruit son entrée à chaque appel avec le prompt système et LA
+ * question, rien d'autre, si bien qu'un tour y est totalement isolé.
+ *
+ * Elles ne sont pas supprimées, et c'est un choix, pas un oubli :
+ *
+ *   • la fonction Edge `oasis-pro-ai` reste déployée et sert d'autres
+ *     appelants que ce dépôt. `confirmerActionsOasis` est le SEUL code
+ *     qui émette son mode « confirm » — c'est-à-dire le seul moyen de
+ *     répondre à une demande d'approbation née côté Deno. La supprimer
+ *     rouvrirait exactement le défaut que `lib/ai/coherence.test.ts`
+ *     surveille : des approbations écrites en base que personne ne peut
+ *     valider, et qui expirent au bout de vingt-quatre heures ;
+ *
+ *   • les approbations nées du RUNTIME, elles, ont bien leur bouton :
+ *     l'écran « Aujourd'hui » les affiche sous « Demandes venues d'une
+ *     conversation » et les tranche par `answerApproval`.
+ *
+ * Le nettoyage propre — retirer ces deux fonctions ET rendre son objet
+ * au test de cohérence — appartient à la phase qui débranchera la
+ * fonction Edge pour de bon. Le faire ici aurait été un demi-geste.
  */
 
 /**
@@ -221,7 +252,12 @@ export async function confirmerActionsOasis(
   const executees = results.filter((r) => r.status === "executed").length;
   const echecs = results.filter((r) => r.status !== "executed" && r.status !== "rejected").length;
 
-  for (const path of ["/oasis-ai", "/oasis-ai/decisions", "/oasis-ai/historique", "/factures"]) {
+  // §11W : `/oasis-ai/decisions` et `/oasis-ai/historique` n'existent
+  // plus — le centre de décision a fusionné dans l'accueil, et le
+  // journal vit sous `/oasis-ai/reglages#journal`. Rafraîchir des
+  // routes supprimées ne casse rien, mais laisse la route qui porte
+  // désormais le journal se périmer en silence.
+  for (const path of ["/oasis-ai", "/oasis-ai/reglages", "/factures"]) {
     revalidatePath(path);
   }
 

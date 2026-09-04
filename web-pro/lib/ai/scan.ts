@@ -63,7 +63,7 @@ export async function runExecutiveScan() {
         ? "Les analyses d'Oasis ne sont pas encore installées sur cette base."
         : (error?.message ?? "L'analyse n'a pas pu être menée."),
     );
-    revalidatePath("/oasis-ai/decisions");
+    revalidatePath("/oasis-ai");
     return;
   }
 
@@ -82,7 +82,7 @@ export async function runExecutiveScan() {
         ? `Aucune recommandation : les droits ${manquants.join(", ")} manquent à ce compte. Ce n'est pas « rien à signaler ».`
         : "Analyse terminée : rien ne réclame de décision aujourd'hui.",
     );
-    revalidatePath("/oasis-ai/decisions");
+    revalidatePath("/oasis-ai");
     revalidatePath("/oasis-ai");
     return;
   }
@@ -157,7 +157,7 @@ export async function runExecutiveScan() {
     "success",
     summarize({ ouvertes, rafraichies, total: items.length }),
   );
-  revalidatePath("/oasis-ai/decisions");
+  revalidatePath("/oasis-ai");
   revalidatePath("/oasis-ai");
 }
 
@@ -204,7 +204,7 @@ async function notifyIfCritical(
             style: "currency",
             currency: "EUR",
           })} — ${item.impactTexte ?? item.pourquoi ?? "impact estimé"}`,
-    href: "/oasis-ai/decisions",
+    href: "/oasis-ai",
     entity_type: "ai_decision",
     entity_id: decisionId,
   });

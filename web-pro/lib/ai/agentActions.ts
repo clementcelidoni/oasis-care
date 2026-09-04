@@ -32,8 +32,8 @@ import { autonomyLabel, isAgentKey, readAutonomy } from "@/lib/ai/types";
  * un chemin vers le niveau 4 qui ne passerait pas par la confirmation.
  */
 
-const AGENTS_PATH = "/oasis-ai/agents";
-const AUTOMATIONS_PATH = "/oasis-ai/automatisations";
+const AGENTS_PATH = "/oasis-ai/reglages";
+const AUTOMATIONS_PATH = "/oasis-ai/reglages";
 
 export async function setAgentAutonomy(formData: FormData) {
   const organization = await requireOrganization();

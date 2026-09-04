@@ -41,9 +41,31 @@ import { composerSortie, messagePourEchec, statutPour } from "../reponse";
  *     Server Action qui existe déjà ;
  *
  *   • il ne remplace pas la fonction Edge `oasis-pro-ai`, qui reste en
- *     place et continue de servir `askOasis`. Les deux chemins
- *     coexistent, et c'est délibéré : on ne débranche pas une surface
- *     qui marche le jour où on en met une nouvelle en ligne.
+ *     place et sert d'autres appelants que ce dépôt. On ne débranche
+ *     pas une surface qui marche le jour où on en met une autre en
+ *     ligne. Aucun écran de ce dépôt ne lui pose plus de question
+ *     depuis §11W, mais `confirmerActionsOasis` continue d'émettre son
+ *     mode « confirm ».
+ *
+ * ══════════════════════════════════════════════════════════════════
+ * §11W — CE HANDLER N'EST TOUJOURS PAS LE CHEMIN DES CONVERSATIONS
+ * ══════════════════════════════════════════════════════════════════
+ *
+ * Et c'est une distinction à tenir. §11W a bien fait passer les
+ * questions de l'utilisateur par le RUNTIME (`runtimeAgents`) — plus
+ * par la fonction Edge — mais par une Server Action,
+ * `lib/ai/conversations/actions.ts`, et non par cette route.
+ *
+ * La raison est la mémoire : une conversation doit lire la queue du fil
+ * en base, appeler le modèle, PUIS écrire les deux tours ensemble, le
+ * tout dans une seule opération dont l'écran ressort rafraîchi. Une
+ * Server Action fait cela avec `revalidatePath` ; un `fetch` vers une
+ * route demanderait à l'appelant de réordonner les écritures, c'est-à-
+ * dire de pouvoir se tromper d'ordre.
+ *
+ * Cette route reste le chemin des appelants qui ont besoin d'un
+ * `AbortSignal` — une question qu'on doit pouvoir quitter — et n'a,
+ * elle, aucune notion de fil.
  */
 
 export const runtime = "nodejs";

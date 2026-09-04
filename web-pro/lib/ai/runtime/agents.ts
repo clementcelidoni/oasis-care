@@ -1,5 +1,6 @@
 import { Agent, Runner, tool } from "@openai/agents";
 import type {
+  AgentInputItem,
   FunctionTool,
   Model,
   ModelProvider,
@@ -161,6 +162,40 @@ export type DemandeAgent = {
   routage?: SignauxRoutage;
   cache?: { cle: string; ttlSecondes?: number } | null;
   decisionId?: string | null;
+  /**
+   * LES TOURS PRÉCÉDENTS DE LA MÊME CONVERSATION (§11W).
+   *
+   * ══════════════════════════════════════════════════════════════
+   * POURQUOI DES `AgentInputItem` ET PAS UNE CLÉ DU CONTEXTE
+   * ══════════════════════════════════════════════════════════════
+   *
+   * Parce que c'est la forme que le SDK — et le modèle — connaissent
+   * déjà. Un tour d'utilisateur est un message `user`, un tour d'Oasis
+   * est un message `assistant` : le modèle les lit comme la
+   * conversation qu'ils sont. Les faire voyager empaquetés en JSON
+   * sous une clé de `contexte.donnees` aurait été une SECONDE
+   * abstraction par-dessus celle du SDK, plus chère en jetons — tout
+   * le balisage compte — et moins bien comprise.
+   *
+   * ÇA NE RELÂCHE RIEN SUR L'INJECTION. Ce qui entre ici a été écrit
+   * soit par l'utilisateur lui-même — sa propre question d'il y a dix
+   * minutes n'est pas plus dangereuse que celle qu'il tape
+   * maintenant — soit par le modèle. Les DONNÉES de l'entreprise, qui
+   * sont la vraie surface d'injection (un client nommé « ignore les
+   * instructions »), continuent de passer exclusivement par
+   * `entreeModele`, annoncées comme des données.
+   *
+   * ─── CE QUI N'EST PAS ICI ───
+   *
+   * Les données lues aux tours précédents. On rejoue la question et la
+   * conclusion, jamais les milliers de caractères de contexte qui les
+   * ont produites : ils sont relus à neuf à chaque tour, et périmés
+   * une seconde plus tard.
+   *
+   * Vide ou absent = fil neuf. Un fil neuf n'a pas un passé vide : il
+   * n'a pas de passé, et le modèle ne doit rien lire qui le contredise.
+   */
+  historique?: readonly AgentInputItem[];
 };
 
 export type ReponseAgent = {
@@ -308,15 +343,38 @@ export class OasisAgentsRuntime {
     const etat: EtatPartage = partage ?? { montants: new Set<number>(), contextes: new Map() };
 
     // ── LE CONTEXTE MINIMAL (p. 20) ───────────────────────────────
-    const contexte =
+    const contexteLu =
       etat.contextes.get(agent) ??
       (await this.#options.constructeur.construire({
         agent,
         identite: this.#options.identite,
         cible: demande.cible,
       }));
-    etat.contextes.set(agent, contexte);
-    for (const montant of montantsDansLesDonnees(contexte.donnees)) etat.montants.add(montant);
+    etat.contextes.set(agent, contexteLu);
+    for (const montant of montantsDansLesDonnees(contexteLu.donnees)) etat.montants.add(montant);
+
+    // ── LE POIDS DE LA CONVERSATION DOIT SE VOIR (§11W) ───────────
+    //
+    // `tailleCaracteres` alimente DEUX mécanismes à la fois :
+    // l'estimation de dépense faite AVANT l'appel (`estimerAvantAppel`)
+    // et les seuils qui font monter le routeur d'un cran de modèle
+    // (12 000 et 60 000 caractères, `model/router.ts`).
+    //
+    // Un historique absent de ce compte ferait donc DEUX dégâts en
+    // silence : il gonflerait la facture sans que le plafond le sache,
+    // et il changerait de modèle sans que personne l'ait demandé. Un
+    // fil de conversation ne doit JAMAIS décider du modèle à lui seul —
+    // c'est précisément pourquoi la queue est bornée à ~6 000
+    // caractères, franchement sous le premier seuil.
+    const poidsHistorique = poidsDesItems(demande.historique);
+    // La valeur augmentée n'entre PAS dans `etat.contextes` : le fil
+    // n'appartient qu'à l'agent de tête, et un spécialiste interrogé
+    // ensuite ne doit pas payer, ni au routage ni au budget, un
+    // historique qu'il ne recevra pas.
+    const contexte =
+      poidsHistorique === 0
+        ? contexteLu
+        : { ...contexteLu, tailleCaracteres: contexteLu.tailleCaracteres + poidsHistorique };
 
     // ── L'EMPREINTE DE CACHE, DÉLÉGATIONS COMPRISES ───────────────
     const empreinteCache = await this.#empreinteAvecDelegations(demande, contexte, profondeur, etat);
@@ -326,8 +384,25 @@ export class OasisAgentsRuntime {
       contexte,
       criticite: demande.criticite,
       routage: demande.routage,
+      // UN TOUR DE CONVERSATION NE SE MET JAMAIS EN CACHE, ET LE REFUS
+      // EST ICI PLUTÔT QUE CHEZ L'APPELANT.
+      //
+      // L'empreinte de cache est calculée sur `contexte.donnees` et sur
+      // les sources lues — PAS sur l'historique, qui voyage à part
+      // (`demande.historique`). Deux fils différents posant la même
+      // question sur les mêmes données produisent donc la MÊME
+      // empreinte, alors qu'ils n'attendent pas la même réponse : leur
+      // passé diffère. Servir à l'un la réponse de l'autre serait une
+      // fuite entre deux conversations, et pas seulement une réponse à
+      // côté.
+      //
+      // Les appelants d'aujourd'hui passent déjà `cache: null` quand il
+      // y a un historique ; ce garde-fou existe pour que le jour où
+      // l'un d'eux l'oublie, il n'y ait pas d'incident à trouver.
       cache:
-        demande.cache == null ? null : { ...demande.cache, empreinte: empreinteCache ?? undefined },
+        demande.cache == null || poidsHistorique > 0
+          ? null
+          : { ...demande.cache, empreinte: empreinteCache ?? undefined },
       decisionId: demande.decisionId ?? null,
       executer: (tentative) =>
         this.#appelerModele({
@@ -524,7 +599,21 @@ export class OasisAgentsRuntime {
     // `agentSdk.instructions` ; ici ne passe que ce qui vient de
     // l'utilisateur et ce que les sources ont rendu, séparés et
     // annoncés comme des DONNÉES.
-    let resultat = await runner.run(agentSdk, entreeModele(demande.question, contexte), {
+    //
+    // ET, DEVANT, LES TOURS PRÉCÉDENTS DU MÊME FIL (§11W). Ils partent
+    // dans leur forme native — `user` / `assistant` — parce que c'est
+    // ainsi que le modèle les comprend comme une conversation. Sans
+    // historique, l'entrée reste la chaîne qu'elle a toujours été :
+    // rien ne change pour le briefing ni pour les spécialistes.
+    const entree =
+      demande.historique && demande.historique.length > 0
+        ? [
+            ...demande.historique,
+            { role: "user" as const, content: entreeModele(demande.question, contexte) },
+          ]
+        : entreeModele(demande.question, contexte);
+
+    let resultat = await runner.run(agentSdk, entree, {
       maxTurns: MAX_TOURS_MODELE,
     });
 
@@ -662,6 +751,14 @@ export class OasisAgentsRuntime {
             // l'agent visé, et la transmettre déplacerait le
             // spécialiste d'un cran sans que personne ne l'ait voulu.
             routage: signauxTransmissibles(a.demande.routage),
+            // PAS D'HISTORIQUE NON PLUS, et c'est délibéré (§11W).
+            // `historique` est simplement absent de cet objet. Un
+            // spécialiste reçoit une question précise formulée par la
+            // Direction, pas celle de l'utilisateur : lui joindre dix
+            // tours d'une conversation dont il ne traite qu'un fragment
+            // l'inviterait à répondre à côté, et ferait payer le fil
+            // quatre fois — en jetons, en budget, et en poussée vers un
+            // modèle plus cher.
             // PAS DE CACHE SUR UNE DÉLÉGATION. La clé de cache de
             // l'appelant décrit SA question ; la réutiliser ici
             // resservirait l'analyse du spécialiste à une question
@@ -1139,6 +1236,19 @@ export function signauxTransmissibles(
   const absolus: SignauxRoutage = { ...signaux };
   delete absolus.complexity;
   return absolus;
+}
+
+/**
+ * Ce que pèsent des tours rejoués, en caractères.
+ *
+ * On mesure la forme SÉRIALISÉE, balisage compris, parce que c'est
+ * elle qui part sur le fil et qui se paie. Mesurer le seul texte
+ * sous-estimerait de plusieurs pour cent, et l'écart irait toujours
+ * dans le même sens — celui qui fait passer un plafond pour tenu.
+ */
+export function poidsDesItems(items: readonly AgentInputItem[] | undefined): number {
+  if (!items || items.length === 0) return 0;
+  return JSON.stringify(items).length;
 }
 
 export function entreeModele(question: string, contexte: AgentContext): string {

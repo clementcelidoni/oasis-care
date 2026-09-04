@@ -145,6 +145,17 @@ export const CONFIDENCE_EXPLANATIONS: Record<Confidence, string> = {
     "Oasis n'a pas les données nécessaires — ce n'est pas un avis prudent, c'est une absence de réponse.",
 };
 
+/**
+ * Est-ce un niveau de confiance connu ?
+ *
+ * Distinct de `readConfidence`, qui RAMÈNE l'inconnu à « faible ». Ici
+ * on veut savoir s'il y a un niveau du tout : une conversation dont la
+ * couche affichée ne dit rien ne doit pas hériter d'un badge inventé.
+ */
+export function isConfidence(value: unknown): value is Confidence {
+  return typeof value === "string" && (CONFIDENCES as readonly string[]).includes(value);
+}
+
 export function readConfidence(value: unknown): Confidence {
   // Un niveau inconnu ne vaut PAS « élevée ». Le doute descend, il ne
   // monte pas.
