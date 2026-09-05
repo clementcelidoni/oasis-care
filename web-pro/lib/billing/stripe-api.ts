@@ -50,7 +50,7 @@
  * bouton, et rien ne ment.
  */
 
-import type { ModePrestataire } from "./composition";
+import type { ModePrestataire } from "./composition.ts";
 
 /** La version d'API épinglée. Voir `.agents/skills/stripe-best-practices`. */
 export const VERSION_API_STRIPE = "2026-08-26.dahlia";
@@ -157,6 +157,16 @@ export type DemandeSessionPaiement = {
   metadonnees: Record<string, string>;
   /** Posé sur l'ABONNEMENT créé, et non sur la session. */
   metadonneesAbonnement: Record<string, string>;
+  /**
+   * LES OBJETS DE TAXE À APPLIQUER, décidés par NOUS.
+   *
+   * Vide quand le taux vaut zéro — autoliquidation, hors Union — et
+   * c'est un état normal : il n'y a alors rien à ajouter au hors taxes.
+   * Jamais vide « par défaut » en revanche : un client français dont la
+   * liste serait vide paierait 79,90 € au lieu de 95,88, et les 15,98 €
+   * de TVA ne seraient jamais collectés.
+   */
+  tauxTaxe: string[];
 };
 
 export type SessionPaiement = {
@@ -292,6 +302,12 @@ export class ClientStripeHttp implements ApiStripe {
       cancel_url: demande.urlAbandon,
       metadata: demande.metadonnees,
       subscription_data: { metadata: demande.metadonneesAbonnement },
+      // AUCUN `automatic_tax`, ET C'EST UNE DÉCISION. La documentation
+      // du prestataire est formelle : son moteur automatique ne peut pas
+      // coexister avec des objets de taxe explicites, et surtout il
+      // n'émet AUCUNE erreur quand une immatriculation manque — il
+      // calcule zéro, et l'intégration croit collecter. C'est
+      // `saas_vat_regime_compute()` qui décide, et elle sait refuser.
       // LES FACTURES DE STRIPE NE SONT PAS NOS FACTURES. La facture
       // française — numérotée sans trou, avec ses mentions obligatoires —
       // est celle que produit `saas_issue_invoice()`. On ne demande donc
@@ -299,9 +315,26 @@ export class ClientStripeHttp implements ApiStripe {
       // e-mails de facture doit rester désactivé dans son tableau de
       // bord : deux documents numérotés pour un seul achat, c'est un
       // client qui ne sait plus lequel présenter à son comptable.
-      client_reference_id: demande.metadonnees.organizationId ?? null,
+      // La MÊME clé que celle des métadonnées, et le nom est préfixé
+      // des deux côtés. Cette valeur est ce que le tableau de bord du
+      // prestataire affiche en tête de session : c'est ce qui permet à
+      // un humain de relier un paiement à une entreprise sans requête.
+      client_reference_id: demande.metadonnees.oasis_organization_id ?? null,
       integration_identifier: ETIQUETTE_INTEGRATION,
     };
+
+    // LA TAXE SE POSE SUR L'ABONNEMENT, PAS SUR LES LIGNES DE LA
+    // SESSION, ET LA DIFFÉRENCE EST TOUT L'ENJEU.
+    //
+    // `line_items[n][tax_rates]` ne taxerait que la PREMIÈRE facture.
+    // `subscription_data[default_tax_rates]` devient le taux par défaut
+    // de l'abonnement, donc de CHAQUE facture qu'il produira. Or les
+    // renouvellements sont justement ceux que personne ne regarde :
+    // une taxe posée seulement sur la première échéance se serait vue
+    // le premier mois et oubliée les onze suivants.
+    if (demande.tauxTaxe.length > 0) {
+      (corps.subscription_data as Record<string, unknown>).default_tax_rates = demande.tauxTaxe;
+    }
 
     if (demande.clientId !== null && demande.clientId !== undefined) {
       corps.customer = demande.clientId;

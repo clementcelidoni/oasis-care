@@ -138,8 +138,13 @@ const DEMANDE = {
   lignes: [{ price: "price_team_m", quantity: 1 }],
   urlSucces: "https://pro.exemple.fr/entreprise/abonnement?souscription=confirmee",
   urlAbandon: "https://pro.exemple.fr/entreprise/abonnement?souscription=abandonnee",
-  metadonnees: { organizationId: "org-1", planKey: "team" },
-  metadonneesAbonnement: { organizationId: "org-1", planKey: "team" },
+  metadonnees: { oasis_organization_id: "org-1", planKey: "team" },
+  metadonneesAbonnement: { oasis_organization_id: "org-1", planKey: "team" },
+  // Par défaut AUCUNE taxe : c est le cas autoliquidation / hors Union,
+  // ou celui d une entreprise francaise pour laquelle la correspondance
+  // n existe pas encore — mais ce dernier cas n arrive jamais jusqu ici,
+  // la composition ayant deja ferme la caisse.
+  tauxTaxe: [],
 };
 
 test("la session part avec la version d'API épinglée et la clé d'idempotence", async () => {
@@ -196,9 +201,48 @@ test("AUCUNE FACTURE N'EST DEMANDÉE AU PRESTATAIRE", async () => {
 
   const corps = decodeURIComponent(appels[0]!.corps);
   assert.equal(corps.includes("invoice_creation"), false);
-  // Et aucune taxe demandée au prestataire : deux moteurs de taxe, ce
-  // sont deux vérités et un jour un écart.
+  // AUCUN MOTEUR DE TAXE AUTOMATIQUE — mais ce n est PAS « aucune
+  // taxe ». La nuance est tout l enjeu : ce qu on refuse, c est de
+  // laisser le prestataire CALCULER (il rend zéro sans un mot quand une
+  // immatriculation manque) ; ce qu on envoie, c est le taux que NOUS
+  // avons décidé, en objets de taxe explicites. Les deux ne peuvent de
+  // toute façon pas coexister : la documentation officielle le dit.
   assert.equal(corps.includes("automatic_tax"), false);
+});
+
+test("LA TAXE SE POSE SUR L'ABONNEMENT, DONC SUR CHAQUE ÉCHÉANCE", async () => {
+  // LE PIÈGE QUE CE TEST GARDE FERMÉ. Poser le taux sur
+  // `line_items[n][tax_rates]` ne taxerait que la PREMIÈRE facture. Or
+  // les renouvellements sont ceux que personne ne regarde : la TVA
+  // aurait été collectée le premier mois et oubliée les onze suivants,
+  // pendant qu'Oasis Care en reste redevable.
+  const { appels, impl } = fetchSimule({
+    charge: { id: "cs_tva", url: "https://paiement.exemple/cs_tva" },
+  });
+  const client = new ClientStripeHttp({ cleSecrete: FAUSSE_CLE, mode: "test" }, impl);
+  await client.creerSessionPaiement({ ...DEMANDE, tauxTaxe: ["txr_fr_20"] });
+
+  const corps = decodeURIComponent(appels[0]!.corps);
+  assert.ok(
+    corps.includes("subscription_data[default_tax_rates][0]=txr_fr_20"),
+    `le taux doit être posé sur l'abonnement, corps obtenu : ${corps}`,
+  );
+  // Et surtout PAS sur la seule première facture.
+  assert.equal(corps.includes("line_items[0][tax_rates]"), false);
+});
+
+test("UNE LISTE DE TAUX VIDE N'ENVOIE RIEN — autoliquidation, hors Union", async () => {
+  // Vide veut dire « aucune taxe due », pas « on n'a pas regardé » : le
+  // cas « on ne sait pas » a déjà fermé la caisse en amont, dans
+  // `composerSouscription`. Envoyer un champ vide au prestataire serait
+  // une valeur invalide, pas une absence.
+  const { appels, impl } = fetchSimule({
+    charge: { id: "cs_ra", url: "https://paiement.exemple/cs_ra" },
+  });
+  const client = new ClientStripeHttp({ cleSecrete: FAUSSE_CLE, mode: "test" }, impl);
+  await client.creerSessionPaiement({ ...DEMANDE, tauxTaxe: [] });
+
+  assert.equal(decodeURIComponent(appels[0]!.corps).includes("default_tax_rates"), false);
 });
 
 test("l'e-mail sert de rattachement tant qu'aucun client n'est connu", async () => {

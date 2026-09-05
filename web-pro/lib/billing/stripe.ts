@@ -31,35 +31,96 @@
  *     sous le jeton d'un humain. La séparation est voulue, on ne la
  *     contourne pas.
  *
- *   • IL NE CALCULE AUCUNE TAXE et ne demande pas au prestataire d'en
- *     calculer. Les tarifs sont posés en `tax_behavior = 'exclusive'`
- *     (0083 le verrouille), et c'est `saas_vat_regime()` qui décide du
- *     régime. Deux moteurs de taxe, ce sont deux vérités.
+ *   • IL NE DEMANDE AUCUN CALCUL DE TAXE AU PRESTATAIRE — mais il en
+ *     transmet une, et la nuance est tout l'enjeu. Les tarifs sont
+ *     posés en `tax_behavior = 'exclusive'` (0083 le verrouille) : ils
+ *     sont hors taxes. C'est `saas_vat_regime_compute()` qui décide du
+ *     régime et `billing_provider_tax_terms()` qui rend l'objet de taxe
+ *     à appliquer ; la session le porte en
+ *     `subscription_data[default_tax_rates]`, donc sur l'abonnement et
+ *     sur chacune de ses échéances.
+ *
+ *     Ne rien transmettre du tout, comme c'était le cas au départ,
+ *     revenait à encaisser 79,90 € là où la facture en réclame 95,88 :
+ *     la TVA française n'était jamais collectée, et Oasis Care en
+ *     restait redevable. Le moteur AUTOMATIQUE du prestataire, lui,
+ *     reste éteint — deux moteurs de taxe, ce sont deux vérités, et le
+ *     sien ne signale rien quand une immatriculation manque.
  */
 
 import type { SupabaseClient } from "@supabase/supabase-js";
 import {
   composerSouscription,
   phrasePourMotif,
+  versResumePublic,
   type Composition,
   type CycleFacturation,
+  type ResumeSouscription,
   type SourceFacturation,
-} from "./composition";
-import { lirePlansActifs, type OrganizationPlan } from "./plans";
-import { PRESTATAIRE_STRIPE, SourceFacturationSupabase } from "./source-supabase";
+} from "./composition.ts";
+import { lirePlansActifs, type OrganizationPlan } from "./plans.ts";
+import { PRESTATAIRE_STRIPE, SourceFacturationSupabase } from "./source-supabase.ts";
 import {
   ClientStripeHttp,
   configEstComplete,
   lireConfigStripe,
   type ApiStripe,
-} from "./stripe-api";
+} from "./stripe-api.ts";
 import type {
   BillingProvider,
   CheckoutIntent,
   CheckoutOutcome,
   OrganizationSubscription,
-} from "./provider";
-import { lireAbonnement } from "./abonnement";
+} from "./provider.ts";
+import { lireAbonnement } from "./abonnement.ts";
+// CHEMIN RELATIF ET EXTENSION EXPLICITE, VOLONTAIREMENT.
+//
+// L'alias `@/…` est résolu par le compilateur de Next, PAS par Node :
+// l'employer ici rendrait ce fichier inchargeable par `node --test`,
+// c'est-à-dire non testé, exactement là où l'argent passe. Le fichier
+// visé est PUR — aucune importation, aucune dépendance à une requête —
+// donc il se charge sans rien tirer derrière lui.
+import { manquePourFacturer, type IdentiteSaisie } from "../../app/inscription/identite.ts";
+
+/**
+ * L'IDENTITÉ FACTURABLE DE L'ENTREPRISE, lue sous le jeton de
+ * l'appelant.
+ *
+ * Rend `null` quand la lecture échoue — et l'appelant refuse alors,
+ * plutôt que de considérer une fiche illisible comme une fiche vide ou
+ * comme une fiche complète. Les deux erreurs coûtent : l'une bloque un
+ * client en règle, l'autre encaisse une facture qu'on ne pourra pas
+ * émettre. On dit « je ne sais pas » et on s'arrête.
+ */
+async function lireIdentiteFacturable(
+  supabase: SupabaseClient,
+  organizationId: string,
+): Promise<IdentiteSaisie | null> {
+  const { data, error } = await supabase
+    .from("business_organizations")
+    .select("legal_name, legal_form, siren, siret, vat_number, address_line1, postal_code, city, country")
+    .eq("id", organizationId)
+    .maybeSingle();
+
+  if (error || !data) return null;
+
+  const ligne = data as Record<string, string | null>;
+  return {
+    legalName: ligne.legal_name,
+    legalForm: ligne.legal_form,
+    siren: ligne.siren,
+    siret: ligne.siret,
+    vatNumber: ligne.vat_number,
+    addressLine1: ligne.address_line1,
+    postalCode: ligne.postal_code,
+    city: ligne.city,
+    // `country` est NOT NULL en base avec 'FR' par défaut. On ne
+    // coalesce pas pour autant : si la colonne devenait nulle, la zone
+    // fiscale serait « France » par accident, et un client suisse se
+    // verrait réclamer 20 % de TVA.
+    country: ligne.country,
+  };
+}
 
 /**
  * Les statuts qui interdisent une NOUVELLE souscription en ligne.
@@ -144,22 +205,97 @@ export class StripeBillingProvider implements BillingProvider {
    * encaissera, calculé par le même code. Un résumé calculé à part
    * finirait par annoncer un montant et en prélever un autre.
    */
-  async previewCheckout(intent: CheckoutIntent): Promise<Composition> {
+  async previewCheckout(intent: CheckoutIntent): Promise<ResumeSouscription> {
     const supabase = await this.#supabase();
-    return this.#composer(supabase, intent);
+
+    // LE RÉSUMÉ DIT LA MÊME CHOSE QUE LA CAISSE, Y COMPRIS QUAND ELLE
+    // EST FERMÉE.
+    //
+    // Sans ce contrôle, le résumé chiffrait entièrement une
+    // souscription que le bouton de paiement allait refuser — et c'est
+    // le chemin OFFICIEL de montée en gamme : l'écran d'abonnement
+    // propose « Changer d'offre » et renvoie ici. Le client voyait un
+    // total, une remise, des modules, un bouton « Payer », puis un
+    // refus. Un écran qui chiffre ce qu'il ne vendra pas use la
+    // confiance plus vite qu'un refus annoncé d'emblée.
+    const ferme = await this.#caisseFermeePour(supabase, intent.organizationId);
+    if (ferme !== null) {
+      return { jouable: false, code: ferme.code, motif: ferme.motif };
+    }
+
+    // `versResumePublic` retire l'identifiant de tarif du prestataire :
+    // ce qui part au navigateur est ce qu'il doit AFFICHER, pas ce qui
+    // sert à encaisser.
+    return versResumePublic(await this.#composer(supabase, intent));
+  }
+
+  /**
+   * CE QUI FERME LA CAISSE AVANT MÊME DE CALCULER UN PRIX.
+   *
+   * Extrait pour que le RÉSUMÉ et le PAIEMENT posent exactement les
+   * mêmes questions. Deux listes de contrôles séparées finissent
+   * toujours par diverger, et l'écart se voit au pire moment : après
+   * que le client a cliqué.
+   */
+  async #caisseFermeePour(
+    supabase: SupabaseClient,
+    organizationId: string,
+  ): Promise<{ code: string; motif: string } | null> {
+    // ---- 1. Un abonnement en cours ferme la caisse ----------------
+    const abonnement = await lireAbonnement(supabase, organizationId);
+    if (abonnement !== null && STATUTS_DEJA_ABONNE.has(abonnement.status)) {
+      return {
+        code: "dejaAbonne",
+        motif:
+          "Cette entreprise a déjà un abonnement en cours. Un changement d'offre se fait sur l'abonnement existant, pas par une nouvelle souscription : ouvrir une seconde souscription créerait un second dossier de paiement chez le prestataire, et un remboursement partirait du mauvais. Écrivez-nous, nous le faisons avec vous.",
+      };
+    }
+
+    // ---- 2. L'IDENTITÉ FACTURABLE, EXIGÉE PAR LE SERVEUR ----------
+    //
+    // Elle ne l'était que par le rendu : `manquePourFacturer()` servait
+    // à masquer un bouton, et rien d'autre. Un `fetch` fabriqué à la
+    // main — ou simplement un compte dont l'étape « société » a été
+    // passée, puisqu'elle est facultative — encaissait quand même.
+    //
+    // On se retrouvait alors avec de l'argent pris et une facture
+    // INÉMETTABLE : `saas_issue_invoice()` refuse une entreprise
+    // française sans dénomination sociale, sans SIRET ou sans adresse.
+    // Encaisser ce qu'on ne pourra pas facturer est pire que perdre le
+    // client : il faut rembourser, et on n'a rien à lui remettre.
+    //
+    // On appelle `manquePourFacturer`, on ne la réécrit pas : la règle
+    // est déjà écrite et testée, la dupliquer la ferait diverger.
+    const identite = await lireIdentiteFacturable(supabase, organizationId);
+    if (identite === null) {
+      return {
+        code: "identiteIllisible",
+        motif:
+          "La fiche de votre société n'a pas pu être lue, et nous n'encaissons pas sans savoir à qui adresser la facture. Rechargez la page ; rien n'a été prélevé.",
+      };
+    }
+
+    const manques = manquePourFacturer(identite);
+    if (manques.length > 0) {
+      return {
+        code: "identiteIncomplete",
+        motif:
+          "Avant de pouvoir encaisser, il nous faut de quoi établir votre facture : "
+          + `${manques.map((m) => m.libelle.toLowerCase()).join(", ")}. `
+          + "Complétez la fiche de votre société, puis revenez — rien n'a été prélevé.",
+      };
+    }
+
+    return null;
   }
 
   async startCheckout(intent: CheckoutIntent): Promise<CheckoutOutcome> {
     const supabase = await this.#supabase();
 
-    // ---- 1. Un abonnement en cours ferme la caisse ----------------
-    const abonnement = await lireAbonnement(supabase, intent.organizationId);
-    if (abonnement !== null && STATUTS_DEJA_ABONNE.has(abonnement.status)) {
-      return {
-        kind: "unavailable",
-        reason:
-          "Cette entreprise a déjà un abonnement en cours. Un changement d'offre se fait sur l'abonnement existant, pas par une nouvelle souscription : ouvrir une seconde souscription créerait un second dossier de paiement chez le prestataire, et un remboursement partirait du mauvais.",
-      };
+    // ---- 1. Les mêmes verrous que le résumé, dans le même ordre ----
+    const ferme = await this.#caisseFermeePour(supabase, intent.organizationId);
+    if (ferme !== null) {
+      return { kind: "unavailable", reason: ferme.motif };
     }
 
     // ---- 2. Ce qui est dû, relu en base ---------------------------
@@ -198,14 +334,33 @@ export class StripeBillingProvider implements BillingProvider {
     const clefIdempotence = clefPourIntention(intent.organizationId, composition);
 
     const metadonnees: Record<string, string> = {
-      organizationId: intent.organizationId,
+      // LE NOM EST PRÉFIXÉ, ET LES DEUX CÔTÉS EMPLOIENT LE MÊME.
+      //
+      // Le tunnel écrivait `organizationId`, le webhook lisait
+      // `oasis_organization_id` : signature valide, événement journalisé,
+      // puis « Entreprise inconnue » sur CHAQUE encaissement — premier
+      // paiement comme renouvellement — pendant que le prestataire
+      // recevait ses 200 et ne signalait rien. Un seul nom désormais,
+      // et il est préfixé parce que les métadonnées d'un objet du
+      // prestataire sont un espace partagé avec ses propres outils.
+      oasis_organization_id: intent.organizationId,
       planKey: composition.planKey,
       billingCycle: composition.billingCycle,
       mode: this.#api.mode,
-      // Le montant HORS TAXES que NOUS avons calculé. Le webhook le
-      // recomparera à ce que le prestataire dit avoir encaissé : deux
-      // chiffres qui divergent valent mieux qu'un seul qu'on croit.
+      // Le montant HORS TAXES que NOUS avons calculé, et le montant
+      // TOUTES TAXES que nous attendons au débit. Les deux voyagent
+      // parce qu'ils ne disent pas la même chose : le premier est ce
+      // qui sera facturé, le second ce qui sera prélevé, et ils ne
+      // coïncident qu'en autoliquidation et hors Union.
+      //
+      // CE QUE LE WEBHOOK EN FAIT AUJOURD'HUI : rien. Il ne les compare
+      // pas encore à ce que le prestataire dit avoir encaissé. La phrase
+      // qui figurait ici affirmait le contraire, et un commentaire qui
+      // décrit une intention au présent finit par être lu comme une
+      // garantie.
       totalHtCents: String(composition.totalHtCents),
+      totalTtcCents: String(composition.taxe.totalTtcCents),
+      regimeTva: composition.taxe.regime,
       siegesFacturables: String(composition.siegesFacturables),
     };
     if (composition.modulesInclusSansFrais.length > 0) {
@@ -238,6 +393,14 @@ export class StripeBillingProvider implements BillingProvider {
       urlAbandon: `${this.#origine}/entreprise/abonnement?souscription=abandonnee`,
       metadonnees,
       metadonneesAbonnement: metadonnees,
+      // LA TAXE QUE NOUS AVONS CALCULÉE, transmise explicitement. Une
+      // liste VIDE veut dire « aucune taxe due » — autoliquidation ou
+      // hors Union — et non « on n'a pas regardé » : le cas « on ne sait
+      // pas » a déjà fermé la caisse dans `composerSouscription`.
+      tauxTaxe:
+        composition.taxe.providerTaxRateId === null
+          ? []
+          : [composition.taxe.providerTaxRateId],
     });
 
     if (session.url === null) {

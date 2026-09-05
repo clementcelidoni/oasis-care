@@ -1,9 +1,9 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
 import { createClient } from "@/lib/supabase/server";
-import { lireAbonnement } from "./abonnement";
-import { lirePlansActifs } from "./plans";
-import { construireStripeBillingProvider } from "./stripe";
-import type { CycleFacturation } from "./composition";
+import { lireAbonnement } from "./abonnement.ts";
+import { lirePlansActifs } from "./plans.ts";
+import { construireStripeBillingProvider } from "./stripe.ts";
+import type { CycleFacturation, ResumeSouscription } from "./composition.ts";
 
 /**
  * §16 BILLING — L'ABSTRACTION, ET CE QU'ELLE PORTE MAINTENANT.
@@ -42,13 +42,26 @@ import type { CycleFacturation } from "./composition";
  * matrice offre × module, les sièges et la remise en base, et calcule.
  */
 
-/** Les valeurs de la colonne `provider` (migration 0060). */
-export type { BillingProviderId, SubscriptionStatus } from "./abonnement";
-export type { OrganizationSubscription } from "./abonnement";
-export type { OrganizationPlan } from "./plans";
+/**
+ * LES TYPES SONT DÉFINIS AILLEURS, ET RÉEXPORTÉS ICI.
+ *
+ * `OrganizationPlan` et `OrganizationSubscription` vivaient dans ce
+ * fichier ; ils vivent maintenant à côté de la requête qui les remplit
+ * (`plans.ts`, `abonnement.ts`), parce que DEUX fournisseurs doivent
+ * lire le catalogue et l'abonnement de la même façon. Deux définitions
+ * auraient divergé au premier ajout de colonne, et l'écran aurait
+ * affiché un prix différent selon la caisse ouverte.
+ *
+ * La réexportation garde `@/lib/billing/provider` comme adresse unique
+ * pour les écrans : aucun appelant n'a eu à changer d'import.
+ */
+export type { BillingProviderId, SubscriptionStatus } from "./abonnement.ts";
+export type { OrganizationSubscription } from "./abonnement.ts";
+export type { OrganizationPlan } from "./plans.ts";
+export type { CycleFacturation, LigneResume, ResumeSouscription } from "./composition.ts";
 
-import type { BillingProviderId, OrganizationSubscription } from "./abonnement";
-import type { OrganizationPlan } from "./plans";
+import type { BillingProviderId, OrganizationSubscription } from "./abonnement.ts";
+import type { OrganizationPlan } from "./plans.ts";
 
 /**
  * L'INTENTION, et rien d'autre.
@@ -101,6 +114,21 @@ export interface BillingProvider {
    * d'entrée du tunnel.
    */
   startCheckout(intent: CheckoutIntent): Promise<CheckoutOutcome>;
+
+  /**
+   * L'étape « Résumé » — ce qui sera prélevé, sans rien engager.
+   *
+   * FACULTATIVE, et c'est ce qui préserve l'interface : un fournisseur
+   * qui ne sait pas détailler une souscription (celui qui n'encaisse
+   * rien, un achat In-App dont le prix appartient à la boutique) ne la
+   * déclare pas, et l'écran se contente alors du catalogue. Aucun
+   * implémenteur existant n'a à changer.
+   *
+   * Elle rend EXACTEMENT ce que `startCheckout` encaissera, calculé par
+   * le même code : un résumé calculé à part finirait par annoncer un
+   * montant et en prélever un autre.
+   */
+  previewCheckout?(intent: CheckoutIntent): Promise<ResumeSouscription>;
 }
 
 /**

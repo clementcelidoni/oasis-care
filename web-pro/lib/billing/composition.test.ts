@@ -5,12 +5,14 @@ import {
   composerSouscription,
   jourDeReference,
   phrasePourMotif,
+  versResumePublic,
   type CycleFacturation,
   type DemandeTermes,
   type OffreLue,
   type RemiseLue,
   type SourceFacturation,
   type TermesTarif,
+  type TermesTaxe,
 } from "./composition.ts";
 
 /**
@@ -41,9 +43,11 @@ import {
  * LES MONTANTS SONT DES CENTIMES ENTIERS, ET HORS TAXES
  * ══════════════════════════════════════════════════════════════════
  *
- * 7990 se lit « 79,90 € HT ». La TVA n'apparaît nulle part dans ce
- * fichier, et c'est le sujet : le régime est décidé par
- * `saas_vat_regime()`, pas ici. Une entreprise française paiera 95,88 €,
+ * 7990 se lit « 79,90 € HT ». Les LIGNES sont hors taxes ; le MONTANT
+ * PRÉLEVÉ, lui, dépend du régime — et il est désormais calculé, parce
+ * que le prestataire doit l'encaisser. Le régime vient de
+ * `saas_vat_regime_compute()`, pas d'ici : la source simulée le rend
+ * comme la base le rendrait. Une entreprise française paiera 95,88 €,
  * une néerlandaise avec numéro validé 79,90 € — le PRIX est le même, le
  * MONTANT PRÉLEVÉ non.
  */
@@ -187,12 +191,21 @@ const FONDATEUR: RemiseLue = {
   code: "FONDATEUR",
   label: "Tarif Fondateur",
   kind: "fixedMonthlyPrice",
-  valueCents: 2990,
+  // 49,90 € — la valeur que 0081 sème réellement, et que le dirigeant a
+  // confirmée. Le fixture disait 29,90 : il datait d'avant
+  // l'enrichissement de la migration.
+  valueCents: 4990,
   percent: null,
   startsOn: "2026-01-01",
   // NOT NULL en base : il n'existe littéralement aucune remise sans fin.
   // Le treizième mois repart au tarif public.
   endsOn: "2027-01-01",
+  // RÉSERVÉ À L'OFFRE PRO. Sans cette restriction, le prix imposé se
+  // substituait à celui de n'importe quelle offre.
+  appliesToPlan: "team",
+  // ET IL ENGAGE DOUZE MOIS. C'est la seule marque d'engagement que le
+  // client puisse lire : le catalogue, lui, lui est fermé.
+  commitmentEndsOn: "2027-01-01",
 };
 
 /**
@@ -216,7 +229,11 @@ function correspondancesParDefaut(): Map<string, Correspondance> {
   pose("module|team|monthly|biolab|", "price_biolab_m", 2000);
   pose("module|team|yearly|biolab|", "price_biolab_y", 20000);
   pose("module|team|monthly|nursery|", "price_nursery_m", 2000);
-  pose("discount||monthly||FONDATEUR", "price_fondateur_m", 2990);
+  // La correspondance d'une remise se range sous l'OFFRE QU'ELLE VISE
+  // — comme en base, où la recherche emploie `applies_to_plan` et non
+  // l'offre présentée. Une remise universelle, elle, se rangerait sous
+  // une offre nulle et servirait partout.
+  pose("discount|team|monthly||FONDATEUR", "price_fondateur_m", 4990);
   return m;
 }
 
@@ -226,6 +243,20 @@ type EtatSource = {
   remise: RemiseLue | null;
   correspondances: Map<string, Correspondance>;
   offres: Record<string, OffreLue>;
+  taxe: TermesTaxe;
+};
+
+/**
+ * LE CAS NOMINAL : entreprise francaise, 20 %, objet de taxe relie chez
+ * le prestataire. Cest ce que voit limmense majorite des clients, et
+ * cest donc ce que les tests doivent voir par defaut.
+ */
+const TAXE_FRANCE: TermesTaxe = {
+  regime: "france",
+  tauxBps: 2000,
+  providerTaxRateId: "txr_fr_20",
+  blockingReason: null,
+  reason: null,
 };
 
 function clefCorrespondance(d: DemandeTermes): string {
@@ -263,6 +294,7 @@ class SourceSimulee implements SourceFacturation {
       remise: null,
       correspondances: correspondancesParDefaut(),
       offres: OFFRES,
+      taxe: TAXE_FRANCE,
       ...surcharge,
     };
   }
@@ -277,6 +309,16 @@ class SourceSimulee implements SourceFacturation {
 
   async lireModulesSouscrits(): Promise<string[]> {
     return this.etat.modulesSouscrits;
+  }
+
+  /**
+   * LE RÉGIME DE TVA. Par défaut : France, 20 %, objet de taxe relié —
+   * c'est-à-dire le cas nominal, celui de l'immense majorité des
+   * clients. Les tests qui éprouvent l'autoliquidation ou le refus le
+   * surchargent explicitement.
+   */
+  async lireTermesTaxe(): Promise<TermesTaxe> {
+    return this.etat.taxe;
   }
 
   async lireRemiseActive(_organizationId: string, leJour: string): Promise<RemiseLue | null> {
@@ -335,16 +377,46 @@ class SourceSimulee implements SourceFacturation {
         }
       }
     } else {
-      if (demande.discountCode !== "FONDATEUR") return vide("discountUnknown");
+      // LE CATALOGUE, TEL QUE LA BASE LE LIRAIT : par le CODE seul.
+      // On prend la remise posée sur l'état plutôt que la constante du
+      // module, sinon une remise universelle ne serait pas éprouvable —
+      // et c'est précisément le cas où une garde trop large casse des
+      // souscriptions légitimes.
+      const catalogue = this.etat.remise;
+      if (catalogue === null || demande.discountCode !== catalogue.code) {
+        return vide("discountUnknown");
+      }
+
+      // LA RESTRICTION D'OFFRE, MIROIR EXACT DE LA BASE. Elle vient
+      // AVANT le cycle : une remise réservée à une autre offre est
+      // refusée qu'on la demande au mois ou à l'année.
+      if (catalogue.appliesToPlan !== null) {
+        if (demande.planKey === null || demande.planKey === undefined) {
+          return vide("discountPlanUnspecified");
+        }
+        if (demande.planKey !== catalogue.appliesToPlan) {
+          return vide("discountReservedToAnotherPlan");
+        }
+      }
+
       if (cycle === "yearly") {
         // 0081 REFUSE DE TRANCHER, en toutes lettres.
         blocage = "discountYearlyUndecided";
       } else {
-        notrePrix = FONDATEUR.valueCents;
+        notrePrix = catalogue.valueCents;
       }
     }
 
-    const map = this.etat.correspondances.get(clefCorrespondance(demande));
+    // La correspondance d'une remise se cherche sous L'OFFRE QU'ELLE
+    // VISE, pas sous celle qu'on lui présente — les deux viennent
+    // d'être vérifiées égales. C'est ce qui laisse une remise
+    // universelle n'avoir qu'une seule correspondance, rangée sous une
+    // offre nulle et valable partout.
+    const map = this.etat.correspondances.get(
+      demande.kind === "discount"
+        ? clefCorrespondance({ ...demande, planKey: this.etat.remise?.appliesToPlan ?? null })
+        : clefCorrespondance(demande),
+    );
 
     // L'ORDRE : notre prix d'abord, la correspondance ensuite.
     if (blocage !== null) {
@@ -578,6 +650,173 @@ test("…mais l'annuel SANS siège supplémentaire passe", async () => {
 // 3. LA REMISE FONDATEUR, ET SA FIN
 // ══════════════════════════════════════════════════════════════════
 
+test("FONDATEUR SUR BUSINESS EST REFUSÉ — 90 € par mois qui partaient en silence", async () => {
+  // LE TROU LE PLUS COÛTEUX DU CHANTIER. Le tarif fondateur vaut
+  // 49,90 € et 0081 le réserve à l'offre Pro. Sans contrôle, il se
+  // substituait au prix de N'IMPORTE QUELLE offre : sur Pro Business
+  // (139,90 €), on encaissait 49,90 — 90 € offerts par mois et par
+  // client, sous une ligne qui avait l'air normale.
+  const source = new SourceSimulee({ sieges: 1, remise: FONDATEUR });
+  const composition = await composer(source, "business");
+
+  assert.equal(composition.jouable, false);
+  if (composition.jouable) return;
+  assert.equal(composition.code, "remiseReserveeAUneAutreOffre");
+  // ON REFUSE, ON N'IGNORE PAS : ignorer la remise ferait payer 139,90 €
+  // à quelqu'un à qui une remise a été accordée.
+  assert.match(composition.motif, /réservé à une autre offre/);
+});
+
+test("FONDATEUR SUR SOLO EST REFUSÉ AUSSI — la fuite marche dans les deux sens", async () => {
+  // Sur Pro Solo (39,90 €), le prix imposé de 49,90 € faisait payer au
+  // client 10 € DE PLUS que le tarif public, sous une ligne libellée
+  // « Tarif fondateur ». C'est le sens auquel personne ne pense.
+  const source = new SourceSimulee({ sieges: 1, remise: FONDATEUR });
+  const composition = await composer(source, "solo");
+
+  assert.equal(composition.jouable, false);
+  if (composition.jouable) return;
+  assert.equal(composition.code, "remiseReserveeAUneAutreOffre");
+});
+
+test("…et sur l'offre VISÉE, la remise s'applique normalement", async () => {
+  // La preuve que le refus tient à la restriction d'offre et non à la
+  // remise elle-même.
+  const source = new SourceSimulee({ sieges: 1, remise: FONDATEUR });
+  const composition = await composer(source, "team");
+
+  assert.equal(composition.jouable, true);
+  if (!composition.jouable) return;
+  assert.equal(composition.totalHtCents, 4990);
+});
+
+test("UNE REMISE UNIVERSELLE S'APPLIQUE À TOUTES LES OFFRES", async () => {
+  // `applies_to_plan` nul veut dire « toutes les offres ». La garde ne
+  // doit pas transformer une remise commerciale générale en remise
+  // introuvable — sinon on refuserait des souscriptions parfaitement
+  // légitimes.
+  const universelle: RemiseLue = { ...FONDATEUR, appliesToPlan: null, commitmentEndsOn: null };
+  const source = new SourceSimulee({
+    sieges: 1,
+    remise: universelle,
+    correspondances: (() => {
+      const m = correspondancesParDefaut();
+      m.delete("discount|team|monthly||FONDATEUR");
+      // Rangée sous une offre NULLE : une seule correspondance sert
+      // toutes les offres.
+      m.set("discount||monthly||FONDATEUR", {
+        priceId: "price_fondateur_m",
+        montantCents: 4990,
+        devise: "EUR",
+      });
+      return m;
+    })(),
+  });
+
+  const composition = await composer(source, "business");
+  assert.equal(composition.jouable, true);
+  if (!composition.jouable) return;
+  assert.equal(composition.totalHtCents, 4990);
+});
+
+// ══════════════════════════════════════════════════════════════════
+// 3.bis LA TAXE — LE PRIX EST LE MÊME, LE MONTANT PRÉLEVÉ NON
+// ══════════════════════════════════════════════════════════════════
+
+test("FRANCE : 79,90 HT deviennent 95,88 au débit", async () => {
+  // Le nombre DOIT être celui que `saas_invoice_totals` calcule pour la
+  // même période. S'ils divergent, le rapprochement du webhook ne
+  // trouve aucune facture correspondante et chaque encaissement se
+  // solde par « à rapprocher à la main ».
+  const source = new SourceSimulee({ sieges: 1 });
+  const composition = await composer(source, "team");
+
+  assert.equal(composition.jouable, true);
+  if (!composition.jouable) return;
+  assert.equal(composition.totalHtCents, 7990);
+  assert.equal(composition.taxe.montantTvaCents, 1598);
+  assert.equal(composition.taxe.totalTtcCents, 9588);
+  assert.equal(composition.taxe.providerTaxRateId, "txr_fr_20");
+});
+
+test("AUTOLIQUIDATION ET HORS UNION : le débit vaut le hors taxes", async () => {
+  for (const regime of ["euReverseCharge", "outsideEu"] as const) {
+    const source = new SourceSimulee({
+      sieges: 1,
+      taxe: {
+        regime,
+        tauxBps: 0,
+        providerTaxRateId: null,
+        blockingReason: null,
+        reason: null,
+      },
+    });
+    const composition = await composer(source, "team");
+
+    assert.equal(composition.jouable, true, regime);
+    if (!composition.jouable) return;
+    assert.equal(composition.taxe.montantTvaCents, 0, regime);
+    assert.equal(composition.taxe.totalTtcCents, 7990, regime);
+    // Aucun objet de taxe à envoyer : il n'y a rien à ajouter.
+    assert.equal(composition.taxe.providerTaxRateId, null, regime);
+  }
+});
+
+test("UN RÉGIME INDÉTERMINÉ REFUSE, ET LE MOTIF DIT QUOI FAIRE", async () => {
+  const source = new SourceSimulee({
+    sieges: 1,
+    taxe: {
+      regime: "unknown",
+      tauxBps: null,
+      providerTaxRateId: null,
+      blockingReason: "vatRegimeUnknown",
+      reason: "numéro de TVA intracommunautaire non validé",
+    },
+  });
+  const composition = await composer(source, "team");
+
+  assert.equal(composition.jouable, false);
+  if (composition.jouable) return;
+  assert.equal(composition.code, "vatRegimeUnknown");
+  // Le motif de la base est REPRIS : « votre numéro n'est pas validé »
+  // vaut mieux que « régime inconnu ».
+  assert.match(composition.motif, /non validé/);
+});
+
+test("UNE CORRESPONDANCE DE TAXE MANQUANTE REFUSE — on n'encaisse pas le HT nu", async () => {
+  // C'est le cas d'un déploiement à moitié fait : les tarifs sont
+  // reliés, l'objet de taxe ne l'est pas encore. Encaisser « en
+  // attendant » laisserait Oasis Care redevable de 15,98 € par client
+  // et par mois, sans que rien ne le signale.
+  const source = new SourceSimulee({
+    sieges: 1,
+    taxe: {
+      regime: "france",
+      tauxBps: 2000,
+      providerTaxRateId: null,
+      blockingReason: "providerTaxRateMissing",
+      reason: null,
+    },
+  });
+  const composition = await composer(source, "team");
+
+  assert.equal(composition.jouable, false);
+  if (composition.jouable) return;
+  assert.equal(composition.code, "providerTaxRateMissing");
+});
+
+test("LA TVA SE CALCULE SUR LE TOTAL, SIÈGES ET MODULES COMPRIS", async () => {
+  // 7990 + 4×990 + 2000 = 13 950 HT → 2790 de TVA → 16 740 TTC.
+  const source = new SourceSimulee({ sieges: 7, modulesSouscrits: ["biolab"] });
+  const composition = await composer(source, "team");
+
+  assert.equal(composition.jouable, true);
+  if (!composition.jouable) return;
+  assert.equal(composition.totalHtCents, 13950);
+  assert.equal(composition.taxe.montantTvaCents, 2790);
+  assert.equal(composition.taxe.totalTtcCents, 16740);
+});
+
 test("la remise SUBSTITUE le prix de l'offre — elle n'ajoute pas une ligne négative", async () => {
   // Chez un prestataire de paiement, une ligne négative n'existe pas.
   // Deux lignes qui s'annulent à moitié donneraient un encaissement
@@ -589,9 +828,9 @@ test("la remise SUBSTITUE le prix de l'offre — elle n'ajoute pas une ligne né
   if (!composition.jouable) return;
 
   assert.equal(composition.lignes.length, 1);
-  assert.equal(composition.lignes[0]!.prixUnitaireHtCents, 2990);
+  assert.equal(composition.lignes[0]!.prixUnitaireHtCents, 4990);
   assert.equal(composition.lignes[0]!.providerPriceId, "price_fondateur_m");
-  assert.equal(composition.totalHtCents, 2990);
+  assert.equal(composition.totalHtCents, 4990);
   assert.ok(composition.lignes.every((l) => l.prixUnitaireHtCents > 0));
 });
 
@@ -605,7 +844,7 @@ test("LE TREIZIÈME MOIS EST PORTÉ DÈS LA SOUSCRIPTION : fin datée et tarif p
 
   assert.equal(composition.remise!.code, "FONDATEUR");
   assert.equal(composition.remise!.finLe, "2027-01-01");
-  assert.equal(composition.remise!.prixRemiseHtCents, 2990);
+  assert.equal(composition.remise!.prixRemiseHtCents, 4990);
   // Sans ces deux-là, personne ne saurait à quel tarif revenir sans
   // refaire tout le calcul — et un calcul refait est un calcul qui
   // diverge.
@@ -632,7 +871,7 @@ test("LA VEILLE DE LA FIN, la remise court encore", async () => {
 
   assert.equal(composition.jouable, true);
   if (!composition.jouable) return;
-  assert.equal(composition.totalHtCents, 2990);
+  assert.equal(composition.totalHtCents, 4990);
 });
 
 test("FONDATEUR + ANNUEL est refusé, parce que 0081 refuse de trancher", async () => {
@@ -780,4 +1019,59 @@ test("le jour de référence est celui de PARIS, pas celui d'UTC", async () => {
   // `toISOString().slice(0, 10)` aurait rendu le 31 juillet.
   assert.equal(tardLeSoir.toISOString().slice(0, 10), "2026-07-31");
   assert.notEqual(jourDeReference(tardLeSoir), tardLeSoir.toISOString().slice(0, 10));
+});
+
+// ══════════════════════════════════════════════════════════════════
+// 8. LE RÉSUMÉ QUI PART AU NAVIGATEUR
+// ══════════════════════════════════════════════════════════════════
+
+test("LE RÉSUMÉ NE PORTE AUCUN IDENTIFIANT DE TARIF DU PRESTATAIRE", async () => {
+  // Il n'est pas secret, mais l'exposer inviterait un jour quelqu'un à
+  // le renvoyer au serveur, et le serveur à s'en servir. Le montant fait
+  // foi côté serveur : le navigateur n'a besoin de rien pour afficher.
+  const source = new SourceSimulee({ sieges: 7, modulesSouscrits: ["biolab"], remise: FONDATEUR });
+  const composition = await composer(source, "team");
+  const resume = versResumePublic(composition);
+
+  const serialise = JSON.stringify(resume);
+  assert.equal(serialise.includes("price_"), false, serialise);
+  assert.equal(serialise.includes("providerPriceId"), false);
+});
+
+test("chaque total de ligne est calculé AU SERVEUR, pas laissé au navigateur", async () => {
+  const source = new SourceSimulee({ sieges: 7 });
+  const resume = versResumePublic(await composer(source, "team"));
+
+  assert.equal(resume.jouable, true);
+  if (!resume.jouable) return;
+
+  const siege = resume.lignes.find((l) => l.nature === "seat")!;
+  assert.equal(siege.quantite, 4);
+  assert.equal(siege.prixUnitaireHtCents, 990);
+  assert.equal(siege.totalLigneHtCents, 3960);
+  // La somme des lignes est le total : deux chiffres qui divergeraient
+  // se verraient à l'écran avant de se voir au relevé bancaire.
+  assert.equal(
+    resume.lignes.reduce((s, l) => s + l.totalLigneHtCents, 0),
+    resume.totalHtCents,
+  );
+});
+
+test("LA MENTION « HT » VOYAGE AVEC LE MONTANT", async () => {
+  // Un prix hors taxes montré sans sa mention à un professionnel est une
+  // pratique commerciale trompeuse. La laisser au gabarit d'affichage,
+  // c'est accepter qu'elle manque au deuxième écran.
+  const resume = versResumePublic(await composer(new SourceSimulee(), "team"));
+  assert.equal(resume.jouable, true);
+  if (!resume.jouable) return;
+  assert.equal(resume.mentionPrix, "HT");
+  assert.equal(resume.devise, "EUR");
+});
+
+test("un refus se résume en code + phrase, sans détail interne", async () => {
+  const resume = versResumePublic(await composer(new SourceSimulee(), "enterprise"));
+  assert.equal(resume.jouable, false);
+  if (resume.jouable) return;
+  assert.equal(resume.code, "planIsQuoteOnly");
+  assert.match(resume.motif, /Prenez contact/);
 });

@@ -17,13 +17,24 @@
  * LES PRIX SONT HORS TAXES, ET LA TVA N'EST PAS ICI
  * ══════════════════════════════════════════════════════════════════
  *
- * Tous les montants de ce fichier sont HORS TAXES et en CENTIMES
- * ENTIERS. La taxe ne s'y calcule pas : c'est `saas_vat_regime()` qui
- * décide du régime (france / euReverseCharge / outsideEu / unknown) et
- * la chaîne de facturation de 0081 qui l'applique. Deux moteurs de taxe
- * sur la même transaction, ce sont deux vérités et un jour un écart —
- * d'où `tax_behavior = 'exclusive'` verrouillé sur chaque tarif du
- * prestataire par 0083, et aucun calcul de taxe demandé au prestataire.
+ * Les LIGNES de ce fichier sont HORS TAXES, en CENTIMES ENTIERS. Mais
+ * le montant PRÉLEVÉ ne l'est pas, et la distinction est le cœur du
+ * sujet : une entreprise française règle 95,88 pour 79,90 HT, une
+ * entreprise de l'Union avec numéro validé règle 79,90
+ * (autoliquidation), hors Union 79,90 aussi. Le PRIX est le même
+ * partout ; c'est le MONTANT PRÉLEVÉ qui change.
+ *
+ * LA RÈGLE DE TAXE N'EST PAS ÉCRITE ICI POUR AUTANT. C'est
+ * `saas_vat_regime_compute()` qui décide du régime (france /
+ * euReverseCharge / outsideEu / unknown) et `billing_provider_tax_terms()`
+ * qui rend l'objet de taxe à appliquer ; ce fichier ne fait
+ * qu'APPLIQUER le taux qu'on lui donne, en entiers. Un régime
+ * « unknown » ne devient jamais 0 % : il refuse la souscription.
+ *
+ * Le moteur de taxe automatique du prestataire, lui, reste éteint —
+ * d'où `tax_behavior = 'exclusive'` verrouillé sur chaque tarif par
+ * 0083. Deux moteurs de taxe sur la même transaction, ce sont deux
+ * vérités et un jour un écart.
  *
  * ══════════════════════════════════════════════════════════════════
  * POURQUOI DES PORTS, ET PAS UN CLIENT SUPABASE DIRECT
@@ -97,6 +108,50 @@ export type RemiseLue = {
   startsOn: string;
   /** NOT NULL en base : il n'existe pas de remise sans fin. */
   endsOn: string;
+  /**
+   * L'OFFRE À LAQUELLE CETTE REMISE EST RÉSERVÉE. NULL = toutes les
+   * offres.
+   *
+   * 0081 la RECOPIE sur la remise accordée plutôt que de la lire au
+   * catalogue, et le commentaire de la migration dit pourquoi : `code`
+   * est en `on delete set null`, donc une ligne de catalogue supprimée
+   * ferait perdre à la remise toute trace de l'offre à laquelle elle
+   * était réservée, et elle deviendrait universelle sans erreur ni
+   * trace. On lit donc la copie, pas l'original.
+   */
+  appliesToPlan: string | null;
+  /**
+   * La date jusqu'à laquelle le client NE PEUT PAS PARTIR. Nulle quand
+   * la remise n'engage à rien.
+   *
+   * ELLE EST ICI PARCE QU'ELLE EST LISIBLE PAR LE CLIENT, et que le
+   * catalogue des offres engageantes, lui, ne l'est pas. C'est ce qui
+   * permet au tunnel de savoir qu'une souscription ENGAGE même quand il
+   * ne peut pas lire l'annonce à afficher — et donc de refuser plutôt
+   * que d'encaisser douze mois en silence.
+   */
+  commitmentEndsOn: string | null;
+};
+
+/**
+ * Ce que rend `billing_provider_tax_terms()` — la fonction de 0083 qui,
+ * comme sa voisine des tarifs, NE LÈVE JAMAIS pour un cas commercial.
+ */
+export type TermesTaxe = {
+  regime: "france" | "euReverseCharge" | "outsideEu" | "unknown" | null;
+  /**
+   * Le taux en POINTS DE BASE (2000 = 20,00 %), donc un ENTIER.
+   *
+   * Surtout pas un flottant : la TVA se calcule en centimes entiers, et
+   * `0.1 + 0.2` vaut `0.30000000000000004`. C'est ainsi qu'une facture
+   * finit par afficher un centime qui n'existe pas.
+   */
+  tauxBps: number | null;
+  /** L'objet de taxe chez le prestataire. NUL quand le taux vaut zéro. */
+  providerTaxRateId: string | null;
+  blockingReason: string | null;
+  /** Le motif écrit par la base, quand elle en donne un. */
+  reason: string | null;
 };
 
 export interface SourceFacturation {
@@ -113,6 +168,15 @@ export interface SourceFacturation {
   lireModulesSouscrits(organizationId: string): Promise<string[]>;
   lireRemiseActive(organizationId: string, leJour: string): Promise<RemiseLue | null>;
   termesTarif(demande: DemandeTermes): Promise<TermesTarif>;
+  /**
+   * LE RÉGIME DE TVA DU CLIENT, ET L'OBJET DE TAXE À APPLIQUER.
+   *
+   * Nos prix sont hors taxes ; le montant PRÉLEVÉ ne l'est pas. Sans
+   * cette lecture, le prestataire encaisserait 79,90 € là où la facture
+   * en réclame 95,88 — et les 15,98 € de TVA française ne seraient
+   * jamais collectés, alors qu'Oasis Care en reste redevable.
+   */
+  lireTermesTaxe(organizationId: string): Promise<TermesTaxe>;
 }
 
 /**
@@ -149,6 +213,19 @@ export type RemiseAppliquee = {
   prixPublicHtCents: number;
   /** Le tarif du prestataire à reprendre à la fin de la remise. */
   providerPricePublicId: string;
+  /**
+   * LA DATE JUSQU'À LAQUELLE LE CLIENT NE PEUT PAS PARTIR, ou `null`
+   * quand la remise n'engage à rien.
+   *
+   * ELLE EST PORTÉE ICI PARCE QU'ELLE EST LA SEULE PREUVE D'ENGAGEMENT
+   * QUE LE CLIENT PUISSE LIRE. Le catalogue des offres engageantes
+   * (`discount_offers`) est réservé aux administrateurs ; la remise
+   * ACCORDÉE, elle, est visible par le membre de l'entreprise. Faire
+   * dépendre le verrou d'engagement du catalogue le rendait donc
+   * silencieusement inopérant côté client — exactement là où il
+   * comptait.
+   */
+  engageJusquAu: string | null;
 };
 
 export type CompositionRefusee = {
@@ -178,6 +255,31 @@ export type CompositionRetenue = {
   /** Les modules compris dans l'offre : aucune ligne, et c'est le point. */
   modulesInclusSansFrais: string[];
   remise: RemiseAppliquee | null;
+  /**
+   * CE QUI SERA RÉELLEMENT PRÉLEVÉ, et pourquoi ce n'est pas le total
+   * hors taxes.
+   *
+   * Le PRIX est le même pour tout le monde ; le MONTANT PRÉLEVÉ change
+   * avec le régime du client. Une entreprise française règle 95,88 pour
+   * 79,90 HT ; une entreprise de l'Union avec numéro validé règle 79,90
+   * (autoliquidation) ; hors Union, 79,90 aussi. Confondre les deux,
+   * c'est soit ne pas collecter une taxe dont on reste redevable, soit
+   * en faire payer une qui n'est pas due.
+   */
+  taxe: TaxeAppliquee;
+};
+
+/** La taxe retenue pour CETTE souscription, et ce qu'elle change. */
+export type TaxeAppliquee = {
+  regime: "france" | "euReverseCharge" | "outsideEu";
+  /** Points de base : 2000 = 20,00 %. Entier. */
+  tauxBps: number;
+  /** L'objet de taxe du prestataire. NUL quand le taux vaut zéro. */
+  providerTaxRateId: string | null;
+  /** En centimes entiers. Zéro en autoliquidation et hors Union. */
+  montantTvaCents: number;
+  /** HT + TVA. C'est CE nombre qui apparaîtra sur le relevé bancaire. */
+  totalTtcCents: number;
 };
 
 export type Composition = CompositionRetenue | CompositionRefusee;
@@ -226,6 +328,18 @@ const MOTIFS: Record<string, string> = {
     "Cette remise n'est pas un prix imposé : elle ne se transpose pas en tarif chez le prestataire.",
   discountYearlyUndecided:
     "La remise est libellée en prix MENSUEL et l'abonnement demandé est ANNUEL : son équivalent annuel n'a pas été décidé. Basculez l'abonnement au mois.",
+  discountReservedToAnotherPlan:
+    "Le tarif préférentiel dont vous bénéficiez est réservé à une autre offre que celle-ci. Changer d'offre y mettrait fin : parlons-en avant, plutôt que de vous le faire perdre en cliquant.",
+  discountPlanUnspecified:
+    "Le tarif préférentiel dont vous bénéficiez est réservé à une offre précise, et cette demande ne dit pas laquelle. On ne l'applique pas au hasard.",
+  vatRegimeUnknown:
+    "Votre régime de TVA n'est pas déterminé, et il commande le montant qui sera prélevé. Pour une entreprise de l'Union européenne hors France, il faut que votre numéro de TVA intracommunautaire soit renseigné puis validé. Écrivez-nous : nous le validons et la souscription s'ouvre.",
+  vatRateUnknown:
+    "Aucun taux de TVA n'est enregistré pour votre pays. On ne devine pas un taux : la souscription est refusée jusqu'à ce qu'il soit fixé.",
+  providerTaxRateMissing:
+    "La TVA applicable à votre pays n'est pas encore reliée chez le prestataire de paiement. Encaisser sans elle reviendrait à ne pas collecter la taxe : la souscription est refusée jusqu'à la mise en place.",
+  taxRateDrift:
+    "Le taux de TVA enregistré chez le prestataire ne correspond plus au nôtre. Encaisser reviendrait à appliquer l'ancien taux : la souscription est refusée jusqu'à la mise à jour de la correspondance.",
   providerPriceMissing:
     "Aucun tarif ne correspond à cette ligne chez le prestataire de paiement. La correspondance doit être créée avant de pouvoir encaisser — on ne devine pas un montant.",
   amountDrift:
@@ -236,6 +350,8 @@ const MOTIFS: Record<string, string> = {
 /** Motifs propres à ce fichier, sans équivalent en base. */
 export const MOTIF_OFFRE_INTROUVABLE = "offreIntrouvable";
 export const MOTIF_SIEGES_INCLUS_NON_DECIDES = "siegesInclusNonDecides";
+export const MOTIF_REMISE_AUTRE_OFFRE = "remiseReserveeAUneAutreOffre";
+export const MOTIF_TAXE_INDETERMINEE = "taxeIndeterminee";
 
 export function phrasePourMotif(code: string): string {
   const phrase = MOTIFS[code];
@@ -338,9 +454,33 @@ export async function composerSouscription(
     billingCycle === "yearly" ? "abonnement annuel" : "abonnement mensuel"
   }`;
 
+  // LA REMISE RÉSERVÉE À UNE OFFRE NE DÉBORDE PAS SUR LES AUTRES, et le
+  // contrôle vient AVANT toute substitution.
+  //
+  // Le tarif fondateur vaut 49,90 € et 0081 le réserve à l'offre Pro.
+  // Sans ce contrôle il se substituait au prix de N'IMPORTE QUELLE offre
+  // demandée, dans les deux sens : sur Pro Business (139,90 €) on
+  // encaissait 49,90, soit 90 € offerts par mois et par client ; sur Pro
+  // Solo (39,90 €) on encaissait 49,90, soit 10 € DE PLUS que le tarif
+  // public, sous une ligne libellée « Tarif fondateur ».
+  //
+  // ON REFUSE, ON N'IGNORE PAS. Ignorer la remise ferait payer le tarif
+  // plein à quelqu'un à qui une remise a été accordée — c'est le cas
+  // voisin que ce fichier refuse déjà quelques lignes plus bas, et il
+  // n'y a pas de raison de le traiter autrement ici.
+  if (remiseLue !== null && remiseLue.appliesToPlan !== null && remiseLue.appliesToPlan !== planKey) {
+    return refus(MOTIF_REMISE_AUTRE_OFFRE, phrasePourMotif("discountReservedToAnotherPlan"));
+  }
+
   if (remiseLue !== null && remiseLue.kind === "fixedMonthlyPrice") {
     const termesRemise = await source.termesTarif({
       kind: "discount",
+      // L'OFFRE VOYAGE JUSQU'À LA BASE. Sans elle,
+      // `billing_provider_price_terms` ne peut pas vérifier la
+      // restriction de son côté, et la garde ne tiendrait que dans ce
+      // fichier — donc seulement tant que ce fichier est le seul
+      // appelant.
+      planKey,
       billingCycle,
       discountCode: remiseLue.code,
     });
@@ -362,6 +502,7 @@ export async function composerSouscription(
       // clé, personne ne saurait à quel tarif revenir au treizième mois
       // sans refaire tout ce calcul.
       providerPricePublicId: termesOffre.providerPriceId,
+      engageJusquAu: remiseLue.commitmentEndsOn,
     };
     prixOffreHtCents = termesRemise.ourAmountCents;
     providerPriceOffre = termesRemise.providerPriceId;
@@ -480,6 +621,45 @@ export async function composerSouscription(
     0,
   );
 
+  // ---- 7. LA TAXE, ET CE QUI SERA VRAIMENT PRÉLEVÉ -----------------
+  //
+  // Elle vient EN DERNIER parce qu'elle s'applique au total, mais elle
+  // n'est pas un ornement : sans elle, le prestataire encaisse le hors
+  // taxes nu. Une entreprise française serait débitée de 79,90 € quand
+  // sa facture en réclame 95,88 — la TVA ne serait jamais collectée, la
+  // facture resterait éternellement impayée de son montant, et le
+  // rapprochement du webhook ne trouverait jamais de facture
+  // correspondante.
+  const termesTaxe = await source.lireTermesTaxe(organizationId);
+  if (termesTaxe.blockingReason !== null) {
+    // Le motif de la base est plus précis que le nôtre quand il en
+    // porte un — « votre numéro n'est pas validé » vaut mieux que
+    // « régime inconnu ».
+    return refus(
+      termesTaxe.blockingReason,
+      termesTaxe.blockingReason === "vatRegimeUnknown" && termesTaxe.reason !== null
+        ? `${phrasePourMotif("vatRegimeUnknown")} (${termesTaxe.reason})`
+        : phrasePourMotif(termesTaxe.blockingReason),
+    );
+  }
+  if (
+    termesTaxe.regime === null
+    || termesTaxe.regime === "unknown"
+    || termesTaxe.tauxBps === null
+  ) {
+    // Défense : 0083 ne rend jamais ce cas sans motif. S'il arrivait, un
+    // régime absent ne doit pas devenir « 0 % » par distraction — ce
+    // serait de la TVA non collectée dont Oasis Care reste redevable.
+    return refus(MOTIF_TAXE_INDETERMINEE, phrasePourMotif("vatRegimeUnknown"));
+  }
+
+  // EN ENTIERS, DU DÉBUT À LA FIN. Le taux est en points de base, donc
+  // `7990 × 2000 / 10000` — jamais `7990 × 0.2`, qui ferait entrer un
+  // flottant dans un calcul de monnaie. Même arrondi que
+  // `saas_invoice_totals` de 0081 (`round(base * vat_rate / 100.0)`),
+  // sans quoi l'encaissement et la facture différeraient d'un centime.
+  const montantTvaCents = Math.round((totalHtCents * termesTaxe.tauxBps) / 10000);
+
   return {
     jouable: true,
     planKey,
@@ -490,5 +670,136 @@ export async function composerSouscription(
     siegesFacturables,
     modulesInclusSansFrais,
     remise,
+    taxe: {
+      regime: termesTaxe.regime,
+      tauxBps: termesTaxe.tauxBps,
+      providerTaxRateId: termesTaxe.providerTaxRateId,
+      montantTvaCents,
+      totalTtcCents: totalHtCents + montantTvaCents,
+    },
+  };
+}
+
+// ══════════════════════════════════════════════════════════════════
+// LE RÉSUMÉ, TEL QU'IL PART AU NAVIGATEUR
+// ══════════════════════════════════════════════════════════════════
+
+/**
+ * Une ligne du résumé. Elle porte le total de la ligne CALCULÉ AU
+ * SERVEUR : laisser le navigateur multiplier la quantité par le prix
+ * unitaire, c'est accepter qu'il affiche autre chose que ce qui sera
+ * prélevé, et l'écart ne se verrait qu'au relevé bancaire.
+ */
+export type LigneResume = {
+  nature: "plan" | "seat" | "module";
+  moduleKey: string | null;
+  libelle: string;
+  quantite: number;
+  /** HORS TAXES, en centimes entiers. */
+  prixUnitaireHtCents: number;
+  /** HORS TAXES, en centimes entiers. */
+  totalLigneHtCents: number;
+};
+
+export type ResumeSouscription =
+  | {
+      jouable: true;
+      planKey: string;
+      billingCycle: CycleFacturation;
+      devise: string;
+      lignes: LigneResume[];
+      totalHtCents: number;
+      /**
+       * « HT ». Elle voyage AVEC le montant et n'est pas laissée au
+       * gabarit d'affichage : un prix hors taxes montré sans sa mention
+       * à un professionnel est une pratique commerciale trompeuse, et
+       * une mention écrite en dur dans un écran finit par manquer au
+       * deuxième écran.
+       */
+      mentionPrix: "HT";
+      siegesFacturables: number;
+      modulesInclusSansFrais: string[];
+      remise: {
+        code: string | null;
+        label: string;
+        finLe: string;
+        prixRemiseHtCents: number;
+        prixPublicHtCents: number;
+        /**
+         * La date de fin d'ENGAGEMENT, distincte de la fin de REMISE.
+         * Elles coïncident sur le tarif fondateur ; rien ne garantit
+         * qu'une remise future fera de même.
+         */
+        engageJusquAu: string | null;
+      } | null;
+      /**
+       * CE QUI SERA DÉBITÉ, et il faut le montrer.
+       *
+       * Découvrir au relevé bancaire que 79,90 € annoncés sont devenus
+       * 95,88 € est la première cause de contestation. L'écart n'est
+       * pas une surprise : c'est la TVA, elle est légitime, et il n'y a
+       * aucune raison de la cacher jusqu'au prélèvement.
+       */
+      taxe: {
+        regime: "france" | "euReverseCharge" | "outsideEu";
+        tauxBps: number;
+        montantTvaCents: number;
+        totalTtcCents: number;
+      };
+    }
+  | { jouable: false; code: string; motif: string };
+
+/**
+ * CE QUI A LE DROIT DE SORTIR DU SERVEUR.
+ *
+ * L'identifiant de tarif du prestataire (`price_…`) est RETIRÉ. Il n'est
+ * pas secret — il voyage avec la clé publiable dans une intégration
+ * classique — mais l'exposer ici inviterait un jour quelqu'un à le
+ * renvoyer au serveur, et le serveur à s'en servir. Le montant fait foi
+ * côté serveur : le navigateur n'a besoin de rien pour l'afficher.
+ */
+export function versResumePublic(composition: Composition): ResumeSouscription {
+  if (!composition.jouable) {
+    return { jouable: false, code: composition.code, motif: composition.motif };
+  }
+
+  return {
+    jouable: true,
+    planKey: composition.planKey,
+    billingCycle: composition.billingCycle,
+    devise: composition.devise,
+    lignes: composition.lignes.map((ligne) => ({
+      nature: ligne.nature,
+      moduleKey: ligne.moduleKey,
+      libelle: ligne.libelle,
+      quantite: ligne.quantite,
+      prixUnitaireHtCents: ligne.prixUnitaireHtCents,
+      totalLigneHtCents: ligne.quantite * ligne.prixUnitaireHtCents,
+    })),
+    totalHtCents: composition.totalHtCents,
+    mentionPrix: "HT",
+    siegesFacturables: composition.siegesFacturables,
+    modulesInclusSansFrais: composition.modulesInclusSansFrais,
+    remise:
+      composition.remise === null
+        ? null
+        : {
+            code: composition.remise.code,
+            label: composition.remise.label,
+            finLe: composition.remise.finLe,
+            prixRemiseHtCents: composition.remise.prixRemiseHtCents,
+            prixPublicHtCents: composition.remise.prixPublicHtCents,
+            engageJusquAu: composition.remise.engageJusquAu,
+          },
+    // L'IDENTIFIANT DE L'OBJET DE TAXE EST RETIRÉ, pour la même raison
+    // que celui du tarif : le navigateur n'en a pas besoin pour
+    // afficher un montant, et l'exposer inviterait un jour quelqu'un à
+    // le renvoyer au serveur.
+    taxe: {
+      regime: composition.taxe.regime,
+      tauxBps: composition.taxe.tauxBps,
+      montantTvaCents: composition.taxe.montantTvaCents,
+      totalTtcCents: composition.taxe.totalTtcCents,
+    },
   };
 }
