@@ -76,11 +76,23 @@ values
  ('cc810013-0000-4000-8000-000000000081','00000000-0000-0000-0000-000000000000',
   'authenticated','authenticated','s2-security@test.invalid','',now(),now(),now(),now(),'{}','{}'),
  ('cc810014-0000-4000-8000-000000000081','00000000-0000-0000-0000-000000000000',
-  'authenticated','authenticated','s2-invite@test.invalid','',now(),now(),now(),now(),'{}','{}');
+  'authenticated','authenticated','s2-invite@test.invalid','',now(),now(),now(),now(),'{}','{}'),
+ ('cc810015-0000-4000-8000-000000000081','00000000-0000-0000-0000-000000000000',
+  'authenticated','authenticated','s2-fondateur@test.invalid','',now(),now(),now(),now(),'{}','{}');
 
--- Deux entreprises Pro. A est française et complètement identifiée : on
+-- Trois entreprises Pro. A est française et complètement identifiée : on
 -- pourra lui facturer. B est belge sans numéro de TVA validé : c'est
 -- elle qui doit rendre le régime INCONNU.
+--
+-- F EST LE CLIENT FONDATEUR, et elle existe pour une raison de fond :
+-- le tarif fondateur est RÉSERVÉ à l'offre Pro, et A monte en gamme vers
+-- Pro Business au § 8 pour éprouver la matrice offre × module. Les deux
+-- rôles sont devenus incompatibles le jour où la remise a reçu sa
+-- restriction d'offre — ce qui est exactement ce que cette restriction
+-- doit produire. Son nom la place APRÈS A dans l'ordre alphabétique, et
+-- ce détail compte : `saas_generate_invoices` parcourt les entreprises
+-- `order by o.name`, et le § 11 vérifie que c'est A qui reçoit le
+-- troisième numéro de la séquence.
 select set_config('request.jwt.claims',
   json_build_object('sub','cc810002-0000-4000-8000-000000000081')::text, true);
 insert into ids select 'orgA', public.create_professional_organization('Paysages Suite A','landscaper');
@@ -95,10 +107,20 @@ update public.business_organizations
        country = 'FR', email = 'compta@suite-a.test'
  where id = (select v from ids where k='orgA');
 
+select set_config('request.jwt.claims',
+  json_build_object('sub','cc810015-0000-4000-8000-000000000081')::text, true);
+insert into ids select 'orgF', public.create_professional_organization('Paysages Suite F','landscaper');
+
 update public.business_organizations
    set legal_name = 'BVBA Suite B', country = 'BE',
        address_line1 = 'Teststraat 2', postal_code = '1000', city = 'Bruxelles'
  where id = (select v from ids where k='orgB');
+
+update public.business_organizations
+   set legal_name = 'SARL Suite F', siret = '555 666 777 00088',
+       address_line1 = '5 rue du Fondateur', postal_code = '44000', city = 'Nantes',
+       country = 'FR', email = 'compta@suite-f.test'
+ where id = (select v from ids where k='orgF');
 
 -- Les administrateurs de plateforme. Posés en `postgres` : c'est le seul
 -- chemin qui existe, et c'est le sujet du test « personne ne
@@ -780,27 +802,155 @@ begin
   insert into res values ('Descendre vers une offre dont la case n''est pas décidée est REFUSÉ','true',refuse::text);
 end $$;
 
--- LA REMISE FONDATEUR : datée, avec une fin, jamais à vie.
+-- LA REMISE FONDATEUR : datée, avec une fin, réservée à UNE offre, et
+-- payée d'un engagement.
 select set_config('request.jwt.claims',
   json_build_object('sub','cc810012-0000-4000-8000-000000000081')::text, true);
 
 insert into res select 'La remise fondateur dure 12 mois, pas la vie','12',
   (select duration_months::text from public.discount_offers where code = 'FONDATEUR');
 
--- Elle démarre au 1er janvier : c'est la période que la génération de
--- factures du § 10 va couvrir, et une remise qui ne couvre pas la
--- période ne produit aucune ligne — ce qui est le comportement voulu,
--- mais ne testerait rien ici.
+insert into res select 'Elle vaut 49,90 € HT, sur l''offre Pro, avec engagement','4990/team/12',
+  (select value_cents || '/' || applies_to_plan || '/' || commitment_months
+     from public.discount_offers where code = 'FONDATEUR');
+
+-- LES TROIS CHIFFRES QUE L'ÉCRAN DOIT ANNONCER AVANT. Le prix d'APRÈS
+-- n'est pas recopié dans le catalogue : il se déduit du tarif public de
+-- l'offre visée, ce à quoi sert précisément la restriction d'offre.
+insert into res select 'Douze mois à 49,90 €, puis 79,90 € — et la base sait le dire','12/4990/7990/true',
+  (select duration_months || '/' || monthly_price_during_cents || '/'
+       || monthly_price_after_cents || '/' || requires_commitment
+     from public.discount_offer_terms('FONDATEUR'));
+
+insert into res select 'Et rien ne bloque cette annonce','true',
+  (select (blocking_reason is null)::text from public.discount_offer_terms('FONDATEUR'));
+
+-- LE REFUS QUI VAUT 90 € PAR MOIS ET PAR CLIENT. orgA est passée en Pro
+-- Business (139,90 €) juste au-dessus. Le prix imposé de 49,90 € y
+-- resterait 49,90 € : la remise vaudrait 90 € au lieu de 30, et ni la
+-- facture ni le MRR ne le signaleraient — tous deux seraient d'accord,
+-- et tous deux faux.
+do $$
+declare refuse boolean := false; v_msg text;
+begin
+  begin
+    perform public.admin_apply_discount(
+      (select v from ids where k='orgA'), 'FONDATEUR',
+      'Tentative de fondateur sur Business.', date '2026-01-01',
+      'Texte d''engagement.', '2026-01');
+  exception when others then refuse := true; v_msg := sqlerrm;
+  end;
+  insert into res values ('UNE REMISE FONDATEUR POSÉE SUR PRO BUSINESS EST REFUSÉE','true',refuse::text);
+  insert into res values ('Et le refus nomme l''offre à laquelle elle est réservée','true',
+    (v_msg like '%Pro%')::text);
+end $$;
+
+-- L'abonnement du client fondateur : Pro, au mois. La remise démarre au
+-- 1er janvier — c'est la période que la génération de factures du § 10
+-- va couvrir, et une remise qui ne couvre pas la période ne produit
+-- aucune ligne, ce qui est voulu mais ne testerait rien ici.
 do $$
 begin
+  perform public.admin_create_subscription(
+    (select v from ids where k='orgF'), 'team', 'monthly',
+    'Client fondateur de la campagne de lancement.', 'active');
+end $$;
+
+-- LA PREUVE EST OBLIGATOIRE DÈS QUE L'OFFRE ENGAGE. Sans le texte
+-- affiché, la remise n'est pas accordée : une trace qui dirait « a
+-- accepté » sans conserver ce qu'il a lu ne vaudrait rien.
+do $$
+declare refuse boolean := false;
+begin
+  begin
+    perform public.admin_apply_discount(
+      (select v from ids where k='orgF'), 'FONDATEUR',
+      'Sans texte affiché.', date '2026-01-01');
+  exception when others then refuse := true;
+  end;
+  insert into res values ('UN ENGAGEMENT SANS LE TEXTE AFFICHÉ EST REFUSÉ','true',refuse::text);
+end $$;
+
+do $$
+declare v_texte text;
+begin
+  select config_value->>'texte' into v_texte
+    from public.commercial_config where config_key = 'billing.commitment.terms';
+
   perform public.admin_apply_discount(
-    (select v from ids where k='orgA'), 'FONDATEUR',
-    'Client fondateur, campagne de lancement.', date '2026-01-01');
+    (select v from ids where k='orgF'), 'FONDATEUR',
+    'Client fondateur, campagne de lancement.', date '2026-01-01',
+    v_texte, '2026-01');
 
   insert into res values ('Appliquée, elle porte une date de fin — jamais « à vie »', 'true',
     (select (d.ends_on = (d.starts_on + interval '12 months')::date)::text
        from public.subscription_discounts d
-      where d.organization_id = (select v from ids where k='orgA') and d.cancelled_at is null));
+      where d.organization_id = (select v from ids where k='orgF') and d.cancelled_at is null));
+
+  insert into res values ('Et elle porte la date de fin d''ENGAGEMENT', 'true',
+    (select (d.commitment_ends_on = date '2027-01-01')::text
+       from public.subscription_discounts d
+      where d.organization_id = (select v from ids where k='orgF') and d.cancelled_at is null));
+
+  insert into res values ('La remise POSÉE recopie l''offre visée, elle ne la relit pas au catalogue', 'team',
+    (select d.applies_to_plan from public.subscription_discounts d
+      where d.organization_id = (select v from ids where k='orgF') and d.cancelled_at is null));
+
+  -- LA PREUVE CONTIENT LE TEXTE, PAS UNE RÉFÉRENCE VERS LUI.
+  insert into res values ('L''ACCEPTATION CONSERVE LE TEXTE EXACT AFFICHÉ', 'true',
+    (select (a.terms_text = v_texte and length(a.terms_text) > 100)::text
+       from public.subscription_commitment_acceptances a
+      where a.organization_id = (select v from ids where k='orgF')));
+
+  insert into res values ('Avec sa version, ses douze mois et ses deux prix', '2026-01/12/4990/7990',
+    (select a.terms_version || '/' || a.commitment_months || '/'
+         || a.monthly_price_during_cents || '/' || a.monthly_price_after_cents
+       from public.subscription_commitment_acceptances a
+      where a.organization_id = (select v from ids where k='orgF')));
+end $$;
+
+-- LE PRIX RÉELLEMENT DÛ, LES DOUZE PREMIERS MOIS PUIS LE TREIZIÈME.
+insert into res select 'UN FONDATEUR PRO PAIE 49,90 € PENDANT DOUZE MOIS','4990',
+  (select sum(unit_price_cents)::text from public.saas_subscription_billing_lines(
+     (select v from ids where k='orgF'), date '2026-01-01', date '2026-02-01')
+   where kind in ('plan','discount'));
+
+insert into res select 'ET 79,90 € AU TREIZIÈME, sans que personne n''y touche','7990',
+  (select sum(unit_price_cents)::text from public.saas_subscription_billing_lines(
+     (select v from ids where k='orgF'), date '2027-01-01', date '2027-02-01')
+   where kind in ('plan','discount'));
+
+-- LE VOLET SYMÉTRIQUE, ET C'EST LA VRAIE FUITE : monter en gamme avec
+-- la remise sur le dos. `admin_set_subscription_plan` ne lit aucune
+-- remise ; c'est le déclencheur qui refuse.
+do $$
+declare refuse boolean := false; v_msg text;
+begin
+  begin
+    perform public.admin_set_subscription_plan(
+      (select v from ids where k='orgF'), 'business', 'Montée en gamme du client fondateur.');
+  exception when others then refuse := true; v_msg := sqlerrm;
+  end;
+  insert into res values ('MONTER UN FONDATEUR DE PRO À PRO BUSINESS EST REFUSÉ','true',refuse::text);
+  insert into res values ('Et le message dit de retirer la remise d''abord','true',
+    (v_msg like '%Retirez-la%')::text);
+  insert into res values ('L''offre n''a pas bougé','team',
+    (select plan from public.organization_subscriptions
+      where organization_id = (select v from ids where k='orgF')));
+end $$;
+
+-- BASCULER AU CYCLE ANNUEL SOUS ENGAGEMENT : refusé aussi. Sans cela,
+-- on souscrit au mois et on bascule ensuite, et on retombe sur la
+-- facture bancale.
+do $$
+declare refuse boolean := false;
+begin
+  begin
+    update public.organization_subscriptions set billing_cycle = 'yearly'
+     where organization_id = (select v from ids where k='orgF');
+  exception when others then refuse := true;
+  end;
+  insert into res values ('BASCULER UN FONDATEUR MENSUEL EN ANNUEL EST REFUSÉ','true',refuse::text);
 end $$;
 
 reset role;
@@ -823,11 +973,52 @@ begin
   begin
     insert into public.subscription_discounts
       (organization_id, label, kind, value_cents, starts_on, ends_on, reason)
-    values ((select v from ids where k='orgA'), 'Doublon', 'fixedMonthlyPrice', 1000,
+    values ((select v from ids where k='orgF'), 'Doublon', 'fixedMonthlyPrice', 1000,
             current_date, (current_date + 60), 'Essai de cumul.');
   exception when others then refuse := true;
   end;
   insert into res values ('Deux remises qui se chevauchent sont refusées','true',refuse::text);
+end $$;
+
+-- UNE REMISE RESTREINTE POSÉE AVANT L'ABONNEMENT SE CONTOURNERAIT EN
+-- DEUX GESTES : poser la remise, souscrire Business ensuite. Le
+-- déclencheur exige donc que l'abonnement existe déjà.
+do $$
+declare refuse boolean := false; v_org uuid;
+begin
+  -- L'entreprise est créée sous le compte de test qui n'est ni
+  -- administrateur ni membre d'une autre entreprise : le § 18.b
+  -- vérifie que le responsable facturation n'est membre de RIEN, et
+  -- créer cette entreprise sous son jeton casserait cette assertion.
+  perform set_config('request.jwt.claims',
+    json_build_object('sub','cc810015-0000-4000-8000-000000000081')::text, true);
+  v_org := public.create_professional_organization('Entreprise sans abonnement','landscaper');
+  perform set_config('request.jwt.claims',
+    json_build_object('sub','cc810012-0000-4000-8000-000000000081')::text, true);
+
+  begin
+    insert into public.subscription_discounts
+      (organization_id, label, kind, value_cents, applies_to_plan, starts_on, ends_on, reason)
+    values (v_org, 'Fondateur avant l''heure', 'fixedMonthlyPrice', 4990, 'team',
+            current_date, (current_date + 60), 'Essai de contournement.');
+  exception when others then refuse := true;
+  end;
+  insert into res values ('UNE REMISE RESTREINTE NE SE POSE PAS AVANT L''ABONNEMENT','true',refuse::text);
+  delete from public.business_organizations where id = v_org;
+end $$;
+
+-- UN PRIX MENSUEL IMPOSÉ N'A DE SENS QUE FACE À UN TARIF PUBLIC.
+do $$
+declare refuse boolean := false;
+begin
+  begin
+    insert into public.discount_offers
+      (code, label, kind, value_cents, duration_months, applies_to_plan)
+    values ('TEST-DEVIS', 'Prix imposé sur une offre sur devis', 'fixedMonthlyPrice',
+            9900, 12, 'enterprise');
+  exception when others then refuse := true;
+  end;
+  insert into res values ('Un prix imposé sur une offre SUR DEVIS est refusé','true',refuse::text);
 end $$;
 
 -- ============================================================
@@ -943,25 +1134,36 @@ begin
 end $$;
 
 -- 10.c LA GÉNÉRATION, ET LA NUMÉROTATION.
-insert into ids select 'gen1', invoice_id from public.saas_generate_invoices(
-  'monthly', date '2026-01-01', date '2026-02-01', 'Facturation de janvier.', false)
-  where organization_id = (select v from ids where k='orgA');
+insert into ids (k, v)
+select case when g.organization_id = (select v from ids where k='orgA') then 'gen1' else 'gen1F' end,
+       g.invoice_id
+  from public.saas_generate_invoices(
+    'monthly', date '2026-01-01', date '2026-02-01', 'Facturation de janvier.', false) g
+ where g.organization_id in ((select v from ids where k='orgA'),
+                             (select v from ids where k='orgF'));
 
 insert into res select 'La génération produit un brouillon, sans numéro','true',
   (select (number is null and status = 'draft')::text from public.saas_invoices
     where id = (select v from ids where k='gen1'));
 
-insert into res select 'Le brouillon porte l''offre, la remise, et pas le module inclus','discount,plan',
+-- orgA est passée en Pro Business, qui COMPREND BioLab : son brouillon
+-- ne porte que l'offre.
+insert into res select 'Le brouillon porte l''offre, et pas le module inclus','plan',
   (select string_agg(distinct kind, ',' order by kind) from public.saas_invoice_lines
     where invoice_id = (select v from ids where k='gen1'));
 
--- L'entreprise est passée en Pro Business (139,90 €) au § 8, et la
--- remise fondateur IMPOSE un prix mensuel de 29,90 €. La ligne de
--- remise vaut donc −110,00 €, et l'offre plus la remise font 29,90 € :
--- c'est ce que le dirigeant a promis, et c'est ce que la base calcule.
-insert into res select 'La remise fondateur ramène le prix mensuel à 29,90 €','2990',
+-- LE CLIENT FONDATEUR, LUI, PORTE LES DEUX LIGNES. Il est sur Pro
+-- (79,90 €) et la remise IMPOSE un prix mensuel de 49,90 € : la ligne
+-- de remise vaut donc −30,00 €, et l'offre plus la remise font
+-- 49,90 €. C'est ce que le dirigeant a promis, et c'est ce que la base
+-- calcule — sur l'offre Pro et sur elle seule.
+insert into res select 'Le brouillon du fondateur porte l''offre ET la remise','discount,plan',
+  (select string_agg(distinct kind, ',' order by kind) from public.saas_invoice_lines
+    where invoice_id = (select v from ids where k='gen1F'));
+
+insert into res select 'LA REMISE FONDATEUR RAMÈNE LE PRIX MENSUEL À 49,90 €','4990',
   (select sum(total_cents)::text from public.saas_invoice_lines
-    where invoice_id = (select v from ids where k='gen1') and kind in ('plan','discount'));
+    where invoice_id = (select v from ids where k='gen1F') and kind in ('plan','discount'));
 
 -- IDEMPOTENCE : relancer ne crée pas de doublon — et RECALCULE le
 -- brouillon. Un brouillon n'est pas un document : c'est un calcul en
@@ -1563,6 +1765,7 @@ begin
   foreach t in array array[
     'platform_security_settings', 'platform_admin_invitations',
     'platform_modules', 'plan_modules', 'discount_offers', 'subscription_discounts',
+    'subscription_commitment_acceptances',
     'organization_subscription_events', 'organization_subscription_modules',
     'saas_account_credits', 'saas_billing_issuer', 'saas_vat_rates',
     'saas_customer_tax_profiles', 'saas_invoices', 'saas_invoice_lines',
@@ -1632,8 +1835,13 @@ insert into res select 'Aucune ligne de journal sans motif','0',
   (select count(*)::text from public.admin_audit_events where btrim(reason) = '');
 
 insert into res select 'L''historique d''abonnement s''écrit aussi','true',
-  (select (count(*) >= 4)::text from public.organization_subscription_events
+  (select (count(*) >= 3)::text from public.organization_subscription_events
     where organization_id = (select v from ids where k='orgA'));
+
+insert into res select 'Et la remise du fondateur y laisse sa trace','true',
+  (select (count(*) > 0)::text from public.organization_subscription_events
+    where event = 'discountApplied'
+      and organization_id = (select v from ids where k='orgF'));
 
 insert into res select 'Et il retient le passage d''une offre à l''autre','team → business',
   (select plan_before || ' → ' || plan_after from public.organization_subscription_events
@@ -1651,10 +1859,16 @@ reset role;
 select set_config('request.jwt.claims',
   json_build_object('sub','cc810010-0000-4000-8000-000000000081','aal','aal2')::text, true);
 
--- orgA : Pro Business (139,90 €), remise FONDATEUR en cours, BioLab
--- compris dans l'offre. Le prix réellement payé est 29,90 €.
-insert into res select 'UN CLIENT FONDATEUR COMPTE POUR CE QU''IL PAIE, pas pour le tarif public','2990',
+-- orgA : Pro Business (139,90 €), BioLab compris dans l'offre, aucune
+-- remise — la remise fondateur ne peut plus y être posée.
+insert into res select 'Un abonné Pro Business compte pour son tarif','13990',
   public.subscription_normalized_mrr_cents((select v from ids where k='orgA'))::text;
+
+-- orgF : Pro (79,90 €), remise FONDATEUR en cours. Le prix réellement
+-- payé est 49,90 €, et c'est ce que le MRR doit compter — la somme
+-- naïve de 0075 aurait écrit 79,90 €.
+insert into res select 'UN CLIENT FONDATEUR COMPTE POUR CE QU''IL PAIE, pas pour le tarif public','4990',
+  public.subscription_normalized_mrr_cents((select v from ids where k='orgF'))::text;
 
 do $$
 begin
@@ -1667,10 +1881,10 @@ end $$;
 insert into res select 'UN ABONNÉ ANNUEL COMPTE POUR UN DOUZIÈME, pas pour son tarif mensuel','6658',
   public.subscription_normalized_mrr_cents((select v from ids where k='orgB'))::text;
 
-insert into res select 'Le MRR de la plateforme est la somme des deux','9648',
+insert into res select 'Le MRR de la plateforme est la somme des trois','25638',
   (select mrr_cents::text from public.admin_platform_kpis());
 
-insert into res select 'Et l''ARR redevient exact, parce que le MRR est normalisé','115776',
+insert into res select 'Et l''ARR redevient exact, parce que le MRR est normalisé','307656',
   (select arr_cents::text from public.admin_platform_kpis());
 
 -- UN SEUL MONTANT INCALCULABLE REND TOUT LE MRR INCONNU. Le contraire —
@@ -2070,6 +2284,352 @@ begin
     insert into res values ('Analyste en lecture seule — « ' || left(f, 52) || '… » lève', 'true', refuse::text);
   end loop;
 end $$;
+
+-- ============================================================
+-- 19. LES SIÈGES COMPRIS, ET L'ENGAGEMENT FONDATEUR
+-- ============================================================
+-- CE QUE CE PARAGRAPHE DÉFEND, et qui n'existait pas avant :
+--   • les sièges compris sont décidés (1 / 5 / 10) et le compte est
+--     juste — cinq utilisateurs sur Pro ne paient rien, sept en paient
+--     deux ;
+--   • une résiliation avant le terme de l'engagement est refusée PAR LA
+--     BASE, y compris par un `update` tapé à la main ;
+--   • un administrateur peut passer outre, avec un motif, et la trace
+--     dit qui a levé quoi ;
+--   • la preuve d'acceptation garde SON texte, même quand le texte
+--     courant change ;
+--   • un Fondateur annuel est refusé à la source, et le calcul refuse
+--     de produire une facture bancale s'il en existait un malgré tout.
+reset role;
+select set_config('request.jwt.claims',
+  json_build_object('sub','cc810010-0000-4000-8000-000000000081','aal','aal2')::text, true);
+
+-- ------------------------------------------------------------
+-- 19.a LES SIÈGES COMPRIS
+-- ------------------------------------------------------------
+insert into res select 'LES SIÈGES COMPRIS SONT DÉCIDÉS : 1, 5 et 10','1/5/10',
+  (select string_agg(included_seats::text, '/' order by position)
+     from public.organization_plans where key in ('solo','team','business'));
+
+insert into res select 'Enterprise reste NON DÉCIDÉ : sa capacité se négocie','true',
+  (select (included_seats is null)::text
+     from public.organization_plans where key = 'enterprise');
+
+-- `max_users` est l'indication que lit web-pro. La laisser en désaccord
+-- avec `included_seats` donnerait deux vérités, dont une invisible.
+insert into res select 'Et l''indication d''affichage dit la même chose que la facturation','1/5/10',
+  (select string_agg(max_users::text, '/' order by position)
+     from public.organization_plans where key in ('solo','team','business'));
+
+insert into res select 'La grille affichée annonce les cinq utilisateurs de Pro','true',
+  (select (features::text like '%5 utilisateurs compris%')::text
+     from public.organization_plans where key = 'team');
+
+do $$
+declare
+  v_org uuid;
+  i integer;
+  v_uid uuid;
+begin
+  -- L'entreprise est créée sous un compte qui n'est pas administrateur :
+  -- le § 18.b vérifie qu'aucun administrateur n'est membre d'une
+  -- entreprise cliente.
+  perform set_config('request.jwt.claims',
+    json_build_object('sub','cc810015-0000-4000-8000-000000000081')::text, true);
+  v_org := public.create_professional_organization('Paysages Suite S','landscaper');
+  perform set_config('request.jwt.claims',
+    json_build_object('sub','cc810010-0000-4000-8000-000000000081','aal','aal2')::text, true);
+  insert into ids values ('orgS', v_org);
+
+  perform public.admin_create_subscription(
+    v_org, 'team', 'monthly', 'Client Pro, pour éprouver le compte des sièges.', 'active');
+
+  insert into res values ('Un Pro avec 1 utilisateur ne paie aucun siège en plus','0',
+    public.subscription_billable_extra_seats(v_org)::text);
+
+  -- On monte l'effectif un par un. La création passe par `auth.users`
+  -- parce que `organization_members` y renvoie.
+  for i in 2..10 loop
+    v_uid := gen_random_uuid();
+    insert into auth.users (id, instance_id, aud, role, email, encrypted_password,
+                            email_confirmed_at, created_at, updated_at, last_sign_in_at,
+                            raw_app_meta_data, raw_user_meta_data)
+    values (v_uid, '00000000-0000-0000-0000-000000000000', 'authenticated', 'authenticated',
+            'siege-' || v_uid::text || '@test.invalid', '', now(), now(), now(), now(), '{}', '{}');
+    insert into public.organization_members (organization_id, user_id, role)
+    values (v_org, v_uid, 'fieldWorker');
+
+    if i = 3 then
+      insert into res values ('UN PRO AVEC 3 UTILISATEURS N''EN PAIE AUCUN','0',
+        public.subscription_billable_extra_seats(v_org)::text);
+    elsif i = 5 then
+      insert into res values ('UN PRO AVEC 5 UTILISATEURS N''EN PAIE AUCUN','0',
+        public.subscription_billable_extra_seats(v_org)::text);
+      insert into res values ('Et sa facture ne porte AUCUNE ligne de siège','0',
+        (select count(*)::text from public.saas_subscription_billing_lines(
+           v_org, date_trunc('month', current_date)::date,
+           (date_trunc('month', current_date) + interval '1 month')::date)
+         where kind = 'seats'));
+    elsif i = 7 then
+      insert into res values ('UN PRO AVEC 7 UTILISATEURS EN PAIE DEUX','2',
+        public.subscription_billable_extra_seats(v_org)::text);
+    end if;
+  end loop;
+end $$;
+
+-- LE COMPTE PROPOSE, L'ADMINISTRATEUR DISPOSE, ET LA FACTURE SUIT.
+do $$
+declare v_org uuid := (select v from ids where k='orgS');
+begin
+  -- On redescend à sept membres : trois départs, archivés et non
+  -- supprimés — un membre archivé n'occupe plus de siège.
+  update public.organization_members set archived_at = now()
+   where id in (select id from public.organization_members
+                 where organization_id = v_org and archived_at is null
+                 order by created_at desc limit 3);
+
+  insert into res values ('Un membre ARCHIVÉ ne compte plus : sept membres, deux sièges','2',
+    public.subscription_billable_extra_seats(v_org)::text);
+
+  perform public.admin_set_billable_seats(
+    v_org, public.subscription_billable_extra_seats(v_org),
+    'Deux sièges au-delà des cinq compris par l''offre Pro.');
+
+  insert into res values ('ET DEUX SIÈGES SE FACTURENT 19,80 € HT','2/990',
+    (select quantity::integer || '/' || unit_price_cents::text
+       from public.saas_subscription_billing_lines(
+         v_org, date_trunc('month', current_date)::date,
+         (date_trunc('month', current_date) + interval '1 month')::date)
+      where kind = 'seats'));
+end $$;
+
+-- UN PRO BUSINESS AVEC DIX UTILISATEURS N'EN PAIE AUCUN.
+do $$
+declare v_org uuid := (select v from ids where k='orgS');
+  v_uid uuid;
+  i integer;
+begin
+  for i in 1..3 loop
+    v_uid := gen_random_uuid();
+    insert into auth.users (id, instance_id, aud, role, email, encrypted_password,
+                            email_confirmed_at, created_at, updated_at, last_sign_in_at,
+                            raw_app_meta_data, raw_user_meta_data)
+    values (v_uid, '00000000-0000-0000-0000-000000000000', 'authenticated', 'authenticated',
+            'siege-' || v_uid::text || '@test.invalid', '', now(), now(), now(), now(), '{}', '{}');
+    insert into public.organization_members (organization_id, user_id, role)
+    values (v_org, v_uid, 'fieldWorker');
+  end loop;
+
+  perform public.admin_set_subscription_plan(v_org, 'business', 'Montée en Pro Business.');
+
+  insert into res values ('UN PRO BUSINESS AVEC 10 UTILISATEURS N''EN PAIE AUCUN','0',
+    public.subscription_billable_extra_seats(v_org)::text);
+
+  perform public.admin_set_billable_seats(
+    v_org, public.subscription_billable_extra_seats(v_org),
+    'Les dix sièges sont compris dans Pro Business.');
+
+  insert into res values ('Et sa facture ne porte plus de ligne de siège','0',
+    (select count(*)::text from public.saas_subscription_billing_lines(
+       v_org, date_trunc('month', current_date)::date,
+       (date_trunc('month', current_date) + interval '1 month')::date)
+     where kind = 'seats'));
+end $$;
+
+-- ------------------------------------------------------------
+-- 19.b L'ENGAGEMENT TIENT LA RÉSILIATION
+-- ------------------------------------------------------------
+do $$
+declare refuse boolean := false; v_msg text;
+begin
+  begin
+    perform public.admin_cancel_subscription_at_period_end(
+      (select v from ids where k='orgF'), 'Le client souhaite partir tout de suite.');
+  exception when others then refuse := true; v_msg := sqlerrm;
+  end;
+  insert into res values ('RÉSILIER AVANT LE TERME DE L''ENGAGEMENT EST REFUSÉ','true',refuse::text);
+  insert into res values ('Et le refus NOMME la date de fin d''engagement','true',
+    (v_msg like '%01/01/2027%')::text);
+end $$;
+
+-- LE VERROU EST DANS LE DÉCLENCHEUR, PAS SEULEMENT DANS LA FONCTION :
+-- il mord aussi sur l'`update` tapé dans l'éditeur SQL, et il mordra
+-- sur le libre-service qui n'existe pas encore.
+do $$
+declare refuse boolean := false;
+begin
+  begin
+    update public.organization_subscriptions set cancel_at_period_end = true
+     where organization_id = (select v from ids where k='orgF');
+  exception when others then refuse := true;
+  end;
+  insert into res values ('MÊME UN UPDATE DIRECT SUR LA TABLE EST REFUSÉ','true',refuse::text);
+end $$;
+
+do $$
+declare refuse boolean := false;
+begin
+  begin
+    update public.organization_subscriptions set status = 'cancelled'
+     where organization_id = (select v from ids where k='orgF');
+  exception when others then refuse := true;
+  end;
+  insert into res values ('Passer le statut à « cancelled » en direct aussi','true',refuse::text);
+end $$;
+
+-- ------------------------------------------------------------
+-- 19.c LA DÉROGATION, AVEC MOTIF ET AVEC TRACE
+-- ------------------------------------------------------------
+do $$
+begin
+  perform public.admin_cancel_subscription_at_period_end(
+    (select v from ids where k='orgF'),
+    'Cessation d''activité du client, geste commercial acté par la direction.', true);
+
+  insert into res values ('UN ADMINISTRATEUR PEUT PASSER OUTRE, AVEC UN MOTIF','true',
+    (select cancel_at_period_end::text from public.organization_subscriptions
+      where organization_id = (select v from ids where k='orgF')));
+
+  insert into res values ('La dérogation ANNULE la remise, et dit qui et pourquoi','true',
+    (select (d.cancelled_at is not null and d.cancelled_by is not null
+             and d.cancelled_reason like 'Dérogation à l''engagement%')::text
+       from public.subscription_discounts d
+      where d.organization_id = (select v from ids where k='orgF') and d.code = 'FONDATEUR'));
+
+  insert into res values ('Et elle laisse sa PROPRE trace au journal','1',
+    (select count(*)::text from public.admin_audit_events
+      where action = 'subscription.commitmentOverridden'
+        and target_id = (select v from ids where k='orgF')));
+
+  insert into res values ('La preuve d''acceptation, elle, ne bouge pas','1',
+    (select count(*)::text from public.subscription_commitment_acceptances
+      where organization_id = (select v from ids where k='orgF')));
+end $$;
+
+-- ------------------------------------------------------------
+-- 19.d DEUX ACCEPTATIONS, DEUX TEXTES
+-- ------------------------------------------------------------
+-- Le texte courant change entre deux souscriptions. Chaque acceptation
+-- garde SA version parce qu'elle garde SON texte : une référence vers
+-- un document modifiable rendrait la première preuve fausse.
+do $$
+declare v_ancien text;
+begin
+  select a.terms_text into v_ancien from public.subscription_commitment_acceptances a
+   where a.organization_id = (select v from ids where k='orgF');
+
+  perform public.admin_set_commercial_config('billing.commitment.terms',
+    jsonb_build_object(
+      'version', '2026-06',
+      'texte', 'Engagement de douze mois — rédaction révisée. Le tarif fondateur de 49,90 € HT '
+            || 'par mois s''applique pendant douze mois sur l''offre Pro. La résiliation anticipée '
+            || 'n''est pas possible. Au terme, le tarif public de 79,90 € HT par mois s''applique.'),
+    'Refonte de la clause d''engagement par le service juridique.');
+
+  perform public.admin_reactivate_subscription(
+    (select v from ids where k='orgF'), 'Le client revient sur sa décision.');
+
+  perform public.admin_apply_discount(
+    (select v from ids where k='orgF'), 'FONDATEUR',
+    'Nouvelle souscription fondateur, texte révisé.', current_date,
+    (select config_value->>'texte' from public.commercial_config
+      where config_key = 'billing.commitment.terms'), '2026-06');
+
+  insert into res values ('DEUX ACCEPTATIONS, DEUX VERSIONS','2026-01,2026-06',
+    (select string_agg(a.terms_version, ',' order by a.terms_version)
+       from public.subscription_commitment_acceptances a
+      where a.organization_id = (select v from ids where k='orgF')));
+
+  insert into res values ('LA PREMIÈRE PREUVE N''A PAS BOUGÉ quand le texte a changé','true',
+    (select (a.terms_text = v_ancien)::text
+       from public.subscription_commitment_acceptances a
+      where a.organization_id = (select v from ids where k='orgF')
+        and a.terms_version = '2026-01'));
+
+  insert into res values ('Et les deux textes sont bien différents','2',
+    (select count(distinct a.terms_text)::text
+       from public.subscription_commitment_acceptances a
+      where a.organization_id = (select v from ids where k='orgF')));
+end $$;
+
+-- UNE PREUVE NE SE MODIFIE PAS, ET NE S'EFFACE PAS DEPUIS UN JETON.
+insert into res select 'La preuve n''est ni modifiable ni effaçable depuis un jeton','false',
+  (has_table_privilege('authenticated','public.subscription_commitment_acceptances','update')
+   or has_table_privilege('authenticated','public.subscription_commitment_acceptances','delete'))::text;
+
+-- ------------------------------------------------------------
+-- 19.e LE FONDATEUR NE SE VEND QU'AU MOIS
+-- ------------------------------------------------------------
+-- orgB est abonnée à Pro À L'ANNÉE (§ 17). On rétablit son prix annuel,
+-- retiré plus haut pour éprouver le MRR inconnu, sans quoi le refus
+-- qu'on mesure ici pourrait venir du prix manquant.
+select public.admin_set_plan_pricing('team', 7990, 79900,
+  'Rétablissement du prix annuel après l''épreuve du MRR inconnu.');
+
+do $$
+declare refuse boolean := false; v_msg text;
+begin
+  begin
+    perform public.admin_apply_discount(
+      (select v from ids where k='orgB'), 'FONDATEUR',
+      'Fondateur sur un abonnement annuel.', current_date,
+      'Texte d''engagement affiché.', '2026-06');
+  exception when others then refuse := true; v_msg := sqlerrm;
+  end;
+  insert into res values ('UN FONDATEUR SUR UN ABONNEMENT ANNUEL EST REFUSÉ À LA SOURCE','true',refuse::text);
+  insert into res values ('Et le refus dit que la remise ne se vend qu''AU MOIS','true',
+    (v_msg like '%AU MOIS%')::text);
+end $$;
+
+-- LE FILET, POUR UNE LIGNE ANTÉRIEURE AU VERROU. Les déclencheurs
+-- rendent ces deux états impossibles ; on les fabrique en les
+-- désactivant le temps de l'insertion, pour vérifier que le CALCUL ne
+-- produit pas de facture bancale s'il en rencontrait un — c'est le
+-- défaut que 0081 avait déjà sur les sièges, et qu'on ne refait pas.
+alter table public.subscription_discounts disable trigger subscription_discounts_plan_guard;
+
+insert into public.subscription_discounts
+  (organization_id, code, label, kind, value_cents, applies_to_plan,
+   starts_on, ends_on, commitment_ends_on, reason)
+values ((select v from ids where k='orgB'), 'FONDATEUR', 'Tarif fondateur',
+        'fixedMonthlyPrice', 4990, 'team',
+        (date_trunc('month', current_date)::date - 1), (current_date + 300), (current_date + 300),
+        'Ligne fabriquée pour éprouver le filet du calcul.');
+
+insert into public.subscription_discounts
+  (organization_id, code, label, kind, value_cents, applies_to_plan,
+   starts_on, ends_on, reason)
+values ((select v from ids where k='orgA'), 'FONDATEUR', 'Tarif fondateur',
+        'fixedMonthlyPrice', 4990, 'team',
+        (date_trunc('month', current_date)::date - 1), (current_date + 300),
+        'Ligne fabriquée pour éprouver le filet du calcul.');
+
+alter table public.subscription_discounts enable trigger subscription_discounts_plan_guard;
+
+insert into res select 'UN FONDATEUR ANNUEL NE PRODUIT PAS DE FACTURE BANCALE : LA LIGNE BLOQUE','true',
+  (select (unit_price_cents is null and blocking_reason like '%ANNUEL%')::text
+     from public.saas_subscription_billing_lines(
+       (select v from ids where k='orgB'), date_trunc('month', current_date)::date,
+       (date_trunc('month', current_date) + interval '1 month')::date)
+    where kind = 'discount');
+
+insert into res select 'Et le MRR rend INCONNU plutôt qu''un montant inventé','INCONNU',
+  coalesce(public.subscription_normalized_mrr_cents(
+    (select v from ids where k='orgB'))::text, 'INCONNU');
+
+-- orgA est en Pro Business ; la remise fabriquée vise Pro. Le calcul
+-- refuse plutôt que d'appliquer 49,90 € à une offre à 139,90 € — ce
+-- serait 90 € offerts par mois, sans que rien ne le signale.
+insert into res select 'UNE REMISE VISANT UNE AUTRE OFFRE BLOQUE LA FACTURE','true',
+  (select (unit_price_cents is null and blocking_reason like '%réservée à l''offre%')::text
+     from public.saas_subscription_billing_lines(
+       (select v from ids where k='orgA'), date_trunc('month', current_date)::date,
+       (date_trunc('month', current_date) + interval '1 month')::date)
+    where kind = 'discount');
+
+insert into res select 'Et le MRR de ce client rend INCONNU, jamais le mauvais prix','INCONNU',
+  coalesce(public.subscription_normalized_mrr_cents(
+    (select v from ids where k='orgA'))::text, 'INCONNU');
 
 reset role;
 

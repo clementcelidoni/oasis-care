@@ -1635,17 +1635,41 @@ comment on function public.plan_module_terms(text, text) is
   'un module inclus dans une offre coûte zéro, et le changement d''offre change le prix sans qu''on recopie rien.';
 
 -- ------------------------------------------------------------
--- 4.c LES REMISES, ET POURQUOI ELLES ONT UNE FIN
+-- 4.c LES REMISES : UNE FIN, UNE OFFRE, ET UN ENGAGEMENT
 -- ------------------------------------------------------------
--- LE DIRIGEANT A ÉCARTÉ L'À-VIE. « Tarif fondateur 29,90 €/mois pendant
--- 12 MOIS, puis retour au tarif public » — et non 19,90 € à vie, parce
--- qu'une remise à vie sur un abonnement récurrent est une dette
--- perpétuelle que rien ne peut plus corriger.
+-- LE DIRIGEANT A ÉCARTÉ L'À-VIE. « Tarif fondateur 49,90 €/mois HT
+-- pendant 12 MOIS, puis retour au tarif public » — et non une remise à
+-- vie, parce qu'une remise à vie sur un abonnement récurrent est une
+-- dette perpétuelle que rien ne peut plus corriger.
 --
 -- CETTE DÉCISION EST PORTÉE PAR LE SCHÉMA ET NON PAR LA POLITESSE DE
 -- L'INTERFACE : `ends_on` est NOT NULL. Il n'existe littéralement aucune
 -- façon d'enregistrer une remise sans fin. Un écran qui l'oublierait
 -- serait refusé par la base.
+--
+-- UNE REMISE VISE UNE OFFRE, ET C'EST LA SECONDE DÉCISION. Le tarif
+-- fondateur ne vaut que sur Pro (`team`, 79,90 €). Sans restriction en
+-- base, rien n'empêcherait de le poser sur Pro Business (139,90 €) :
+-- le prix imposé y resterait 49,90 €, et l'entreprise recevrait 90 €
+-- de remise par mois au lieu de 30 €. La différence ne se verrait
+-- NULLE PART, puisque la facture et le MRR seraient d'accord entre eux
+-- — tous les deux faux. D'où `applies_to_plan`, tenu par un
+-- déclencheur et non par la discipline de l'écran.
+--
+-- UNE REMISE PEUT VERROUILLER, ET C'EST LA TROISIÈME. Douze mois à
+-- 49,90 € se paient CONTRE un engagement de douze mois : la
+-- résiliation avant terme n'est pas en libre-service. Trois choses
+-- doivent alors exister en base, et la troisième est celle qu'on
+-- oublie — la durée et les deux prix, pour que l'écran puisse les
+-- ANNONCER AVANT ; le geste d'acceptation ; et la PREUVE, qui contient
+-- le texte exact affiché ce jour-là (§ 4.c bis).
+--
+-- CONSÉQUENCE ADOPTÉE ICI, ET ÉCRITE PLUTÔT QUE SUBIE : une remise à
+-- engagement NE SE VEND QU'AU MOIS. Douze mensualités verrouillées et
+-- un abonnement annuel disent la même chose deux fois ; l'annuel n'y
+-- ajoute qu'une question sans réponse — le prix fondateur annuel, que
+-- personne n'a fixé. La base refuse donc en amont plutôt que de
+-- produire une facture bancale.
 
 create table if not exists public.discount_offers (
   code text primary key check (code = upper(btrim(code)) and length(code) between 2 and 40),
@@ -1664,6 +1688,20 @@ create table if not exists public.discount_offers (
   -- durée qui est promise, pas l'échéance.
   duration_months integer not null check (duration_months between 1 and 60),
 
+  -- L'OFFRE VISÉE. NULL = « toutes les offres », pour une remise
+  -- commerciale générale ; une valeur = « cette offre-là seulement ».
+  -- `on delete restrict` et non `set null` : supprimer une clé d'offre
+  -- transformerait sinon, en silence, une remise restreinte en remise
+  -- universelle — exactement la fuite qu'on referme ici.
+  applies_to_plan text references public.organization_plans (key) on delete restrict,
+
+  -- L'ENGAGEMENT. Souscrire verrouille la durée : la résiliation avant
+  -- terme n'est pas en libre-service (§ 5.b et § 5.d). `commitment_months`
+  -- ne diverge jamais de `duration_months` — un verrou plus court que la
+  -- remise, ou plus long, serait une promesse à deux vitesses.
+  requires_commitment boolean not null default false,
+  commitment_months integer,
+
   is_active boolean not null default true,
   -- Jusqu'à quand on peut ENTRER dans l'offre (à ne pas confondre avec
   -- la durée : on peut souscrire jusqu'au 31 décembre et garder la
@@ -1678,6 +1716,19 @@ create table if not exists public.discount_offers (
     (kind = 'fixedMonthlyPrice' and value_cents is not null and value_cents >= 0 and percent is null)
     or (kind = 'amountOff'      and value_cents is not null and value_cents >  0 and percent is null)
     or (kind = 'percentOff'     and percent is not null and value_cents is null)
+  ),
+
+  constraint discount_offers_commitment_coherent check (
+    (requires_commitment and commitment_months is not null and commitment_months = duration_months)
+    or (not requires_commitment and commitment_months is null)
+  ),
+
+  -- UN ENGAGEMENT SANS OFFRE VISÉE NE SAIT PAS DIRE LE PRIX D'APRÈS.
+  -- L'écran doit annoncer les trois chiffres — durée, prix pendant,
+  -- prix après — et le prix après est celui de l'offre visée. Sans
+  -- `applies_to_plan`, le troisième est introuvable.
+  constraint discount_offers_commitment_needs_plan check (
+    not requires_commitment or applies_to_plan is not null
   )
 );
 
@@ -1686,6 +1737,51 @@ alter table public.discount_offers enable row level security;
 drop policy if exists "Les habilités lisent les offres de remise" on public.discount_offers;
 create policy "Les habilités lisent les offres de remise" on public.discount_offers
   for select using (public.platform_admin_can('billing.plans.read'));
+
+comment on column public.discount_offers.applies_to_plan is
+  'Offre à laquelle la remise est réservée. NULL = toutes les offres. Recopiée sur la remise posée : le catalogue peut changer, la remise accordée non.';
+comment on column public.discount_offers.requires_commitment is
+  'La souscription verrouille la durée : la résiliation avant terme est refusée par la base, sauf dérogation motivée d''un administrateur.';
+
+-- UN PRIX MENSUEL IMPOSÉ N'A DE SENS QUE FACE À UN TARIF PUBLIC. Sur
+-- une offre sur devis, il n'y a rien à quoi il se substitue : le vrai
+-- prix sort d'une négociation et vit sur l'abonnement. Un déclencheur
+-- plutôt qu'une contrainte `check`, parce que la règle dépend d'une
+-- AUTRE table (`organization_plans.is_quote_only`).
+create or replace function public.discount_offers_plan_guard()
+returns trigger
+language plpgsql
+set search_path = public, pg_temp
+as $$
+declare
+  v_plan record;
+begin
+  if new.applies_to_plan is null then
+    return new;
+  end if;
+
+  select * into v_plan from public.organization_plans where key = new.applies_to_plan;
+  if v_plan.key is null then
+    raise exception 'Offre inconnue : %.', new.applies_to_plan using errcode = '23503';
+  end if;
+
+  if new.kind = 'fixedMonthlyPrice' and v_plan.is_quote_only then
+    raise exception 'L''offre « % » est sur devis : un prix mensuel imposé n''y remplace aucun tarif public. Une remise en pourcentage ou en montant convient, un prix imposé non.', v_plan.name
+      using errcode = '23514';
+  end if;
+
+  return new;
+end;
+$$;
+
+drop trigger if exists discount_offers_plan_guard on public.discount_offers;
+create trigger discount_offers_plan_guard
+  before insert or update on public.discount_offers
+  for each row execute function public.discount_offers_plan_guard();
+
+revoke all on function public.discount_offers_plan_guard() from public;
+revoke all on function public.discount_offers_plan_guard() from anon;
+revoke all on function public.discount_offers_plan_guard() from authenticated;
 
 create table if not exists public.subscription_discounts (
   id uuid primary key default gen_random_uuid(),
@@ -1697,11 +1793,25 @@ create table if not exists public.subscription_discounts (
   value_cents bigint,
   percent numeric(5, 2) check (percent is null or (percent > 0 and percent <= 100)),
 
+  -- LA RESTRICTION D'OFFRE, RECOPIÉE — et ce n'est pas de la
+  -- redondance. `code` est en `on delete set null` juste au-dessus :
+  -- une ligne de catalogue supprimée ferait perdre à cette remise
+  -- toute trace de l'offre à laquelle elle était réservée, et elle
+  -- deviendrait universelle sans erreur ni trace. La table recopie
+  -- déjà `label`, `kind`, `value_cents` et `percent` pour exactement
+  -- cette raison ; on suit sa convention.
+  applies_to_plan text,
+
   starts_on date not null,
   -- NOT NULL : voir l'en-tête de ce paragraphe. C'est la traduction en
   -- schéma d'une décision du dirigeant, et c'est le genre de décision
   -- qu'on ne veut pas voir se perdre dans un commentaire.
   ends_on date not null,
+
+  -- LA DATE JUSQU'À LAQUELLE ON NE PEUT PAS PARTIR. Nulle quand la
+  -- remise n'engage à rien. C'est CETTE colonne que la résiliation
+  -- interroge — jamais le catalogue, qui a pu changer depuis.
+  commitment_ends_on date,
 
   granted_by uuid references auth.users (id) on delete set null,
   reason text not null constraint subscription_discounts_reason_not_blank check (btrim(reason) <> ''),
@@ -1723,7 +1833,13 @@ create table if not exists public.subscription_discounts (
   -- ait eu lieu : la trace se lirait comme une remise annulée alors
   -- qu'elle court toujours.
   constraint subscription_discounts_cancellation_coherent
-    check (cancelled_at is not null or (cancelled_by is null and cancelled_reason is null))
+    check (cancelled_at is not null or (cancelled_by is null and cancelled_reason is null)),
+
+  -- L'engagement ne survit pas à la remise qui le porte : on ne
+  -- verrouille pas un client au-delà de l'avantage qu'il a reçu.
+  constraint subscription_discounts_commitment_within_period
+    check (commitment_ends_on is null
+           or (commitment_ends_on > starts_on and commitment_ends_on <= ends_on))
 );
 
 create index if not exists subscription_discounts_org_idx
@@ -1779,6 +1895,243 @@ revoke all on function public.subscription_discounts_no_overlap() from public;
 revoke all on function public.subscription_discounts_no_overlap() from anon;
 revoke all on function public.subscription_discounts_no_overlap() from authenticated;
 
+-- UNE REMISE RÉSERVÉE À UNE OFFRE NE SE POSE PAS AILLEURS, ET C'EST LA
+-- BASE QUI LE TIENT. Un déclencheur et non une contrainte `check`,
+-- pour la même raison qu'au-dessus : la règle dépend d'une AUTRE table
+-- (`organization_subscriptions.plan`).
+--
+-- IL REFUSE AUSSI LA REMISE POSÉE AVANT L'ABONNEMENT. Sans cela, le
+-- contrôle se contourne en deux gestes : poser la remise sur une
+-- entreprise sans abonnement, souscrire Business ensuite.
+create or replace function public.subscription_discounts_plan_guard()
+returns trigger
+language plpgsql
+set search_path = public, pg_temp
+as $$
+declare
+  v_sub record;
+  v_plan text;
+begin
+  -- Une remise annulée ne contraint plus rien : c'est aussi ce qui
+  -- permet à une dérogation d'administrateur de l'annuler d'abord et de
+  -- résilier ensuite (§ 5.d).
+  if new.cancelled_at is not null then
+    return new;
+  end if;
+
+  if new.applies_to_plan is null and new.commitment_ends_on is null then
+    return new;
+  end if;
+
+  select * into v_sub from public.organization_subscriptions
+   where organization_id = new.organization_id;
+
+  if v_sub.organization_id is null then
+    raise exception 'Cette remise vise une offre précise, ou porte un engagement : elle ne se pose pas sur une entreprise SANS abonnement. Créez l''abonnement d''abord.'
+      using errcode = '23503';
+  end if;
+
+  if new.applies_to_plan is not null and v_sub.plan is distinct from new.applies_to_plan then
+    select p.name into v_plan from public.organization_plans p where p.key = new.applies_to_plan;
+    raise exception 'Remise refusée : « % » est réservée à l''offre « % », et cette entreprise est abonnée à « % ». Un prix imposé posé sur une offre plus chère offrirait la différence en silence.',
+      new.label, coalesce(v_plan, new.applies_to_plan), v_sub.plan
+      using errcode = '23514';
+  end if;
+
+  -- L'ENGAGEMENT SE PAIE AU MOIS. Voir l'en-tête du § 4.c : douze
+  -- mensualités verrouillées et un abonnement annuel diraient la même
+  -- chose deux fois, et le prix annuel de la remise n'existe pas.
+  if new.commitment_ends_on is not null and v_sub.billing_cycle = 'yearly' then
+    raise exception 'Remise refusée : « % » engage sur % et ne se vend qu''AU MOIS. Cet abonnement est ANNUEL.',
+      new.label, to_char(new.commitment_ends_on, 'DD/MM/YYYY')
+      using errcode = '23514';
+  end if;
+
+  return new;
+end;
+$$;
+
+drop trigger if exists subscription_discounts_plan_guard on public.subscription_discounts;
+create trigger subscription_discounts_plan_guard
+  before insert or update on public.subscription_discounts
+  for each row execute function public.subscription_discounts_plan_guard();
+
+revoke all on function public.subscription_discounts_plan_guard() from public;
+revoke all on function public.subscription_discounts_plan_guard() from anon;
+revoke all on function public.subscription_discounts_plan_guard() from authenticated;
+
+-- ------------------------------------------------------------
+-- 4.c bis L'ENGAGEMENT ACCEPTÉ, ET SA PREUVE
+-- ------------------------------------------------------------
+-- SAVOIR NE SUFFIT PAS : IL FAUT DÉMONTRER QU'IL SAVAIT. Une trace qui
+-- dit « a accepté » sans conserver ce qu'il a lu ne vaut rien le jour
+-- où l'écran aura changé — et il changera.
+--
+-- LE TEXTE EST DONC RECOPIÉ EN ENTIER, jamais référencé. C'est la
+-- convention de ce dépôt, deux fois : `quote_revisions.snapshot` (0049)
+-- garde ce que le client a REÇU, et les colonnes `issuer_*` de
+-- `saas_invoices` (§ 6.d) recopient l'identité de l'émetteur au moment
+-- de l'émission plutôt que de pointer vers une table qui bougera. Une
+-- référence vers un texte modifiable rendrait la preuve fausse à la
+-- première correction de virgule.
+--
+-- ET SI LE TEXTE CHANGE ENTRE DEUX SOUSCRIPTIONS ? Chaque acceptation
+-- garde SA version, parce qu'elle garde SON texte. `terms_version` est
+-- l'étiquette lisible de cette copie, pas sa source.
+--
+-- LE TEXTE COURANT, LUI, VIT DANS `commercial_config` sous la clé
+-- `billing.commitment.terms`, écrite par `admin_set_commercial_config`
+-- (§ 7) — avec motif et journal, comme tout le reste. On réutilise le
+-- moteur existant plutôt que d'en poser un second.
+
+create table if not exists public.subscription_commitment_acceptances (
+  id uuid primary key default gen_random_uuid(),
+  organization_id uuid not null references public.business_organizations (id) on delete cascade,
+
+  -- Le code AU MOMENT DE L'ACTE, sans clé étrangère : une preuve ne
+  -- doit pas pouvoir être vidée par la suppression d'une ligne de
+  -- catalogue.
+  discount_code text not null,
+  subscription_discount_id uuid references public.subscription_discounts (id) on delete set null,
+
+  -- Le compte qui a accompli le geste d'acceptation. Aujourd'hui
+  -- l'administrateur qui pose la remise ; demain le client lui-même,
+  -- quand l'écran de souscription existera. La colonne ne change pas de
+  -- sens entre les deux.
+  accepted_by uuid references auth.users (id) on delete set null,
+  accepted_at timestamptz not null default now(),
+
+  -- LES TROIS CHIFFRES ANNONCÉS AVANT, FIGÉS. Ils sont dérivables
+  -- aujourd'hui ; ils ne le seront plus quand la grille aura bougé, et
+  -- c'est justement ce qu'une preuve doit résister.
+  commitment_months integer not null check (commitment_months between 1 and 60),
+  monthly_price_during_cents bigint not null check (monthly_price_during_cents >= 0),
+  monthly_price_after_cents bigint not null check (monthly_price_after_cents >= 0),
+  plan_key text not null,
+
+  terms_text text not null
+    constraint subscription_commitment_acceptances_terms_not_blank check (btrim(terms_text) <> ''),
+  terms_version text not null
+    constraint subscription_commitment_acceptances_version_not_blank check (btrim(terms_version) <> ''),
+
+  audit_event_id uuid references public.admin_audit_events (id) on delete set null,
+  created_at timestamptz not null default now()
+);
+
+create index if not exists subscription_commitment_acceptances_org_idx
+  on public.subscription_commitment_acceptances (organization_id, accepted_at desc);
+
+alter table public.subscription_commitment_acceptances enable row level security;
+
+-- LE CLIENT RELIT CE QU'IL A SIGNÉ. C'est la contrepartie de
+-- l'engagement, et c'est déjà ce que fait la remise elle-même
+-- juste au-dessus.
+drop policy if exists "Le client relit son engagement, les habilités tous"
+  on public.subscription_commitment_acceptances;
+create policy "Le client relit son engagement, les habilités tous"
+  on public.subscription_commitment_acceptances
+  for select using (
+    public.is_organization_member(organization_id)
+    or public.platform_admin_can('billing.subscriptions.read')
+  );
+
+-- AUCUNE POLITIQUE D'ÉCRITURE, NI D'`update`, NI DE `delete` — comme
+-- `organization_subscription_events`. Une preuve qui se modifie n'est
+-- pas une preuve. Le seul chemin d'écriture est `admin_apply_discount`,
+-- en `security definer`.
+
+comment on table public.subscription_commitment_acceptances is
+  'La preuve qu''un abonné a accepté un engagement : qui, quand, les trois chiffres annoncés, et LE TEXTE EXACT qu''il a lu. En ajout seul.';
+
+-- LE TEXTE COURANT, semé une fois. `on conflict do nothing` : il vit
+-- ensuite dans le Control Center, et une reprise de migration
+-- n'écrase pas une version rédigée depuis.
+insert into public.commercial_config (config_key, config_value)
+values ('billing.commitment.terms', jsonb_build_object(
+  'version', '2026-01',
+  'texte',
+    'Engagement de douze mois. Le tarif fondateur de 49,90 € HT par mois s''applique pendant '
+ || 'douze mois à compter de la souscription, sur l''offre Pro. Pendant cette durée, '
+ || 'l''abonnement ne peut pas être résilié. Au treizième mois, l''abonnement se poursuit au '
+ || 'tarif public de l''offre Pro, soit 79,90 € HT par mois, et redevient résiliable à tout '
+ || 'moment. Tous les montants sont hors taxes ; la TVA applicable s''ajoute.'))
+on conflict (config_key) do nothing;
+
+-- ------------------------------------------------------------
+-- 4.c ter LES TROIS CHIFFRES À ANNONCER AVANT
+-- ------------------------------------------------------------
+-- LE PRIX APRÈS N'EST PAS RECOPIÉ DANS LE CATALOGUE, ET C'EST VOULU :
+-- il se DÉDUIT du tarif public de l'offre visée, ce à quoi sert
+-- `applies_to_plan`. Recopié, il dériverait au premier changement de
+-- grille et l'écran annoncerait un retour à un tarif qui n'existe plus.
+--
+-- Une fonction plutôt qu'une vue, pour que DEUX écrans ne recomposent
+-- pas le prix d'après chacun à sa façon.
+create or replace function public.discount_offer_terms(p_code text)
+returns table (
+  code text,
+  label text,
+  plan_key text,
+  plan_name text,
+  duration_months integer,
+  monthly_price_during_cents bigint,
+  monthly_price_after_cents bigint,
+  requires_commitment boolean,
+  commitment_months integer,
+  blocking_reason text
+)
+language plpgsql
+stable
+security definer
+set search_path = public, pg_temp
+as $$
+declare
+  v_offer record;
+  v_plan record;
+begin
+  if not public.platform_admin_can('billing.plans.read') then
+    raise exception 'Accès refusé : permission billing.plans.read manquante.'
+      using errcode = '42501';
+  end if;
+
+  select * into v_offer from public.discount_offers o
+   where o.code = upper(btrim(coalesce(p_code, '')));
+  if v_offer.code is null then
+    return;
+  end if;
+
+  select * into v_plan from public.organization_plans p where p.key = v_offer.applies_to_plan;
+
+  return query select
+    v_offer.code,
+    v_offer.label,
+    v_offer.applies_to_plan,
+    v_plan.name,
+    v_offer.duration_months,
+    -- Le prix PENDANT n'a de sens que pour un prix mensuel imposé. Pour
+    -- un pourcentage, il dépend de l'offre et se calcule à la facture :
+    -- on rend INCONNU plutôt qu'un chiffre inventé.
+    case when v_offer.kind = 'fixedMonthlyPrice' then v_offer.value_cents end,
+    v_plan.monthly_price_cents,
+    v_offer.requires_commitment,
+    v_offer.commitment_months,
+    case
+      when v_offer.applies_to_plan is null then
+        'Cette remise ne vise aucune offre en particulier : le tarif d''après dépend de l''abonnement.'
+      when v_plan.key is null then
+        'L''offre « ' || v_offer.applies_to_plan || ' » n''existe pas.'
+      when v_plan.monthly_price_cents is null then
+        'L''offre « ' || v_plan.name || ' » n''a pas de tarif mensuel public : le prix d''après ne peut pas être annoncé.'
+      when v_offer.kind = 'fixedMonthlyPrice' and v_offer.value_cents is null then
+        'Le prix imposé par cette remise n''est pas renseigné.'
+    end;
+end;
+$$;
+
+comment on function public.discount_offer_terms(text) is
+  'Ce qu''un écran doit ANNONCER AVANT une souscription à remise : durée, prix pendant, prix après, engagement. '
+  'Le prix après vient du tarif public de l''offre visée — il n''est jamais recopié, donc jamais périmé.';
+
 -- ------------------------------------------------------------
 -- 4.d Le catalogue des modules — semis
 -- ------------------------------------------------------------
@@ -1814,10 +2167,17 @@ insert into public.platform_modules (key, name, tagline, is_delivered, pricing_m
    'ANNONCÉ, NON LIVRÉ. Annoncé comme un différenciateur de Pro Business.')
 on conflict (key) do nothing;
 
-insert into public.discount_offers (code, label, kind, value_cents, duration_months, is_active, note) values
-  ('FONDATEUR', 'Tarif fondateur', 'fixedMonthlyPrice', 2990, 12, true,
-   'Décision du dirigeant : 29,90 €/mois pendant 12 MOIS, puis retour au tarif public. '
-   'L''à-vie à 19,90 € a été écarté — une remise à vie sur un abonnement récurrent est une dette perpétuelle.')
+insert into public.discount_offers
+  (code, label, kind, value_cents, duration_months, is_active,
+   applies_to_plan, requires_commitment, commitment_months, note)
+values
+  ('FONDATEUR', 'Tarif fondateur', 'fixedMonthlyPrice', 4990, 12, true,
+   'team', true, 12,
+   'Décision du dirigeant : 49,90 €/mois HT pendant 12 MOIS, SUR L''OFFRE PRO (team) UNIQUEMENT, '
+   'AVEC ENGAGEMENT sur ces douze mois, puis retour au tarif public de 79,90 € HT. '
+   'L''à-vie a été écarté — une remise à vie sur un abonnement récurrent est une dette perpétuelle. '
+   'La restriction d''offre existe parce qu''un prix imposé de 49,90 € posé sur Pro Business '
+   '(139,90 €) offrirait 90 € par mois au lieu de 30, sans que rien ne le signale.')
 on conflict (code) do nothing;
 
 -- ------------------------------------------------------------
@@ -1826,6 +2186,12 @@ on conflict (code) do nothing;
 -- La seule des quatre qui n'avait aucune ligne. Sur devis, donc sans
 -- prix public : la contrainte du § 4.a l'oblige à porter un plancher et
 -- rien d'autre.
+--
+-- `included_seats` RESTE NULL, ET C'EST LE BON ÉTAT. « Au-delà, sur
+-- devis » veut dire que la capacité d'Enterprise se négocie, pas
+-- qu'elle est fixée par la grille : le NULL dit « non décidé », il ne
+-- dit pas « oublié ». Un relecteur qui le comblerait inventerait un
+-- nombre que personne n'a donné.
 insert into public.organization_plans
   (key, name, tagline, features, monthly_price_cents, max_users, position, is_active,
    is_quote_only, price_floor_cents, currency, seat_policy, extra_seat_monthly_price_cents)
@@ -1885,7 +2251,15 @@ begin
       is_active = true,
       seat_policy = 'billedBeyondIncluded',
       extra_seat_monthly_price_cents = 990,
+      -- LES SIÈGES COMPRIS, tranchés par le dirigeant : « solo 1, pro 5
+      -- et business 10, et au-delà sur devis ». `max_users` suit la
+      -- même valeur : c'est l'indication que lit `web-pro` (« Ce
+      -- forfait en prévoit N »), et la laisser en désaccord avec
+      -- `included_seats` donnerait deux vérités, dont une invisible —
+      -- l'écran muet sur la capacité pendant que la facturation en
+      -- compte cinq.
       included_seats = 1,
+      max_users = 1,
       features = '["CRM et clients","Devis et factures","Planning","Jardin connecté (capteurs, automatisations, jumeau numérique, IA)","1 utilisateur compris"]'::jsonb,
       updated_at = now()
     where key = 'solo';
@@ -1905,7 +2279,9 @@ begin
       badge = 'bestSeller',
       seat_policy = 'billedBeyondIncluded',
       extra_seat_monthly_price_cents = 990,
-      features = '["Tout Pro Solo","Équipe et permissions","Planning d''équipe","Jardin connecté complet","Chantiers et suivi de rentabilité"]'::jsonb,
+      included_seats = 5,
+      max_users = 5,
+      features = '["Tout Pro Solo","Équipe et permissions","5 utilisateurs compris","Planning d''équipe","Jardin connecté complet","Chantiers et suivi de rentabilité"]'::jsonb,
       updated_at = now()
     where key = 'team';
 
@@ -1922,7 +2298,17 @@ begin
       is_active = true,
       seat_policy = 'billedBeyondIncluded',
       extra_seat_monthly_price_cents = 990,
-      features = '["Tout Pro","Module Pépinière compris","Module BioLab compris","Stocks, production, fournisseurs","Analytique avancée et exports comptables","API"]'::jsonb,
+      included_seats = 10,
+      max_users = 10,
+      -- AU-DELÀ DE DIX, LE SIÈGE SUPPLÉMENTAIRE RESTE LA RÈGLE (9,90 €),
+      -- comme dans les deux autres offres. « Au-delà, sur devis »
+      -- désigne la bascule COMMERCIALE vers Enterprise, pas un plafond
+      -- appliqué : `seat_policy` vaut `billedBeyondIncluded` ici, et
+      -- rien en base n'empêchera de facturer un trentième siège sur
+      -- Pro Business. La valeur `hardCap` existe dans la contrainte du
+      -- § 4.a pour le jour où un plafond chiffré sera décidé ; il ne
+      -- l'est pas.
+      features = '["Tout Pro","10 utilisateurs compris","Module Pépinière compris","Module BioLab compris","Stocks, production, fournisseurs","Analytique avancée et exports comptables","API"]'::jsonb,
       updated_at = now()
     where key = 'business';
 
@@ -2263,6 +2649,20 @@ end $$;
 -- avec un module actif dont la case vaut « indisponible » ou « non
 -- décidé » — un module qu'on ne saurait ni facturer, ni retirer, ni
 -- expliquer.
+--
+-- ET IL PORTE LE VOLET SYMÉTRIQUE DE LA RESTRICTION D'OFFRE DU § 4.c,
+-- qui est la vraie fuite d'argent. `admin_set_subscription_plan` ne lit
+-- aucune remise : sans ce contrôle, un client fondateur passe de Pro à
+-- Pro Business en gardant son prix imposé de 49,90 €, et reçoit 90 €
+-- par mois au lieu de 30 — en silence, la facture et le MRR étant
+-- d'accord entre eux.
+--
+-- ET ENFIN L'ENGAGEMENT. Une résiliation avant terme est refusée ICI,
+-- et pas seulement dans la fonction d'administration : toutes les
+-- fonctions de ce fichier sont `security definer`, donc un contrôle
+-- écrit dans l'une d'elles serait contourné par tout autre chemin —
+-- l'éditeur SQL, un appel en `service_role`, et le libre-service qui
+-- n'existe pas encore mais existera. Un déclencheur, lui, mord partout.
 create or replace function public.organization_subscriptions_plan_guard()
 returns trigger
 language plpgsql
@@ -2271,6 +2671,8 @@ as $$
 declare
   v_plan record;
   v_bad text;
+  v_disc record;
+  v_resilie boolean;
 begin
   select * into v_plan from public.organization_plans where key = new.plan;
   if v_plan.key is null then
@@ -2309,6 +2711,82 @@ begin
     if v_bad is not null then
       raise exception 'Changement d''offre refusé : sur « % », ces modules souscrits ne sont ni inclus ni proposés en option — %. Retirez-les d''abord, ou décidez leur case dans la matrice.', v_plan.name, v_bad
         using errcode = '23514';
+    end if;
+  end if;
+
+  -- ---- LES REMISES EN COURS -------------------------------------
+  -- La même garde de rejouabilité que ci-dessus : la table des remises
+  -- naît au § 4.c, donc AVANT ce paragraphe. La garde protège du jour
+  -- où quelqu'un réordonnera les paragraphes.
+  if to_regclass('public.subscription_discounts') is not null then
+
+    -- 1. CHANGER D'OFFRE SOUS UNE REMISE QUI VISE L'ANCIENNE.
+    if tg_op = 'UPDATE' and new.plan is distinct from old.plan then
+      execute
+        'select d.label || '' (jusqu''''au '' || to_char(d.ends_on, ''DD/MM/YYYY'') || '')''
+           from public.subscription_discounts d
+          where d.organization_id = $1
+            and d.cancelled_at is null
+            and d.applies_to_plan is not null
+            and d.applies_to_plan is distinct from $2
+            and d.ends_on > current_date
+          order by d.starts_on desc
+          limit 1'
+        into v_bad using new.organization_id, new.plan;
+
+      if v_bad is not null then
+        raise exception 'Changement d''offre refusé : la remise « % » est réservée à une AUTRE offre. Retirez-la d''abord — la garder ici offrirait la différence de tarif en silence.', v_bad
+          using errcode = '23514';
+      end if;
+    end if;
+
+    -- 2. BASCULER AU CYCLE ANNUEL SOUS UN ENGAGEMENT. Sans ce refus, on
+    -- souscrit au mois, on bascule à l'année, et on retombe sur la
+    -- facture bancale que le § 4.c refuse d'écrire.
+    if tg_op = 'UPDATE' and new.billing_cycle = 'yearly' and old.billing_cycle <> 'yearly' then
+      execute
+        'select d.label
+           from public.subscription_discounts d
+          where d.organization_id = $1
+            and d.cancelled_at is null
+            and d.commitment_ends_on is not null
+            and d.commitment_ends_on > current_date
+          limit 1'
+        into v_bad using new.organization_id;
+
+      if v_bad is not null then
+        raise exception 'Passage au cycle ANNUEL refusé : la remise « % » engage cet abonnement et ne se vend qu''AU MOIS.', v_bad
+          using errcode = '23514';
+      end if;
+    end if;
+
+    -- 3. RÉSILIER AVANT LE TERME DE L'ENGAGEMENT.
+    -- On ne refuse QUE LE SENS QUI RÉSILIE : `admin_reactivate_subscription`
+    -- remet `cancelled_at` à nul et le statut à 'active', et ce geste-là
+    -- est favorable au client — le bloquer serait un contresens.
+    if tg_op = 'UPDATE' then
+      v_resilie := (new.cancel_at_period_end and not old.cancel_at_period_end)
+                or (new.cancelled_at is not null and old.cancelled_at is null)
+                or (new.status = 'cancelled' and old.status is distinct from 'cancelled');
+
+      if v_resilie then
+        execute
+          'select d.label || ''|'' || to_char(d.commitment_ends_on, ''DD/MM/YYYY'')
+             from public.subscription_discounts d
+            where d.organization_id = $1
+              and d.cancelled_at is null
+              and d.commitment_ends_on is not null
+              and d.commitment_ends_on > current_date
+            order by d.commitment_ends_on desc
+            limit 1'
+          into v_bad using new.organization_id;
+
+        if v_bad is not null then
+          raise exception 'Résiliation refusée : la remise « % » engage cet abonnement jusqu''au %. Un administrateur de plateforme peut passer outre avec un motif — la dérogation annule d''abord la remise, et la trace dit qui a levé quoi et pourquoi.',
+            split_part(v_bad, '|', 1), split_part(v_bad, '|', 2)
+            using errcode = '23514';
+        end if;
+      end if;
     end if;
   end if;
 
@@ -2738,12 +3216,69 @@ $$;
 -- personne ne peut facturer est une promesse sans mécanisme ; il
 -- fallait soit retirer le prix, soit ouvrir le geste.
 --
--- LE NOMBRE SAISI EST L'EXCÉDENT, pas le nombre de membres. Il n'est
--- PAS calculé depuis `organization_members`, et c'est une décision, pas
--- une paresse : tant qu'`included_seats` n'est pas tranché sur les
--- offres, un comptage automatique facturerait faux dans un sens ou dans
--- l'autre. Le jour où le dirigeant aura décidé, ce champ pourra être
--- alimenté par un calcul — et ce sera un choix, pas un effet de bord.
+-- LE NOMBRE SAISI EST L'EXCÉDENT, pas le nombre de membres, et il
+-- reste SAISI. Le dirigeant a désormais tranché les sièges compris —
+-- 1, 5 et 10 — donc l'excédent SE CALCULE : c'est ce que rend
+-- `subscription_billable_extra_seats()` juste en dessous. Mais brancher
+-- ce calcul directement sur la facture ferait varier un montant
+-- facturé au rythme des arrivées et des départs, sans qu'aucun
+-- administrateur ne l'ait décidé ni daté. La fonction PROPOSE, le geste
+-- ci-dessous DISPOSE, et la trace dit qui a validé le chiffre.
+
+-- LE COMPTE JUSTE, pour que personne ne le refasse à sa façon.
+-- `included_seats` À NULL REND NULL — « non décidé » n'est pas
+-- « illimité », et un excédent de zéro ferait passer une offre
+-- indécise pour une offre sans surcoût.
+create or replace function public.subscription_billable_extra_seats(
+  p_organization_id uuid
+)
+returns integer
+language plpgsql
+stable
+security definer
+set search_path = public, pg_temp
+as $$
+declare
+  v_sub record;
+  v_plan record;
+  v_membres integer;
+begin
+  -- `security definer` pour voir l'abonnement et les membres — un
+  -- administrateur n'est membre d'aucune entreprise cliente — donc la
+  -- garde est À L'INTÉRIEUR : le client compte ses propres sièges, les
+  -- habilités comptent ceux de tout le monde, et personne d'autre.
+  if not (public.is_organization_member(p_organization_id)
+          or public.platform_admin_can('billing.subscriptions.read')) then
+    raise exception 'Accès refusé : ce compte de sièges se lit depuis l''entreprise, ou avec billing.subscriptions.read.'
+      using errcode = '42501';
+  end if;
+
+  select * into v_sub from public.organization_subscriptions
+   where organization_id = p_organization_id;
+  if v_sub.organization_id is null then
+    return null;
+  end if;
+
+  select * into v_plan from public.organization_plans where key = v_sub.plan;
+  if v_plan.key is null or v_plan.included_seats is null then
+    return null;
+  end if;
+
+  -- Les membres ARCHIVÉS ne comptent pas : ils n'occupent plus de
+  -- siège, et les facturer ferait payer des départs.
+  select count(*) into v_membres
+  from public.organization_members m
+  where m.organization_id = p_organization_id
+    and m.archived_at is null;
+
+  return greatest(v_membres - v_plan.included_seats, 0);
+end;
+$$;
+
+comment on function public.subscription_billable_extra_seats(uuid) is
+  'Combien de sièges DEVRAIENT être facturés en plus : membres actifs moins included_seats, jamais négatif. '
+  'Rend NULL quand l''offre n''a pas décidé ses sièges compris. Ne facture rien par elle-même : admin_set_billable_seats reste le geste.';
+
 create or replace function public.admin_set_billable_seats(
   p_organization_id uuid,
   p_seats integer,
@@ -2973,9 +3508,28 @@ end;
 $$;
 
 -- 6. ANNULER À L'ÉCHÉANCE
+--
+-- LE VERROU D'ENGAGEMENT EST DANS LE DÉCLENCHEUR (§ 5.b) ; LE CONTRÔLE
+-- CI-DESSOUS EST CE QUE L'ADMINISTRATEUR LIT. Les deux sont nécessaires :
+-- sans le déclencheur, un `update` tapé dans l'éditeur SQL passerait ;
+-- sans ce contrôle, l'écran afficherait une erreur de contrainte brute
+-- au lieu d'une phrase qui nomme la date de fin.
+--
+-- LA DÉROGATION N'INVENTE AUCUNE PERMISSION NEUVE : le catalogue des
+-- clés est déclaré en double, ici et dans `web-admin/lib/auth/roles.ts`,
+-- et un test compare les deux listes (voir § 1.a). Elle se contente donc
+-- de `billing.subscriptions.write`, du second facteur et d'un motif —
+-- comme tous les gestes irréversibles de ce fichier.
+--
+-- ET ELLE ANNULE LA REMISE D'ABORD. C'est le seul moyen propre
+-- d'informer le déclencheur sans variable de session : le verrou tombe
+-- de lui-même, et la trace dit qui a levé quoi, quand et pourquoi.
+drop function if exists public.admin_cancel_subscription_at_period_end(uuid, text);
+
 create or replace function public.admin_cancel_subscription_at_period_end(
   p_organization_id uuid,
-  p_reason text
+  p_reason text,
+  p_override_commitment boolean default false
 )
 returns uuid
 language plpgsql
@@ -2987,6 +3541,8 @@ declare
   v_sub record;
   v_org text;
   v_audit uuid;
+  v_commit record;
+  v_leve uuid;
 begin
   if not public.platform_admin_can('billing.subscriptions.write') then
     raise exception 'Accès refusé : permission billing.subscriptions.write manquante.'
@@ -3010,6 +3566,40 @@ begin
 
   select o.name into v_org from public.business_organizations o where o.id = p_organization_id;
 
+  -- ---- L'ENGAGEMENT ----------------------------------------------
+  select * into v_commit
+  from public.subscription_discounts d
+  where d.organization_id = p_organization_id
+    and d.cancelled_at is null
+    and d.commitment_ends_on is not null
+    and d.commitment_ends_on > current_date
+  order by d.commitment_ends_on desc
+  limit 1;
+
+  if v_commit.id is not null then
+    if not p_override_commitment then
+      raise exception 'Résiliation refusée : « % » est engagée jusqu''au % par la remise « % ». Un administrateur peut passer outre en le demandant explicitement, avec un motif — et la dérogation annulera cette remise.',
+        v_org, to_char(v_commit.commitment_ends_on, 'DD/MM/YYYY'), v_commit.label
+        using errcode = '23514';
+    end if;
+
+    -- LA DÉROGATION, TRACÉE POUR ELLE-MÊME. Un événement distinct, et
+    -- non une mention dans celui de la résiliation : c'est le geste
+    -- qu'on voudra retrouver, pas la résiliation qui l'a suivi.
+    v_leve := public.record_admin_event(
+      'subscription.commitmentOverridden', 'organization', p_organization_id, v_org,
+      jsonb_build_object('discount', v_commit.label, 'code', v_commit.code,
+                         'commitmentEndsOn', v_commit.commitment_ends_on),
+      jsonb_build_object('commitmentEndsOn', null, 'discountCancelled', true),
+      v_reason);
+
+    update public.subscription_discounts
+       set cancelled_at = now(),
+           cancelled_by = auth.uid(),
+           cancelled_reason = 'Dérogation à l''engagement, résiliation anticipée : ' || v_reason
+     where id = v_commit.id;
+  end if;
+
   -- LE STATUT NE PASSE PAS À 'cancelled' TOUT DE SUITE, et c'est le
   -- sens même de « à l'échéance » : le client a payé jusqu'au bout de
   -- sa période, il en garde l'usage. `cancelled_at` date la DÉCISION,
@@ -3025,7 +3615,8 @@ begin
     'subscription.cancelledAtPeriodEnd', 'organization', p_organization_id, v_org,
     jsonb_build_object('cancelAtPeriodEnd', v_sub.cancel_at_period_end, 'status', v_sub.status),
     jsonb_build_object('cancelAtPeriodEnd', true, 'status', v_sub.status,
-                       'periodEnd', v_sub.current_period_end),
+                       'periodEnd', v_sub.current_period_end,
+                       'commitmentOverridden', (v_commit.id is not null)),
     v_reason);
 
   perform public.record_subscription_event(
@@ -3099,11 +3690,29 @@ end;
 $$;
 
 -- 8. APPLIQUER UNE REMISE DATÉE
+--
+-- ELLE LIT DÉSORMAIS L'ABONNEMENT, ce qu'elle ne faisait pas : sans
+-- cela, elle acceptait de poser FONDATEUR sur un abonnement Business,
+-- sur un abonnement annuel, et même sur une entreprise SANS abonnement.
+-- Le couplage est neuf et assumé : une remise réservée à une offre ne
+-- peut pas être accordée avant qu'on sache à quelle offre l'entreprise
+-- est abonnée. Une remise sans restriction ni engagement, elle, reste
+-- posable comme avant.
+--
+-- LES DEUX PARAMÈTRES DE PREUVE sont facultatifs dans la signature et
+-- OBLIGATOIRES dès que l'offre engage : les rendre obligatoires pour
+-- toutes casserait les remises ordinaires, les rendre facultatifs pour
+-- toutes ferait de la preuve une option — c'est précisément le défaut
+-- qu'on corrige.
+drop function if exists public.admin_apply_discount(uuid, text, text, date);
+
 create or replace function public.admin_apply_discount(
   p_organization_id uuid,
   p_code text,
   p_reason text,
-  p_starts_on date default null
+  p_starts_on date default null,
+  p_terms_text text default null,
+  p_terms_version text default null
 )
 returns uuid
 language plpgsql
@@ -3117,6 +3726,12 @@ declare
   v_start date := coalesce(p_starts_on, current_date);
   v_end date;
   v_audit uuid;
+  v_sub record;
+  v_plan record;
+  v_commit_end date;
+  v_disc_id uuid;
+  v_terms text;
+  v_version text;
 begin
   if not public.platform_admin_can('billing.plans.write') then
     raise exception 'Accès refusé : permission billing.plans.write manquante.'
@@ -3147,34 +3762,104 @@ begin
     raise exception 'Entreprise inconnue : %.', p_organization_id using errcode = '23503';
   end if;
 
+  select * into v_sub from public.organization_subscriptions
+   where organization_id = p_organization_id;
+
+  -- ---- L'OFFRE VISÉE ET LE CYCLE --------------------------------
+  if v_offer.applies_to_plan is not null or v_offer.requires_commitment then
+    if v_sub.organization_id is null then
+      raise exception 'La remise « % » vise une offre précise, ou engage : elle ne se pose pas sur une entreprise sans abonnement.', v_offer.code
+        using errcode = '23503';
+    end if;
+  end if;
+
+  if v_offer.applies_to_plan is not null
+     and v_sub.plan is distinct from v_offer.applies_to_plan then
+    select * into v_plan from public.organization_plans where key = v_offer.applies_to_plan;
+    raise exception 'La remise « % » est réservée à l''offre « % ». « % » est abonnée à « % » : posée ici, elle offrirait la différence de tarif sans que rien ne le signale.',
+      v_offer.code, coalesce(v_plan.name, v_offer.applies_to_plan), v_org, v_sub.plan
+      using errcode = '23514';
+  end if;
+
+  -- L'ENGAGEMENT SE PAIE AU MOIS — la règle est arrêtée, voir § 4.c.
+  if v_offer.requires_commitment and v_sub.billing_cycle = 'yearly' then
+    raise exception 'La remise « % » engage sur % mois et ne se vend qu''AU MOIS. L''abonnement de « % » est ANNUEL : basculez-le au mois, ou renoncez à cette remise.',
+      v_offer.code, v_offer.commitment_months, v_org
+      using errcode = '23514';
+  end if;
+
   -- LA FIN EST CALCULÉE, PAS SAISIE. C'est la durée qui est promise —
-  -- « 29,90 € pendant 12 mois » — et une date de fin saisie à la main
+  -- « 49,90 € pendant 12 mois » — et une date de fin saisie à la main
   -- serait la première à dériver.
   v_end := (v_start + make_interval(months => v_offer.duration_months))::date;
 
+  if v_offer.requires_commitment then
+    v_commit_end := (v_start + make_interval(months => v_offer.commitment_months))::date;
+
+    -- ---- LA PREUVE, ET ELLE N'EST PAS FACULTATIVE ----------------
+    -- PAS D'`ai_clean_text` SUR LE TEXTE : cette fonction remplace les
+    -- caractères de contrôle par des espaces, et écraserait les retours
+    -- à la ligne d'un texte contractuel. On garde ce qui a été affiché,
+    -- à la ligne près ; on se contente de refuser le vide.
+    v_terms := nullif(btrim(coalesce(p_terms_text, '')), '');
+    v_version := public.ai_clean_text(p_terms_version, 60);
+    if v_terms is null or v_version is null then
+      raise exception 'La remise « % » engage sur % mois : le TEXTE exact affiché à l''abonné et sa version sont obligatoires. Une trace qui dit « a accepté » sans conserver ce qu''il a lu ne vaut rien le jour où l''écran aura changé.',
+        v_offer.code, v_offer.commitment_months
+        using errcode = '23514';
+    end if;
+
+    select * into v_plan from public.organization_plans where key = v_offer.applies_to_plan;
+    if v_plan.monthly_price_cents is null then
+      raise exception 'L''offre « % » n''a pas de tarif mensuel public : le prix d''APRÈS l''engagement ne peut pas être annoncé, donc l''engagement ne peut pas être accepté.',
+        coalesce(v_plan.name, v_offer.applies_to_plan)
+        using errcode = '23514';
+    end if;
+  end if;
+
   insert into public.subscription_discounts
-    (organization_id, code, label, kind, value_cents, percent,
-     starts_on, ends_on, granted_by, reason)
+    (organization_id, code, label, kind, value_cents, percent, applies_to_plan,
+     starts_on, ends_on, commitment_ends_on, granted_by, reason)
   values (p_organization_id, v_offer.code, v_offer.label, v_offer.kind,
-          v_offer.value_cents, v_offer.percent, v_start, v_end, auth.uid(), v_reason);
+          v_offer.value_cents, v_offer.percent, v_offer.applies_to_plan,
+          v_start, v_end, v_commit_end, auth.uid(), v_reason)
+  returning id into v_disc_id;
 
   v_audit := public.record_admin_event(
     'subscription.discountApplied', 'organization', p_organization_id, v_org, null,
     jsonb_build_object('code', v_offer.code, 'kind', v_offer.kind,
                        'valueCents', v_offer.value_cents, 'percent', v_offer.percent,
-                       'startsOn', v_start, 'endsOn', v_end),
+                       'appliesToPlan', v_offer.applies_to_plan,
+                       'startsOn', v_start, 'endsOn', v_end,
+                       'commitmentEndsOn', v_commit_end),
     v_reason);
 
   update public.subscription_discounts set audit_event_id = v_audit
-   where organization_id = p_organization_id and starts_on = v_start and cancelled_at is null;
+   where id = v_disc_id;
+
+  if v_offer.requires_commitment then
+    insert into public.subscription_commitment_acceptances
+      (organization_id, discount_code, subscription_discount_id, accepted_by,
+       commitment_months, monthly_price_during_cents, monthly_price_after_cents,
+       plan_key, terms_text, terms_version, audit_event_id)
+    values (p_organization_id, v_offer.code, v_disc_id, auth.uid(),
+            v_offer.commitment_months, v_offer.value_cents, v_plan.monthly_price_cents,
+            v_offer.applies_to_plan, v_terms, v_version, v_audit);
+  end if;
 
   perform public.record_subscription_event(
     p_organization_id, 'discountApplied', null, null, null, null, null,
-    jsonb_build_object('code', v_offer.code, 'endsOn', v_end), v_reason, v_audit);
+    jsonb_build_object('code', v_offer.code, 'endsOn', v_end,
+                       'commitmentEndsOn', v_commit_end), v_reason, v_audit);
 
   return v_audit;
 end;
 $$;
+
+comment on function public.admin_apply_discount(uuid, text, text, date, text, text) is
+  'Pose une remise datée sur un abonnement. Refuse une offre non visée, un cycle annuel sous engagement, '
+  'et une entreprise sans abonnement dès que la remise vise une offre. Sous engagement, elle EXIGE le texte '
+  'affiché et sa version, et en conserve une copie morte dans subscription_commitment_acceptances.';
 
 -- ============================================================
 -- 6. LA FACTURATION SaaS
@@ -3434,6 +4119,17 @@ $$;
 --     dont Oasis Care reste redevable. Le régime rend « unknown »,
 --     l'émission est REFUSÉE, et l'écran demande de valider le numéro.
 --     Supposer 20 % serait tout aussi faux dans l'autre sens.
+--
+-- LA TVA EST CALCULÉE PAR OASIS CARE, PAS PAR LE PRESTATAIRE
+-- D'ENCAISSEMENT. C'est une décision du dirigeant, et elle est déjà ce
+-- que fait ce paragraphe : le taux vient de NOS tables, le régime est
+-- déduit de NOTRE lecture du client, et un régime inconnu bloque au
+-- lieu de supposer. Écrit ici pour qu'un second moteur de taxe — celui
+-- d'un Stripe ou d'un autre — ne vienne pas se brancher à côté plus
+-- tard : deux moteurs qui calculent la même TVA finissent toujours par
+-- ne pas dire le même chiffre, et c'est le nôtre qui est opposable.
+-- TOUS LES MONTANTS DE CE FICHIER SONT HORS TAXES : la TVA s'AJOUTE,
+-- elle ne s'extrait jamais d'un prix affiché.
 
 create table if not exists public.saas_eu_countries (
   code text primary key check (code = upper(code) and length(code) = 2),
@@ -4397,21 +5093,43 @@ begin
   order by d.starts_on desc
   limit 1;
 
-  if v_disc.id is not null and v_base is not null then
+  -- L'ASSERTION DÉFENSIVE, ET ELLE N'EST PAS DE LA DÉFIANCE ENVERS LES
+  -- DÉCLENCHEURS. Ceux du § 4.c et du § 5.b garantissent qu'une remise
+  -- restreinte ne peut pas se retrouver sur une autre offre ; ce
+  -- contrôle-ci couvre ce qu'ils ne couvrent pas — une ligne écrite
+  -- AVANT eux, ou une restauration de sauvegarde. Il BLOQUE plutôt
+  -- qu'il n'ignore la remise : appliquer le plein tarif en silence
+  -- ferait payer 90 € de plus sans dire pourquoi.
+  if v_disc.id is not null
+     and v_disc.applies_to_plan is not null
+     and v_disc.applies_to_plan is distinct from v_sub.plan then
+    v_pos := v_pos + 1;
+    return query select v_pos, 'discount'::text, null::text,
+      ('Remise « ' || v_disc.label || ' »')::text,
+      1::numeric, null::bigint, v_rate,
+      ('La remise « ' || v_disc.label || ' » est réservée à l''offre « ' || v_disc.applies_to_plan
+       || ' » et cet abonnement est en « ' || v_sub.plan || ' ». La base refuse cette combinaison depuis '
+       || 'la migration 0081 : cette ligne est donc antérieure au verrou. Retirez la remise, ou remettez '
+       || 'l''abonnement sur son offre.')::text;
+
+  elsif v_disc.id is not null and v_base is not null then
     v_remise := null;
     if v_disc.kind = 'fixedMonthlyPrice' then
       if v_annuel then
-        -- Le tarif fondateur est libellé « par mois ». L'appliquer à un
-        -- abonnement annuel demanderait de décider s'il vaut douze fois
-        -- ce prix ou dix — les offres annuelles de la grille valent dix
-        -- mois, mais rien ne dit que la remise suit cette règle. On ne
-        -- devine pas.
+        -- LA RÈGLE EST ARRÊTÉE : une remise à prix mensuel imposé NE SE
+        -- VEND QU'AU MOIS (§ 4.c). Ce cas n'est donc plus indécidable,
+        -- il est IMPOSSIBLE — on n'y arrive que par une donnée
+        -- antérieure au verrou, ou par un abonnement basculé en annuel
+        -- avant que le déclencheur du § 5.b n'existe. On refuse la
+        -- facture plutôt que d'inventer un équivalent annuel que
+        -- personne n'a fixé.
         v_pos := v_pos + 1;
         return query select v_pos, 'discount'::text, null::text,
           ('Remise « ' || v_disc.label || ' » — jusqu''au ' || to_char(v_disc.ends_on, 'DD/MM/YYYY'))::text,
           1::numeric, null::bigint, v_rate,
-          ('La remise « ' || v_disc.label || ' » est libellée en prix MENSUEL et l''abonnement est ANNUEL : '
-           || 'son équivalent annuel n''a pas été décidé. Basculez l''abonnement au mois, ou décidez la règle.')::text;
+          ('La remise « ' || v_disc.label || ' » est libellée en prix MENSUEL et ne se vend qu''au mois ; '
+           || 'cet abonnement est ANNUEL. Son équivalent annuel n''existe pas et ne sera pas inventé : '
+           || 'basculez l''abonnement au mois, ou retirez la remise.')::text;
       else
         v_remise := greatest(v_base - v_disc.value_cents, 0);
       end if;
@@ -6280,6 +6998,7 @@ begin
     'plan_modules',
     'discount_offers',
     'subscription_discounts',
+    'subscription_commitment_acceptances',
     'organization_subscription_events',
     'organization_subscription_modules',
     'saas_account_credits',
@@ -6403,6 +7122,7 @@ begin
     'public.claim_platform_admin_invitation()',
     'public.admin_list_platform_admins()',
     'public.plan_module_terms(text, text)',
+    'public.discount_offer_terms(text)',
     'public.admin_set_plan_pricing(text, bigint, bigint, text, integer, bigint, integer, integer)',
     'public.admin_set_plan_module(text, text, text, bigint, bigint, text, bigint)',
     -- `record_subscription_event` N'EST PAS DANS CETTE LISTE, et c'est
@@ -6411,11 +7131,12 @@ begin
     'public.admin_set_subscription_plan(uuid, text, text, text, bigint, bigint)',
     'public.admin_extend_trial(uuid, integer, text)',
     'public.admin_set_billable_seats(uuid, integer, text)',
+    'public.subscription_billable_extra_seats(uuid)',
     'public.admin_grant_credit(uuid, bigint, text)',
     'public.admin_set_subscription_module(uuid, text, boolean, text)',
-    'public.admin_cancel_subscription_at_period_end(uuid, text)',
+    'public.admin_cancel_subscription_at_period_end(uuid, text, boolean)',
     'public.admin_reactivate_subscription(uuid, text)',
-    'public.admin_apply_discount(uuid, text, text, date)',
+    'public.admin_apply_discount(uuid, text, text, date, text, text)',
     'public.saas_billing_issuer_missing_fields()',
     'public.admin_set_billing_issuer(jsonb, text)',
     'public.saas_vat_regime(uuid)',
@@ -6483,8 +7204,8 @@ revoke all on function public.record_subscription_event(uuid, text, text, text, 
 --   • que tout le monde paie au MOIS. Le cycle annuel existe désormais,
 --     et un abonné à 799 €/an serait compté 79,90 €/mois, soit 958,80 €
 --     l'an : 20 % de trop.
---   • qu'AUCUNE REMISE n'existe. Le tarif fondateur impose 29,90 € ;
---     ce client serait compté 139,90 €, presque cinq fois trop.
+--   • qu'AUCUNE REMISE n'existe. Le tarif fondateur impose 49,90 € sur
+--     l'offre Pro ; ce client serait compté 79,90 €, soit 60 % de trop.
 --   • qu'un abonnement se résume à son forfait. Un module en option à
 --     20 € ne serait jamais compté, dans l'autre sens.
 --
@@ -6596,11 +7317,23 @@ begin
   limit 1;
 
   if v_disc.id is not null then
+    -- Le pendant de l'assertion défensive du § 6.i : une remise
+    -- réservée à une autre offre rend le montant INCONNU. Les
+    -- déclencheurs du § 4.c et du § 5.b rendent ce cas impossible ; on
+    -- ne l'atteint que par une ligne antérieure au verrou, et un MRR
+    -- calculé dessus mentirait de 90 € par mois et par client.
+    if v_disc.applies_to_plan is not null
+       and v_disc.applies_to_plan is distinct from v_sub.plan then
+      return null;
+    end if;
+
     if v_disc.kind = 'fixedMonthlyPrice' then
       if v_annuel then
-        -- Même refus qu'au § 6.i : une remise libellée « par mois » sur
-        -- un abonnement annuel demanderait de décider si elle vaut douze
-        -- fois ce prix ou dix. On ne devine pas — on rend inconnu.
+        -- Même refus qu'au § 6.i, et pour la même raison : une remise à
+        -- prix mensuel imposé NE SE VEND QU'AU MOIS depuis le § 4.c.
+        -- Le cas n'est plus indécidable, il est impossible — on n'y
+        -- arrive que par une donnée antérieure au verrou, et on rend
+        -- inconnu plutôt que d'inventer un équivalent annuel.
         return null;
       end if;
       -- `least` ET NON UNE AFFECTATION SÈCHE. Un « prix imposé »
@@ -6832,8 +7565,8 @@ begin
   -- CE QUE LA SOMME NAÏVE AURAIT DIT, SUR LA GRILLE QUE 0081 SÈME :
   --   • un abonné ANNUEL à 799 € compté à 79,90 €/mois, soit 958,80 €
   --     par an — 20 % de trop ;
-  --   • un client FONDATEUR compté à 139,90 € au lieu de 29,90 € —
-  --     presque cinq fois trop ;
+  --   • un client FONDATEUR compté à 79,90 € au lieu de 49,90 € — 60 %
+  --     de trop ;
   --   • un module en option à 20 € jamais compté du tout.
   -- Un tableau de bord de direction qui se trompe dans ce sens est pire
   -- qu'un tableau vide : il ne demande pas à être vérifié.
@@ -6878,7 +7611,7 @@ begin
   --
   -- CE QUE CE CHIFFRE N'EST TOUJOURS PAS : une projection. Il annualise
   -- la situation d'aujourd'hui et ignore que les remises datées TOMBENT —
-  -- un client fondateur passera de 29,90 € à 139,90 € au douzième mois.
+  -- un client fondateur passera de 49,90 € à 79,90 € au treizième mois.
   -- C'est un instantané annualisé, pas un prévisionnel, et l'écran ne
   -- doit pas le présenter autrement.
   v_arr := case when v_mrr is null then null else v_mrr * 12 end;
@@ -6973,12 +7706,30 @@ revoke all on function public.subscription_normalized_mrr_cents(uuid) from authe
 --        select plan_key, module_key from public.plan_modules
 --         where availability = 'undecided';
 --
---   2. LES SIÈGES COMPRIS DANS CHAQUE OFFRE. Le prix du siège
---      supplémentaire est fixé (9,90 €) ; le nombre de sièges compris ne
---      l'est que pour Pro Solo (1). Tant que `included_seats` est nul,
---      rien n'est facturé automatiquement.
+--   2. LA CAPACITÉ D'ENTERPRISE. Les sièges compris sont désormais
+--      tranchés pour les trois offres publiques — Pro Solo 1, Pro 5,
+--      Pro Business 10 — et le siège supplémentaire vaut 9,90 € À
+--      L'INTÉRIEUR de chaque offre. Seule Enterprise reste à NULL, et
+--      c'est le bon état : sa capacité se négocie, comme son prix.
 --        select key, name, included_seats from public.organization_plans
 --         where is_active and included_seats is null;
+--
+--      DEUX CHOSES RESTENT OUVERTES, ET ELLES NE SONT PAS DES OUBLIS.
+--      D'abord, `seat_policy` vaut `billedBeyondIncluded` partout : rien
+--      en base n'empêche de facturer un trentième siège sur Pro
+--      Business. « Au-delà, sur devis » est une bascule commerciale vers
+--      Enterprise, pas un plafond, et aucun plafond chiffré n'a été
+--      donné — `hardCap` attend celui-là. Ensuite, le nombre de sièges
+--      facturés reste SAISI : `subscription_billable_extra_seats()` sait
+--      le calculer, mais le brancher directement sur la facture ferait
+--      varier un montant facturé au rythme des arrivées et des départs,
+--      sans qu'aucun administrateur ne l'ait daté.
+--        select o.name, public.subscription_billable_extra_seats(s.organization_id) as devraient,
+--               s.billable_extra_seats as factures
+--          from public.organization_subscriptions s
+--          join public.business_organizations o on o.id = s.organization_id
+--         where public.subscription_billable_extra_seats(s.organization_id)
+--               is distinct from s.billable_extra_seats;
 --
 --   3. L'IDENTITÉ LÉGALE DE L'ÉMETTEUR. Personne dans ce chantier ne la
 --      connaît. Aucune facture ne part tant qu'elle manque, et la base
