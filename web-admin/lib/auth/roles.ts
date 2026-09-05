@@ -122,6 +122,44 @@ export const PLATFORM_PERMISSIONS = [
   "ai.config.read",
   "ai.models.write",
   "ai.costLimits.write",
+
+  /**
+   * ----------------------------------------------------------------
+   * LES DOUZE CLÉS DE LA MIGRATION 0081 — l'argent, l'assistance, le
+   * produit, et la sécurité de l'équipe
+   * ----------------------------------------------------------------
+   * Pourquoi autant de clés plutôt qu'une « billing.manage » : lire une
+   * grille tarifaire, la changer, émettre un document comptable et
+   * encaisser ne sont pas le même geste et n'engagent pas la même
+   * responsabilité. Une permission unique ferait de tout lecteur un
+   * ordonnateur de dépense.
+   *
+   * LE PIÈGE DE SEMIS JOUE ENCORE ICI, et c'est la troisième fois. Les
+   * permissions du super-administrateur ont été semées PAR JOINTURE au
+   * moment où 0075 s'exécutait : une clé ajoutée après coup n'est portée
+   * par PERSONNE tant qu'une migration ne rejoue pas la jointure. 0080
+   * l'a rejouée, 0081 la rejoue. Tant que 0081 n'est pas appliquée, ces
+   * douze clés existent ici et dans aucune fiche d'administrateur — les
+   * écrans correspondants disparaissent alors du menu sans un mot.
+   */
+  "billing.plans.read",
+  "billing.plans.write",
+  "billing.invoices.read",
+  "billing.invoices.write",
+  "billing.issuer.write",
+  // Les deux dernières viennent de 0083 (le prestataire d'encaissement).
+  // Elles sont ici parce que la base les porte : ce fichier recopie le
+  // catalogue, et un catalogue à moitié recopié laisse un écran
+  // invisible pour tout le monde, sans erreur nulle part.
+  "billing.providers.read",
+  "billing.providers.write",
+  "support.tickets.read",
+  "support.tickets.write",
+  "support.sessions.read",
+  "support.sessions.manage",
+  "product.flags.read",
+  "product.flags.write",
+  "platform.security.write",
 ] as const;
 
 export type PlatformPermission = (typeof PLATFORM_PERMISSIONS)[number];
@@ -155,6 +193,127 @@ export const PERMISSION_LABELS: Record<PlatformPermission, string> = {
     "Voir l'aiguillage des modèles et les plafonds IA de toutes les entreprises",
   "ai.models.write": "Changer le modèle d'un agent chez une entreprise",
   "ai.costLimits.write": "Poser, relever ou lever un plafond de dépense IA",
+
+  // Recopiés MOT POUR MOT de ce que 0081 § 1.a insère dans
+  // `platform_admin_permissions`. Un administrateur qui lit deux
+  // libellés différents pour la même clé croit à deux droits.
+  "billing.plans.read": "Voir la grille tarifaire et la matrice des modules",
+  "billing.plans.write": "Fixer les prix, les remises et la matrice des modules",
+  "billing.invoices.read": "Lire les factures d'abonnement émises par Oasis Care",
+  "billing.invoices.write": "Créer, émettre, encaisser, annuler une facture SaaS",
+  "billing.issuer.write": "Modifier l'identité légale et le RIB de l'émetteur",
+  "billing.providers.read": "Voir la correspondance des tarifs et le journal du prestataire",
+  "billing.providers.write":
+    "Enregistrer une correspondance de tarif et régler le mode d'encaissement",
+  "support.tickets.read": "Lire les demandes d'assistance",
+  "support.tickets.write": "Répondre, assigner, clore une demande d'assistance",
+  "support.sessions.read": "Voir les sessions d'assistance et leur journal d'accès",
+  "support.sessions.manage": "Ouvrir et révoquer une session d'assistance",
+  "product.flags.read": "Voir les drapeaux de fonctionnalité",
+  "product.flags.write": "Basculer un drapeau de fonctionnalité",
+  "platform.security.write": "Régler la politique de second facteur des administrateurs",
+};
+
+/**
+ * ==================================================================
+ * LES FAMILLES DE PERMISSIONS — pour l'écran « Rôles et permissions »
+ * ==================================================================
+ *
+ * Le préfixe n'est pas décoratif : c'est sur lui que
+ * `platform_admin_matrix_guard()` raisonne en base. Les regrouper à
+ * l'écran par la même clé de lecture que celle du garde-fou évite qu'un
+ * lecteur se fabrique une carte mentale différente de celle qui
+ * s'applique réellement.
+ */
+export const PERMISSION_FAMILIES = [
+  {
+    prefix: "platform.",
+    label: "Plateforme",
+    note: "Ce que l'équipe voit de la plateforme, et qui l'administre. Depuis 0081, aucune écriture en platform.* n'est accordable en dehors du super-administrateur et du responsable sécurité — et nommer un administrateur, au seul super-administrateur.",
+  },
+  {
+    prefix: "customer.",
+    label: "Données client",
+    note: "Fermée par défaut à quatre rôles sur six. Ouvrir les données métier d'une entreprise cliente n'est pas une lecture d'administration : c'est un accès encadré par une session d'assistance, motivée, bornée dans le temps et journalisée.",
+  },
+  {
+    prefix: "billing.",
+    label: "Facturation",
+    note: "L'argent d'Oasis Care Pro : la grille, les abonnements, les factures. Depuis 0081, l'écriture est en LISTE BLANCHE — personne n'y écrit sauf ceux dont c'est le métier — et l'identité légale de l'émetteur est réservée au super-administrateur.",
+  },
+  {
+    prefix: "ai.",
+    label: "IA de l'éditeur",
+    note: "Le produit choisit le modèle, la facturation fixe le plafond, et aucun des deux ne tient les deux bouts : celui qui peut faire monter la dépense ne doit pas pouvoir lever la borne qui l'arrête.",
+  },
+  {
+    prefix: "support.",
+    label: "Assistance",
+    note: "Les demandes des clients et les sessions d'accès encadrées. Le responsable sécurité SURVEILLE les sessions sans pouvoir en ouvrir : surveiller et faire ne sont pas le même rôle.",
+  },
+  { prefix: "product.", label: "Produit", note: "Les drapeaux de fonctionnalité." },
+] as const;
+
+/** La famille d'une permission, ou `null` si son préfixe est inconnu de l'interface. */
+export function permissionFamily(
+  permission: string,
+): (typeof PERMISSION_FAMILIES)[number] | null {
+  return PERMISSION_FAMILIES.find((family) => permission.startsWith(family.prefix)) ?? null;
+}
+
+/**
+ * Les permissions d'ÉCRITURE, telles que ce fichier les connaît.
+ *
+ * C'est un miroir de la colonne `is_write` de `platform_admin_permissions`
+ * — la base fait foi, et l'écran « Rôles et permissions » lit la vraie
+ * colonne. Cette liste ne sert qu'aux endroits où l'on doit prévenir
+ * sans aller-retour supplémentaire (« ce rôle pourra écrire ceci »).
+ */
+export const WRITE_PERMISSIONS: readonly PlatformPermission[] = [
+  "platform.admins.manage",
+  "platform.security.write",
+  "billing.subscriptions.write",
+  "billing.payments.write",
+  "billing.plans.write",
+  "billing.invoices.write",
+  "billing.issuer.write",
+  "billing.providers.write",
+  "ai.models.write",
+  "ai.costLimits.write",
+  "support.tickets.write",
+  "support.sessions.manage",
+  "product.flags.write",
+];
+
+/**
+ * ==================================================================
+ * CE QUE NOMMER QUELQU'UN À CE RÔLE OUVRE, EN UNE PHRASE
+ * ==================================================================
+ *
+ * Affiché À CÔTÉ DU CHOIX, sur l'écran « Équipe », et pas dans une
+ * documentation qu'on ira lire un autre jour. Quelqu'un qui nomme un
+ * « billing_admin » doit savoir, au moment où il clique, qu'il vient de
+ * confier les prix de tout le catalogue et l'émission de documents
+ * comptables.
+ *
+ * Ces phrases décrivent l'INTENTION de la matrice de 0075 et 0081. La
+ * liste exacte des permissions vient de la base, sur
+ * `/parametres/roles` — et c'est elle qui fait foi si les deux
+ * divergent.
+ */
+export const ROLE_SCOPE: Record<PlatformRole, string> = {
+  super_admin:
+    "Tout. Y compris nommer et révoquer des administrateurs, et modifier l'identité légale de l'émetteur des factures. C'est le seul rôle qui puisse fabriquer un autre administrateur — ne le donnez qu'à quelqu'un dont le départ de l'équipe serait une décision, pas une surprise.",
+  support:
+    "Les comptes, les entreprises, les demandes d'assistance, et les sessions d'accès encadrées. Lit la grille tarifaire et les factures pour pouvoir les expliquer à un client ; n'en modifie aucune. Ne modifie aucun abonnement (spec p.30).",
+  billing_admin:
+    "L'argent d'Oasis Care Pro : la grille tarifaire, les abonnements, les factures, l'encaissement, et les plafonds de dépense IA. N'ouvre PAS les données métier d'un client (spec p.30), et ne choisit pas le modèle des agents.",
+  product_admin:
+    "Les usages du produit, les drapeaux de fonctionnalité, et le choix du modèle des agents IA. Ne touche à aucun paiement (spec p.30), et ne lève aucun plafond de dépense.",
+  security_admin:
+    "Le journal des actions administratives, la liste des administrateurs, la politique de second facteur, et la SURVEILLANCE des sessions d'assistance. Il n'en ouvre aucune, et il ne nomme personne : surveiller et faire ne sont pas le même rôle.",
+  read_only_analyst:
+    "Les chiffres et les listes, rien d'autre. N'écrit rien, pas même une ligne de journal — `record_admin_event()` le refuse nommément, donc aucun geste administratif ne lui est possible même si une permission lui était accordée par erreur.",
 };
 
 export function isPlatformRole(value: unknown): value is PlatformRole {

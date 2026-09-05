@@ -31,7 +31,12 @@ export type IconName =
   | "warning"
   | "circuit"
   | "gauge"
-  | "coins";
+  | "coins"
+  | "settings"
+  | "team"
+  | "receipt"
+  | "lifebuoy"
+  | "list";
 
 const PATHS: Record<IconName, string> = {
   dashboard: "M4 13h6V4H4v9Zm0 7h6v-5H4v5Zm10 0h6v-9h-6v9Zm0-16v5h6V4h-6Z",
@@ -58,6 +63,24 @@ const PATHS: Record<IconName, string> = {
   gauge: "M4.5 18a9 9 0 1 1 15 0M12 14l4-4",
   // Deux jetons empilés : un plafond, c'est une pile qu'on ne dépasse pas.
   coins: "M4 7c0-1.4 3-2.5 6.5-2.5S17 5.6 17 7s-3 2.5-6.5 2.5S4 8.4 4 7Zm0 0v5c0 1.4 3 2.5 6.5 2.5S17 13.4 17 12V7M7 15.5V17c0 1.4 3 2.5 6.5 2.5S20 18.4 20 17v-5",
+  // Trois curseurs : des réglages, pas une roue dentée. La roue dentée
+  // dit « moteur » ; ces écrans-là disent « ce que vous pouvez régler ».
+  settings: "M4 7h10m3 0h3M4 12h3m3 0h10M4 17h10m3 0h3M14 4.8v4.4M7 9.8v4.4M14 14.8v4.4",
+  // Deux silhouettes RAPPROCHÉES, distinctes de l'icône « users » des
+  // clients : ici ce sont des collègues, pas une liste de comptes.
+  team: "M12 11.5a3.25 3.25 0 1 0 0-6.5 3.25 3.25 0 0 0 0 6.5Zm-6.5 8v-.8a4 4 0 0 1 4-4h5a4 4 0 0 1 4 4v.8M18.6 6.4a2.4 2.4 0 0 1 0 4.2",
+  // Un document au bas dentelé : la facture, et non la pile de billets.
+  // C'est un DOCUMENT qu'on émet, pas de l'argent qu'on encaisse — la
+  // distinction est tout l'objet de cet écran.
+  receipt: "M6 3h12v18l-2-1.5-2 1.5-2-1.5-2 1.5-2-1.5L6 21V3Zm3 5h6m-6 4h6m-6 4h4",
+  // Une bouée : on tend la main à quelqu'un qui a un problème. Pas un
+  // casque de centre d'appel, qui dirait « on décroche », alors que
+  // personne ne décroche encore — le canal d'entrée n'existe pas.
+  lifebuoy:
+    "M12 20a8 8 0 1 0 0-16 8 8 0 0 0 0 16Zm0-4.5a3.5 3.5 0 1 0 0-7 3.5 3.5 0 0 0 0 7ZM6.4 6.4l3.1 3.1m5 5 3.1 3.1m0-11.2-3.1 3.1m-5 5-3.1 3.1",
+  // Des lignes horodatées : un journal se lit ligne à ligne, dans
+  // l'ordre, et c'est ce que le dessin doit dire.
+  list: "M4 6h1m3 0h12M4 12h1m3 0h12M4 18h1m3 0h12",
 };
 
 export function Icon({

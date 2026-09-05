@@ -471,8 +471,19 @@ insert into res select 'Aucune vue security definer n''a été créée pour l''a
 -- test-ci est justement ce qui l'a rappelé : il fige la liste, il a
 -- rougi, et c'est ainsi qu'on a su qu'il fallait aussi toucher
 -- `roles.ts`.
+--
+-- 0081 en a ajouté DOUZE — la facturation, l'émetteur, la sécurité, les
+-- drapeaux, l'assistance — et 0083 deux de plus, pour le prestataire
+-- d'encaissement. Le test a rougi les deux fois, ce qui est exactement
+-- son travail. La liste ci-dessous est celle d'APRÈS 0081 et 0083, et
+-- elle est recopiée mot pour mot dans `web-admin/lib/auth/roles.ts`.
+--
+-- CONSÉQUENCE À CONNAÎTRE AVANT DE DÉPLOYER : cette assertion suppose
+-- que les migrations 0081 À 0083 sont appliquées ENSEMBLE. Jouée sur une
+-- base qui n'en a qu'une partie, elle rougira — et ce sera vrai, pas un
+-- faux positif.
 insert into res select 'Le catalogue de permissions est exactement celui que recopie roles.ts',
-  'ai.config.read, ai.costLimits.write, ai.models.write, billing.payments.write, billing.subscriptions.read, billing.subscriptions.write, customer.data.read, platform.admins.manage, platform.admins.read, platform.audit.read, platform.dashboard.read, platform.organizations.read, platform.search, platform.users.read',
+  'ai.config.read, ai.costLimits.write, ai.models.write, billing.invoices.read, billing.invoices.write, billing.issuer.write, billing.payments.write, billing.plans.read, billing.plans.write, billing.providers.read, billing.providers.write, billing.subscriptions.read, billing.subscriptions.write, customer.data.read, platform.admins.manage, platform.admins.read, platform.audit.read, platform.dashboard.read, platform.organizations.read, platform.search, platform.security.write, platform.users.read, product.flags.read, product.flags.write, support.sessions.manage, support.sessions.read, support.tickets.read, support.tickets.write',
   (select string_agg(key, ', ' order by key) from public.platform_admin_permissions);
 
 -- Le super-administrateur porte TOUT le catalogue : c'est sa
@@ -592,9 +603,19 @@ select 'Le motif du MRR a disparu de lui-même','false',
 -- l'ignorerait et rendrait encore 4 900 — un chiffre faux qui a l'air
 -- d'un chiffre. C'est le mode de défaillance le plus dangereux de tout
 -- ce fichier.
+--
+-- LE FORFAIT EST CRÉÉ ICI, ET C'EST NOUVEAU. Ce scénario s'appuyait sur
+-- l'offre « team », qui n'avait pas de prix au moment où ce test a été
+-- écrit — 0081 lui en a posé un, et le test s'est mis à mesurer la
+-- grille au lieu de mesurer le calcul. Une offre créée par le test
+-- lui-même ne dépend plus de ce que la migration sème.
 reset role;
+insert into public.organization_plans (key, name, monthly_price_cents, is_active, position)
+values ('cc-test-sans-prix', 'Offre de test sans prix', null, true, 99)
+on conflict (key) do nothing;
+
 insert into public.organization_subscriptions (organization_id, plan, status)
-select v, 'team', 'active' from ids where k='orgB';
+select v, 'cc-test-sans-prix', 'active' from ids where k='orgB';
 
 select set_config('request.jwt.claims',
   json_build_object('sub','cc000010-0000-4000-8000-000000000075')::text, true);

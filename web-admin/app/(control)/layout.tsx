@@ -5,6 +5,7 @@ import { roleLabel, ROLE_DESCRIPTIONS, isPlatformRole } from "@/lib/auth/roles";
 import { visibleNavigation, SEARCH_PERMISSION } from "@/lib/navigation";
 import { Sidebar } from "@/components/shell/Sidebar";
 import { Header } from "@/components/shell/Header";
+import { BanniereSessionsOuvertes } from "@/lib/support/banniere";
 
 /**
  * ==================================================================
@@ -74,6 +75,22 @@ export default async function ControlLayout({ children }: LayoutProps<"/">) {
           id="contenu"
           className="flex-1 overflow-y-auto px-6 py-6 print:overflow-visible"
         >
+          {/* LA BANNIÈRE D'ASSISTANCE, ET ELLE EST ICI PARCE QUE LA SPEC
+              p.21 LA VEUT PERMANENTE.
+
+              Elle vivait dans les quatre écrans d'assistance et de
+              sécurité — c'est-à-dire précisément là où l'on n'a pas
+              besoin d'être rappelé qu'on a un dossier client ouvert. Un
+              administrateur qui travaillait sur « Organisations » avec
+              une session en cours ne voyait ni « Mode assistance », ni
+              « Lecture seule », ni le décompte. C'était la moitié
+              visible de la garantie donnée au client, et c'était celle
+              qui manquait.
+
+              Elle fait sa propre lecture, ne prend aucun paramètre,
+              rend `null` quand il n'y a rien à dire, et son `try/catch`
+              l'empêche d'emporter la page. */}
+          <BanniereSessionsOuvertes />
           {children}
         </main>
       </div>

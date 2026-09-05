@@ -117,7 +117,45 @@ const resolveAdmin = cache(async (): Promise<AdminIdentity | null> => {
   //     Appelée avec la session de l'administrateur, jamais avec
   //     `service_role` : `admin_me()` s'authentifie par `auth.uid()`,
   //     qui serait nul sous une clé de service.
-  const { data, error } = await supabase.rpc("admin_me");
+  let { data, error } = await supabase.rpc("admin_me");
+
+  // (2 bis) LE COLLÈGUE INVITÉ QUI SE CONNECTE POUR LA PREMIÈRE FOIS.
+  //
+  // `admin_invite_platform_admin()` (0081 § 3.e) n'enregistre qu'une
+  // INTENTION : « cette adresse, ce rôle, ce motif, jusqu'à cette date ».
+  // Elle ne peut pas créer la ligne `platform_admins`, parce qu'au
+  // moment où elle s'exécute le compte `auth` n'existe pas encore. C'est
+  // à la personne, une fois connectée, de réclamer son invitation par
+  // `claim_platform_admin_invitation()`.
+  //
+  // POURQUOI ICI ET PAS SUR UNE PAGE DÉDIÉE. Sans cette tentative, un
+  // collègue qui vient d'accepter son invitation par courriel arrive
+  // sur un 404 muet — celui que la garde sert à tout inconnu — et il n'y
+  // a aucune page qu'il puisse deviner pour se rattraper. Une URL
+  // secrète à lui communiquer à côté serait un chemin de plus à
+  // documenter, à tester et à oublier.
+  //
+  // CE QUE CETTE LIGNE N'OUVRE PAS, et il faut l'avoir vérifié : rien.
+  // Tous les verrous sont dans la fonction SQL — adresse CONFIRMÉE,
+  // invitation existante, non expirée, non révoquée, non déjà acceptée,
+  // et le rôle vient de l'INVITATION, jamais d'un paramètre. Un visiteur
+  // sans invitation reçoit 42501 et repart avec le même 404 qu'avant.
+  // La ligne de journal, elle, est signée par l'INVITEUR : « il s'est
+  // nommé lui-même » serait faux et inquiétant à relire.
+  if (
+    error &&
+    (error.code === "42501" ||
+      (typeof error.message === "string" && error.message.includes("Accès refusé")))
+  ) {
+    const { error: claimError } = await supabase.rpc("claim_platform_admin_invitation");
+    if (!claimError) {
+      // L'invitation a été réclamée : la fiche existe désormais. On
+      // repose la question plutôt que de fabriquer l'identité à partir
+      // de ce que la fonction a rendu — `admin_me()` reste la seule
+      // source de la liste des permissions.
+      ({ data, error } = await supabase.rpc("admin_me"));
+    }
+  }
 
   if (error) {
     // 42501 — `admin_me()` a levé « Accès refusé ». C'est la réponse

@@ -41,8 +41,23 @@ export type AdminNavItem = {
   label: string;
   href: string;
   icon: IconName;
-  /** La permission qui ouvre cette page. Elle est vérifiée par la page elle-même. */
-  permission: PlatformPermission;
+  /**
+   * La permission qui ouvre cette page. Elle est vérifiée par la page
+   * elle-même.
+   *
+   * `null` signifie « tout administrateur de plateforme », et c'est une
+   * valeur rare et volontaire, pas un raccourci. Elle n'existe que pour
+   * `/parametres`, qui porte ce qui n'appartient à aucun rôle en
+   * particulier : sa propre fiche, et son propre second facteur.
+   * Y accrocher `platform.dashboard.read` — que les six rôles portent
+   * aujourd'hui — aurait donné le même résultat à l'écran en énonçant
+   * quelque chose de faux : régler son second facteur n'a rien à voir
+   * avec le droit de lire le tableau de bord, et le jour où un septième
+   * rôle arriverait sans cette permission, il perdrait aussi l'accès à
+   * son propre compte. La page appelle `requireAdmin()` SANS argument,
+   * ce qui est exactement la même règle, écrite là où elle protège.
+   */
+  permission: PlatformPermission | null;
   /** Ce que la page montre, en une phrase — affiché en survol dans la barre repliée. */
   hint?: string;
 };
@@ -120,6 +135,127 @@ export const ADMIN_NAVIGATION: AdminNavGroup[] = [
   },
   /**
    * ------------------------------------------------------------------
+   * COMMERCIAL — la section que la migration 0081 rend enfin possible
+   * ------------------------------------------------------------------
+   * La spec p.5 en annonce six entrées : Abonnements, Plans, Essais,
+   * Paiements, Facturation SaaS, Promotions. DEUX sont livrées, et les
+   * quatre autres n'ont pas d'écran : les promotions n'ont ni table ni
+   * mécanisme d'application, les essais et les paiements sont des vues
+   * de l'abonnement plutôt que des pages, et la facturation SaaS arrive
+   * avec son propre lot.
+   *
+   * L'ORDRE COMPTE, et il n'est pas celui de la spec. « Plans et prix »
+   * vient AVANT « Abonnements » parce que les quatre offres avaient
+   * `monthly_price_cents` à NULL : sans prix, un abonnement ne vaut
+   * rien, le MRR reste incalculable, et deux garde-fous de 0075
+   * (`0075:866-886`) rendent délibérément le tableau de bord muet. Poser
+   * les prix est ce qui rallume le reste ; la barre latérale le dit dans
+   * son ordre de lecture.
+   *
+   * LES DEUX ENTRÉES PORTENT UNE PERMISSION DE LECTURE, jamais
+   * d'écriture. `billing.plans.read` est portée par la facturation, le
+   * support et le produit ; `billing.subscriptions.read` par la
+   * facturation et le support. Exiger la permission d'écriture dans le
+   * menu aurait caché la grille au support, qui doit précisément
+   * pouvoir l'expliquer à un client sans pouvoir la changer.
+   */
+  {
+    label: "Commercial",
+    items: [
+      {
+        label: "Plans et prix",
+        href: "/plans",
+        icon: "coins",
+        permission: "billing.plans.read",
+        hint: "La grille tarifaire, et la matrice offre × module",
+      },
+      {
+        label: "Abonnements",
+        href: "/abonnements",
+        icon: "briefcase",
+        permission: "billing.subscriptions.read",
+        hint: "Qui est abonné à quoi, et depuis quand",
+      },
+      {
+        label: "Facturation SaaS",
+        href: "/abonnements/factures",
+        icon: "receipt",
+        permission: "billing.invoices.read",
+        hint: "Les factures qu'Oasis Care émet à ses entreprises clientes",
+      },
+    ],
+  },
+  /**
+   * ------------------------------------------------------------------
+   * ASSISTANCE — et pourquoi elle a une entrée alors qu'elle est vide
+   * ------------------------------------------------------------------
+   * La liste des demandes est à zéro et le restera tant qu'aucun
+   * formulaire client n'existe : `open_support_ticket()` est appelable
+   * par tout compte connecté, mais RIEN ne l'appelle encore, et les deux
+   * applications qui devraient le faire — l'iPhone et Oasis Care Pro —
+   * sont hors du périmètre de ce lot. L'écran le dit en haut de page
+   * plutôt que de présenter ce zéro comme un calme.
+   *
+   * Les SESSIONS D'ASSISTANCE, elles, sont dans un cas tout différent :
+   * un administrateur peut réellement en ouvrir une aujourd'hui, et la
+   * spec p.19-21 en fait la partie la plus sensible du Control Center.
+   * Sans entrée dans ce menu, la surveillance de ces sessions n'était
+   * atteignable qu'en tapant l'URL — c'est-à-dire jamais.
+   */
+  {
+    label: "Assistance",
+    items: [
+      {
+        label: "Demandes",
+        href: "/support",
+        icon: "lifebuoy",
+        permission: "support.tickets.read",
+        hint: "Les demandes d'assistance, et ce qui manque pour qu'il y en ait",
+      },
+      {
+        label: "Sessions d'accès",
+        href: "/support/sessions",
+        icon: "shield",
+        permission: "support.sessions.read",
+        hint: "Qui a ouvert un dossier client, pourquoi, et jusqu'à quand",
+      },
+    ],
+  },
+  /**
+   * ------------------------------------------------------------------
+   * SÉCURITÉ — le journal, qui est une exigence et non un confort
+   * ------------------------------------------------------------------
+   * « Toute action administrative importante est tracée » (spec p.31).
+   * Une trace qu'on ne sait pas atteindre ne trace rien : le journal
+   * n'existe qu'au moment où quelqu'un l'ouvre après coup, et il faut
+   * donc qu'il soit à un clic.
+   *
+   * Ces deux écrans sont SÉPARÉS des Paramètres à dessein. Les
+   * Paramètres regardent son propre compte ; la Sécurité regarde ce que
+   * les AUTRES ont fait. Les mélanger inviterait à relire son propre
+   * journal plutôt que celui de l'équipe.
+   */
+  {
+    label: "Sécurité",
+    items: [
+      {
+        label: "Vue de sécurité",
+        href: "/securite",
+        icon: "shield",
+        permission: "platform.audit.read",
+        hint: "Les gestes sensibles récents, et les accès clients ouverts",
+      },
+      {
+        label: "Journal des actions",
+        href: "/securite/journal",
+        icon: "list",
+        permission: "platform.audit.read",
+        hint: "Qui a fait quoi, quand, et pour quel motif (spec p.31)",
+      },
+    ],
+  },
+  /**
+   * ------------------------------------------------------------------
    * IA — la section que la spec p.5 annonçait, et qui arrive avec 0080
    * ------------------------------------------------------------------
    * Ces trois écrans EXISTAIENT, du mauvais côté : dans Oasis Care Pro,
@@ -170,6 +306,54 @@ export const ADMIN_NAVIGATION: AdminNavGroup[] = [
       },
     ],
   },
+  /**
+   * ------------------------------------------------------------------
+   * PARAMÈTRES — ce qui concerne la plateforme elle-même, pas ses clients
+   * ------------------------------------------------------------------
+   * La spec p.6 éparpille ces écrans entre SECURITY (« Admins »,
+   * « Permissions ») et ADMIN (« Configuration »). On les rassemble, et
+   * la raison n'est pas cosmétique : tout le reste du Control Center
+   * regarde DEHORS — des comptes, des entreprises, de l'argent, de
+   * l'assistance. Ces trois écrans-là regardent DEDANS. Un exploitant
+   * qui vient changer son second facteur ou nommer un collègue ne
+   * cherche pas ces gestes dans « Sécurité » à côté des événements de
+   * connexion suspecte : il cherche « Paramètres », comme partout
+   * ailleurs.
+   *
+   * L'ordre est celui de la fréquence : on règle son compte tous les
+   * jours, on nomme un collègue quelques fois par an, on relit la
+   * matrice des rôles quand on doute.
+   *
+   * `/parametres/securite` (la politique de second facteur de l'équipe)
+   * n'a PAS d'entrée à lui : c'est un onglet de `/parametres`, réservé à
+   * `platform.security.write`. Une entrée de barre latérale pour un
+   * réglage qu'on touche une fois par an aurait plus coûté en place
+   * qu'elle n'aurait rapporté en clics.
+   */
+  {
+    label: "Paramètres",
+    items: [
+      {
+        label: "Paramètres",
+        href: "/parametres",
+        icon: "settings",
+        // Voir `AdminNavItem.permission` : « tout administrateur ».
+        permission: null,
+        hint: "Votre compte, votre second facteur, les réglages de la plateforme",
+      },
+      {
+        label: "Équipe Oasis Care",
+        href: "/equipe",
+        icon: "team",
+        // La LECTURE de la liste. Nommer, changer de rôle et révoquer
+        // exigent `platform.admins.manage`, que le garde-fou de 0081
+        // réserve au seul super-administrateur — et l'écran désactive
+        // ces gestes plutôt que de les laisser échouer.
+        permission: "platform.admins.read",
+        hint: "Qui administre la plateforme, avec quel rôle, depuis quand",
+      },
+    ],
+  },
 ];
 
 /**
@@ -183,7 +367,13 @@ export function visibleNavigation(permissions: readonly string[]): AdminNavGroup
 
   return ADMIN_NAVIGATION.map((group) => ({
     label: group.label,
-    items: group.items.filter((item) => held.has(item.permission)),
+    items: group.items.filter(
+      // `permission: null` = ouvert à tout administrateur de plateforme.
+      // Cette fonction ne reçoit QUE les permissions d'un administrateur
+      // déjà résolu par `requireAdmin()` : il n'y a pas de cas « visiteur
+      // anonyme » à couvrir ici.
+      (item) => item.permission === null || held.has(item.permission),
+    ),
   })).filter((group) => group.items.length > 0);
 }
 
@@ -210,5 +400,6 @@ export const SEARCH_PERMISSION: PlatformPermission = "platform.search";
 export function navigationPermissions(): string[] {
   return ADMIN_NAVIGATION.flatMap((group) => group.items)
     .map((item) => item.permission)
+    .filter((permission): permission is PlatformPermission => permission !== null)
     .concat(SEARCH_PERMISSION);
 }
