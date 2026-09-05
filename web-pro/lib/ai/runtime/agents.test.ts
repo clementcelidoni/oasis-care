@@ -14,7 +14,7 @@ import {
   type PortServicesMetier,
 } from "./actionEngine.ts";
 import type { ReglageAgent } from "./autonomy.ts";
-import { AGENTS_PREMIERE_ITERATION, DEFINITIONS, type AgentConstruit } from "./definitions.ts";
+import { AGENTS_CONSTRUITS, DEFINITIONS, type AgentConstruit } from "./definitions.ts";
 import { AIModelRouter } from "../model/router.ts";
 import type { IdentiteAppel, NiveauModele, Permission } from "./types.ts";
 
@@ -209,7 +209,7 @@ class ModeleScripte implements Model {
 
   /** Qui parle, lu dans l'instruction que `instructionsPour` a composée. */
   #agentDe(instructions: string): AgentConstruit {
-    for (const agent of AGENTS_PREMIERE_ITERATION) {
+    for (const agent of AGENTS_CONSTRUITS) {
       if (instructions.includes(`TON RÔLE — ${DEFINITIONS[agent].libelle}.`)) return agent;
     }
     throw new Error("Instruction sans rôle identifiable : le format a changé, ce test doit être relu.");
@@ -341,7 +341,7 @@ function decor(options: OptionsDecor) {
 
   const niveau = options.niveau ?? 2;
   const reglages: Record<string, ReglageAgent> = {};
-  for (const agent of AGENTS_PREMIERE_ITERATION) {
+  for (const agent of AGENTS_CONSTRUITS) {
     reglages[agent] = { agent, actif: options.actif ?? true, niveau, parDefaut: false };
   }
 
@@ -1282,4 +1282,67 @@ test("un tour de conversation n'est JAMAIS mis en cache", async () => {
     "le cache ne doit même pas être consulté quand un historique accompagne la question",
   );
   assert.equal(d.ecrituresCache.length, 0, "et rien ne doit y être écrit");
+});
+
+/**
+ * §11Y — CE QU'UN BRIEF DE LA DIRECTION COÛTE EN LECTURES.
+ *
+ * ══════════════════════════════════════════════════════════════════
+ * POURQUOI CE TEST EXISTE : UN COMMENTAIRE DE COÛT A DÉJÀ MENTI
+ * ══════════════════════════════════════════════════════════════════
+ *
+ * `#empreinteAvecDelegations` construit le contexte de CHAQUE
+ * spécialiste avant de consulter le cache — y compris sur un succès de
+ * cache. Son commentaire annonçait « trois lectures Postgres de plus »,
+ * chiffre exact quand `SPECIALISTES` en comptait trois. §11Y l'a porté
+ * à huit sans que la phrase bouge : le coût par brief avait presque
+ * triplé, et rien dans le dépôt ne le disait.
+ *
+ * Un nombre écrit dans une phrase ne se met pas à jour tout seul. Un
+ * nombre qu'une assertion tient, si — et c'est tout l'objet de ce
+ * test. Il ne défend PAS une valeur « bonne » : il défend qu'on la
+ * REGARDE. Ajouter un spécialiste ou une étape de plan est légitime ;
+ * le faire sans savoir ce que ça coûte ne l'est pas.
+ */
+test("le prix d'un brief de la Direction est celui qui est écrit", async () => {
+  const { PLANS_LISIBLES } = await import("./context.ts");
+  const { SPECIALISTES } = await import("./agents.ts");
+
+  // Un brief ne porte AUCUNE cible : `/api/oasis-ai/brief` n'en envoie
+  // pas. Les étapes dont les arguments valent `null` sont sautées sans
+  // toucher Postgres — c'est la seule raison pour laquelle le total
+  // n'est pas le nombre d'étapes.
+  const CIBLE_VIDE = {} as never;
+  let lectures = 0;
+  const detail: string[] = [];
+  for (const specialiste of SPECIALISTES) {
+    const etapes = PLANS_LISIBLES[specialiste] ?? [];
+    let n = 0;
+    for (const etape of etapes) {
+      let args: unknown = null;
+      try {
+        args = etape.arguments(CIBLE_VIDE);
+      } catch {
+        args = null;
+      }
+      if (args !== null) n += 1;
+    }
+    lectures += n;
+    detail.push(`${specialiste}=${n}`);
+  }
+
+  assert.equal(
+    SPECIALISTES.length,
+    8,
+    "la Direction ne délègue plus au même nombre de spécialistes : relisez le commentaire de coût de `#empreinteAvecDelegations` avant de changer ce chiffre",
+  );
+
+  assert.equal(
+    lectures,
+    8,
+    `un brief de la Direction déclenche maintenant ${lectures} lectures Postgres (${detail.join(", ")}) ` +
+      "et non les 8 documentées dans `#empreinteAvecDelegations`. Ce coût est payé À CHAQUE " +
+      "BRIEF, y compris quand le cache répond. Mettez le commentaire à jour avec le chiffre " +
+      "mesuré — ne modifiez pas cette assertion sans l'avoir fait.",
+  );
 });

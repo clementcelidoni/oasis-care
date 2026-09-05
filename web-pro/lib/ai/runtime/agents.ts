@@ -142,11 +142,76 @@ export const MAX_REPRISES_APPROBATION = 3;
 /** La profondeur maximale de la délégation. 1 = la Direction et ses spécialistes. */
 export const PROFONDEUR_MAX_DELEGATION = 1;
 
-/** Les trois spécialistes que la Direction peut interroger (p. 9). */
+/**
+ * Les spécialistes que la Direction peut interroger (p. 9).
+ *
+ * ══════════════════════════════════════════════════════════════════
+ * ILS ÉTAIENT TROIS. ILS SONT HUIT, ET LE CRITÈRE N'A PAS CHANGÉ
+ * ══════════════════════════════════════════════════════════════════
+ *
+ * Le critère écrit ici depuis l'origine est « le jour où l'agent a un
+ * plan, pas le jour où il a une définition ». Il n'a pas bougé ; ce
+ * sont les agents qui l'ont rejoint. Les cinq ajoutés ont maintenant
+ * une clé dans `PLANS` (`runtime/context.ts`) et au moins une fonction
+ * SQL à eux, posée par 0082 et éprouvée en production.
+ *
+ * Tant qu'ils étaient des gabarits, les inscrire ici aurait fait payer
+ * à la Direction un raisonnement complet PAR AGENT INTERROGÉ pour
+ * recevoir « je n'ai rien lu » : un brief plus cher et pas plus vrai.
+ * Ce n'est plus le cas.
+ *
+ * ─── CE QUE CET ÉLARGISSEMENT COÛTE, MESURÉ ET NON ESTIMÉ ───
+ *
+ * Deux dépenses distinctes, et il faut les séparer.
+ *
+ *   1. LA DÉLÉGATION elle-même — un appel de modèle par spécialiste
+ *      interrogé — ne change pas de nature : le modèle CHOISIT qui
+ *      interroger, et `CONSIGNE_DIRECTION` lui ordonne de n'appeler que
+ *      les spécialistes nécessaires. Élargir la liste ne fait pas
+ *      appeler plus, cela rend plus de questions répondables.
+ *
+ *   2. L'EMPREINTE DE CACHE, elle, est payée à CHAQUE appel de la
+ *      Direction, cache touché compris : `#empreinteAvecDelegations`
+ *      construit le contexte de TOUS les spécialistes pour couvrir
+ *      l'entrée. Le surcoût est de TROIS lectures Postgres —
+ *      `ai_operations_snapshot`, `ai_planning_summary`,
+ *      `ai_fleet_snapshot` — toutes `stable` et bornées par leur propre
+ *      fenêtre. Les Clients et la Pépinière n'en coûtent AUCUNE : leurs
+ *      étapes de plan rendent `null` sans cible, donc rien n'est lu.
+ *
+ *      Et ces trois lectures ne sont pas perdues sur un défaut de
+ *      cache : `etat.contextes` les rend aux délégations.
+ *
+ *   3. Un effet de bord qu'il faut vouloir : le brief de Direction
+ *      s'invalidera plus souvent, puisque son empreinte couvre
+ *      désormais les pointages et les interventions. C'est le
+ *      comportement JUSTE — un brief qui délègue aux Chantiers et se
+ *      resservirait après un pointage saisi serait périmé sans le dire.
+ *
+ * ─── POURQUOI LES ACHATS N'Y SONT PAS ───
+ *
+ * Même critère, appliqué : aucun plan, aucune source de lecture, trois
+ * volets à zéro ligne en production. La Direction n'a rien à lui
+ * demander qu'il puisse lire.
+ *
+ * ─── POURQUOI LA LISTE RESTE ÉCRITE ET NON DÉRIVÉE ───
+ *
+ * On pourrait la calculer depuis `aCompleter`, et elle ne dériverait
+ * plus jamais. On ne le fait pas : inscrire un agent ici engage une
+ * dépense sur CHAQUE appel de la Direction, et une dépense doit être
+ * décidée, pas héritée. Un test vérifie l'implication dans le sens qui
+ * protège — tout spécialiste inscrit a bien un plan — et laisse
+ * l'inverse à une décision humaine.
+ */
 export const SPECIALISTES: readonly AgentConstruit[] = Object.freeze([
   "finance",
   "billing",
   "quotePricing",
+  "operations",
+  "planning",
+  "nursery",
+  "fleet",
+  "customer",
 ]);
 
 // ==================================================================
@@ -462,10 +527,41 @@ export class OasisAgentsRuntime {
    *
    * On construit donc les contextes des spécialistes AVANT de consulter
    * le cache, et l'empreinte de l'entrée les couvre. Ce n'est pas
-   * gratuit : trois lectures Postgres de plus, y compris quand le cache
-   * répond. C'est le bon échange — ces trois lectures remplacent quatre
-   * appels de modèle, et sur un défaut de cache elles ne sont pas
-   * perdues : `etat.contextes` les rend aux délégations.
+   * gratuit, et le prix a CHANGÉ — cette phrase disait « trois lectures
+   * Postgres » quand `SPECIALISTES` en comptait trois. Ils sont HUIT
+   * depuis §11Y.
+   *
+   * ─── LE PRIX, MESURÉ ET NON ESTIMÉ ───
+   *
+   * Un brief de la Direction ne porte AUCUNE cible
+   * (`/api/oasis-ai/brief` n'en envoie pas — voir context.ts § plan de
+   * la Direction). Les étapes dont `arguments(cible)` rend `null` sont
+   * donc sautées SANS lecture. Compté plan par plan dans cet état :
+   *
+   *     finance      3   getCompanyMetrics, getMarginBreakdown,
+   *                      analyzeProjectMargin
+   *     billing      1   getUnbilledProjects
+   *     quotePricing 1   getDailyPriorities   (3 sautées, faute de devis visé)
+   *     operations   1   getOperationsSnapshot
+   *     planning     1   getPlanningSummary
+   *     fleet        1   getFleetSnapshot
+   *     nursery      0   (getNurseryStock exige une espèce)
+   *     customer     0   (les deux exigent un client)
+   *     ─────────────────────────────────────────────────────
+   *     HUIT lectures, six sautées.
+   *
+   * C'est toujours le bon échange — huit lectures Postgres bornées
+   * contre neuf appels de modèle — mais ce n'est plus le même ordre de
+   * grandeur, et il faut le dire : ce coût est payé À CHAQUE BRIEF, Y
+   * COMPRIS SUR UN SUCCÈS DE CACHE. Sur un défaut de cache elles ne
+   * sont pas perdues : `etat.contextes` les rend aux délégations.
+   *
+   * SI CE PRIX DEVIENT TROP LOURD, le levier n'est pas de retirer des
+   * spécialistes de la délégation — la Direction perdrait la capacité,
+   * pas seulement la fraîcheur — mais de n'inclure dans l'empreinte que
+   * les spécialistes dont une source a réellement été lue. Aucun n'a
+   * été retiré ici : une capacité qu'on enlève pour un gain de latence
+   * non mesuré est une régression déguisée en optimisation.
    *
    * Rend `null` quand il n'y a rien à composer — pas de cache demandé,
    * ou un agent qui ne délègue pas. `run.ts` retombe alors sur
@@ -473,9 +569,9 @@ export class OasisAgentsRuntime {
    *
    * ─── ET SI LA DIRECTION N'INTERROGE PAS TOUT LE MONDE ? ───
    *
-   * L'empreinte couvre les trois spécialistes, même ceux qu'elle
-   * n'aura pas consultés. Elle sur-couvre donc, et l'erreur tombe du
-   * bon côté : un recalcul de trop, jamais un chiffre périmé.
+   * L'empreinte couvre les huit spécialistes, même ceux qu'elle n'aura
+   * pas consultés. Elle sur-couvre donc, et l'erreur tombe du bon
+   * côté : un recalcul de trop, jamais un chiffre périmé.
    */
   async #empreinteAvecDelegations(
     demande: DemandeAgent,

@@ -1,6 +1,25 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { aiguiller, normaliser } from "./aiguillage.ts";
+import { register } from "node:module";
+
+/**
+ * POURQUOI UN `register()` ET UN IMPORT DYNAMIQUE DEPUIS §11Y.
+ *
+ * `aiguillage.ts` n'importait qu'un TYPE de `@/lib/ai/runtime`, et un
+ * type s'efface au dépouillement : Node n'avait rien à résoudre. Il en
+ * importe maintenant une VALEUR — `DEFINITIONS`, d'où il tire les
+ * mots-clés de chaque agent au lieu de les recopier —, et `@/` est un
+ * alias de `tsconfig.json` que Node ignore.
+ *
+ * On emploie le crochet déjà écrit pour ce cas exact
+ * (`lib/ai/runtime/_test/alias.mjs`, voir son en-tête) plutôt que
+ * d'inventer un second mécanisme. L'import doit être DYNAMIQUE : un
+ * import statique est hissé avant l'exécution de la première ligne,
+ * donc avant que le crochet existe.
+ */
+register("../../../lib/ai/runtime/_test/alias.mjs", import.meta.url);
+
+const { aiguiller, normaliser } = await import("./aiguillage.ts");
 
 /**
  * §11V — L'AIGUILLAGE, ÉPROUVÉ.
@@ -102,6 +121,90 @@ test("l'ordre des règles tranche les questions qui portent deux mots", () => {
   // « facturer un devis signé » contient « factur » et « devis », et
   // c'est bien la Facturation qu'on interroge.
   assert.equal(aiguiller("Facturer les devis signés").agent, "billing");
+});
+
+// ==================================================================
+// 2 bis. LES SIX AGENTS DE §11Y — CE QU'ILS PRENNENT, ET CE QU'ILS
+//        NE DOIVENT PAS PRENDRE
+// ==================================================================
+//
+// Cette section existe à cause d'une régression réelle, et elle est
+// écrite pour qu'elle ne puisse pas revenir en silence.
+//
+// Quand six agents muets ont reçu leurs mots-clés d'un coup, l'ordre
+// d'aiguillage s'est retourné sans que rien ne casse : des questions
+// d'argent qui allaient à la Finance sont parties aux Chantiers et à la
+// Pépinière — deux agents qui refusent l'argent par une limite
+// explicite. Aucun test ne couvrait ces formulations, donc la suite est
+// restée verte pendant que le produit répondait moins bien qu'avant.
+//
+// Une liste de mots-clés se relit très bien en paraissant complète.
+// Seule la QUESTION RÉELLE, passée à `aiguiller()`, dit où elle tombe.
+
+test("une question d'argent va à la Finance, même quand elle nomme un chantier", () => {
+  // LE CRITÈRE EST « QUI A LA SOURCE ». Aucun autre agent n'agrège
+  // d'argent ; la Finance possède `getCompanyMetrics`,
+  // `getMarginBreakdown` et `analyzeProjectMargin` — dont le dernier
+  // répond précisément à « la marge de CE chantier ».
+  for (const question of [
+    "Où en est ma trésorerie ?",
+    "Où en est mon chiffre d'affaires ?",
+    "Où en est ma marge globale",
+    "Quelle rentabilité sur ce chantier ?",
+    "Quelle est la marge du chantier Dupont ?",
+    "Mes dépenses de pépinière",
+  ]) {
+    assert.equal(
+      aiguiller(question).agent,
+      "finance",
+      `« ${question} » part à un agent qui refuse l'argent par une limite : on paie un appel ` +
+        "de modèle pour recevoir un renvoi vers la Finance",
+    );
+  }
+});
+
+test("« où en est » n'aiguille rien toute seule : ce n'est pas un mot de métier", () => {
+  // C'est une AMORCE DE PHRASE. Tant qu'elle était un mot-clé des
+  // Chantiers, elle attrapait tout ce qui la suivait. Retirée, la
+  // question tombe sur le mot qui la suit — ou sur la Direction.
+  assert.equal(aiguiller("Où en est le chantier Mairie ?").agent, "operations");
+  assert.equal(aiguiller("Où en est ma trésorerie ?").agent, "finance");
+  assert.equal(aiguiller("Où en est mon stock de cycas ?").agent, "nursery");
+  assert.equal(
+    aiguiller("Où en est tout ça ?").agent,
+    "executive",
+    "sans mot de métier, la question doit aller à la Direction, qui ira demander",
+  );
+});
+
+test("chacun des cinq agents outillés est atteint par sa question la plus ordinaire", () => {
+  // La question qu'un paysagiste pose vraiment, agent par agent. Un
+  // agent construit que personne n'atteint est un agent qui n'existe
+  // pas : sa question part à la Direction, dont le plan ne contient
+  // aucune de ses sources, et qui répond « je ne vois rien » avec
+  // aplomb. C'est la panne la plus silencieuse de tout ce dispositif.
+  const attendus: readonly [string, string][] = [
+    ["Quels chantiers sont en retard ?", "operations"],
+    ["Qu'est-ce qui est posé la semaine prochaine ?", "planning"],
+    ["Combien de cycas j'ai en stock ?", "nursery"],
+    ["Quel est le contrôle technique du camion ?", "fleet"],
+    ["Combien ce client m'a rapporté ?", "customer"],
+  ];
+  for (const [question, agent] of attendus) {
+    assert.equal(aiguiller(question).agent, agent, `« ${question} » n'atteint pas « ${agent} »`);
+  }
+});
+
+test("les Achats restent inatteignables tant qu'ils n'ont rien à lire", () => {
+  // L'agent Achats est un GABARIT : ses trois volets — fournisseurs,
+  // commandes, besoins — comptent zéro ligne en production, et il n'a
+  // aucun outil de lecture. Il n'a donc aucun mot-clé, et sa question
+  // doit tomber à la Direction plutôt que sur lui.
+  //
+  // Ce n'est pas un manque à combler « pendant qu'on y est » : allumé,
+  // il paierait un raisonnement complet pour rendre une phrase polie.
+  assert.equal(aiguiller("Que dois-je commander ?").agent, "executive");
+  assert.equal(aiguiller("Quels sont mes fournisseurs ?").agent, "executive");
 });
 
 // ==================================================================

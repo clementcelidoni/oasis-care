@@ -6,6 +6,7 @@ import { requireOrganization } from "@/lib/auth/organization";
 import { flash } from "@/lib/ui/flash";
 import { inputToCents } from "@/lib/quotes/types";
 import { autonomyLabel, isAgentKey, readAutonomy } from "@/lib/ai/types";
+import { messageEchecReglage } from "@/lib/ai/reglagesMessages";
 
 /**
  * §11V — LES RÉGLAGES : autonomie des agents et règles d'autopilote.
@@ -243,13 +244,11 @@ export async function saveAutopilotRule(formData: FormData) {
   revalidatePath(AUTOMATIONS_PATH);
 }
 
-function friendly(message: string): string {
-  if (!message) return "Le réglage n'a pas pu être enregistré.";
-  if (message.includes("row-level security")) {
-    return "Seul un administrateur règle ce que la machine a le droit de faire. Demandez-le-lui.";
-  }
-  if (message.includes("does not exist") || message.includes("schema cache")) {
-    return "Les réglages d'Oasis ne sont pas encore installés sur cette base.";
-  }
-  return message;
-}
+/**
+ * La traduction vit dans `lib/ai/reglagesMessages.ts`, où un test peut
+ * l'atteindre : ce fichier-ci porte `"use server"`, et l'importer pour
+ * éprouver une suite de `if` sur une chaîne entraînerait `next/cache`
+ * et le client Supabase serveur. Le renvoi est conservé pour que les
+ * appels existants ne changent pas de nom.
+ */
+const friendly = messageEchecReglage;

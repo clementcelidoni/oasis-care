@@ -54,14 +54,27 @@ test("les libellés se lisent dans les deux phrases qui les utilisent", () => {
 // Les agents et les rubriques
 // ==================================================================
 
-test("l'agent du catalogue qui n'existe pas est nommé, et dit qu'il n'existe pas", () => {
-  // `procurement` figure au catalogue pour DÉCLARER un interdit, pas
-  // pour promettre un agent. Le libellé ne doit pas laisser croire
-  // qu'on peut le régler quelque part.
-  assert.match(libelleAgentCatalogue("procurement"), /non construit/);
+test("l'agent Achats est nommé en français, sans réserve devenue fausse", () => {
+  // §11Y — CE TEST DISAIT L'INVERSE, ET IL AVAIT RAISON À L'ÉPOQUE.
+  // `procurement` figurait au catalogue pour DÉCLARER un interdit
+  // d'autopilote sans qu'aucun agent Achats existe, et le libellé
+  // portait « (non construit) » pour ne pas laisser croire qu'on
+  // pouvait le régler quelque part. L'agent existe depuis 0082 et se
+  // règle sur `/oasis-ai/reglages` : garder la réserve ferait dire à
+  // cet écran le contraire de celui-là.
+  assert.equal(libelleAgentCatalogue("procurement"), "Achats");
+  assert.doesNotMatch(libelleAgentCatalogue("procurement"), /non construit/);
 });
 
-test("les quatre agents construits ont leur nom d'écran", () => {
+test("un agent du catalogue sans traduction reste lisible plutôt que de casser", () => {
+  // La table ne couvre que les agents qui ont réellement une ligne dans
+  // `ai_action_catalog`. Une clé inconnue rend la clé brute : une
+  // ventilation qui refuserait de s'afficher parce qu'une action
+  // nouvelle est apparue serait un mauvais échange.
+  assert.equal(libelleAgentCatalogue("agent-de-demain"), "agent-de-demain");
+});
+
+test("les agents construits ont leur nom d'écran", () => {
   assert.equal(libelleAgentCatalogue("billing"), "Facturation");
   assert.equal(libelleAgentCatalogue("quote_pricing"), "Devis & Prix");
 });

@@ -1,158 +1,68 @@
 import { CONSIGNE_FRONTIERE_DETERMINISTE, registreOutils, type OasisAIToolRegistry } from "./tools.ts";
+import { DEFINITIONS, type AgentConstruit } from "./agents/index.ts";
 import type { AgentContext } from "./context.ts";
-import type { CleAgentModele, Permission } from "./types.ts";
 
 /**
- * §11V — ÉTAPES 9 À 12 : QUI SONT LES QUATRE AGENTS.
+ * §11V, §11Y — CE QU'ON DIT AUX AGENTS.
  *
  * ══════════════════════════════════════════════════════════════════
- * CE FICHIER EST UNE MIGRATION, PAS UNE RÉÉCRITURE
+ * LES DÉFINITIONS ONT DÉMÉNAGÉ. CE FICHIER GARDE LA PAROLE
  * ══════════════════════════════════════════════════════════════════
  *
- * Les responsabilités, les sources et les limites des quatre agents
- * viennent de `supabase/functions/oasis-pro-ai/index.ts`, où elles ont
- * été écrites pour la Phase 11V et éprouvées. Elles sont recopiées
- * telles quelles — le mot « recopiées » est exact : on ne les a pas
- * reformulées « pour faire mieux », parce que reformuler une limite
- * c'est la changer.
+ * Les quatre agents de la première itération vivaient ICI, dans un
+ * seul objet littéral. Ils sont dix, et plusieurs personnes les
+ * écrivent en parallèle : un objet littéral unique garantit que
+ * chaque fusion se joue au corps à corps sur la même accolade. Ils
+ * sont donc partis dans `agents/`, UN FICHIER PAR AGENT, composés par
+ * `agents/index.ts`.
  *
- * Ce que ce fichier AJOUTE par rapport à la fonction Edge :
+ * LE DÉMÉNAGEMENT N'A CHANGÉ AUCUN MOT des quatre premiers : ni une
+ * mission, ni une limite, ni un droit attendu. Reformuler une limite
+ * en la déplaçant, c'est la changer sans que personne ne s'en
+ * aperçoive — le pire résultat possible d'un rangement. Le
+ * déménagement a été VÉRIFIÉ, pas seulement soigné : les quatre
+ * définitions et les instructions composées ont été comparées, champ
+ * par champ, à la version d'avant tirée de git, et elles sont
+ * identiques. Ce que les tests continuent de tenir ensuite, ce sont
+ * les règles qui doivent figurer dans chaque instruction.
  *
- *   • les instructions parlent de SORTIE STRUCTURÉE (p. 13) plutôt que
- *     de prose. L'agent ne rédige plus « 8 factures possibles » : il
- *     rend un objet dont `estimatedImpactCents` est un entier ;
+ * CE QUI RESTE ICI est ce qui ne se découpe pas par agent : le socle
+ * d'instructions que tous portent, la consigne propre à la Direction,
+ * l'annonce du contexte, et la composition de l'instruction finale.
+ * Ce sont des textes COMMUNS ; les éclater en dix copies serait la
+ * seconde vérité que ce dépôt refuse partout ailleurs.
  *
- *   • la frontière déterministe (p. 11-12) est collée dans chaque
- *     instruction, depuis `tools.ts`, en une seule constante ;
- *
- *   • le contexte reçu — droits manquants, sources en échec, date
- *     d'arrêté — est ANNONCÉ à l'agent. La fonction Edge le laissait
- *     découvrir un `null` au fond d'une réponse d'outil.
+ * Les réexports ci-dessous existent pour que rien n'ait eu à changer
+ * d'import : `AGENTS_CONSTRUITS`, `DEFINITIONS`, `CLE_BASE` et le type
+ * `AgentConstruit` se lisent toujours depuis `./definitions.ts` comme
+ * depuis `./agents`. Un déménagement qui oblige trente fichiers à
+ * bouger n'est plus un déménagement, c'est une réécriture.
  *
  * ══════════════════════════════════════════════════════════════════
- * LES OUTILS NE SONT PAS LISTÉS ICI
+ * LES OUTILS NE SONT LISTÉS NULLE PART
  * ══════════════════════════════════════════════════════════════════
  *
  * Ils se déduisent du registre par le champ `agent`, comme dans la
  * fonction Edge. Une liste écrite à la main serait une seconde vérité,
  * et c'est toujours la seconde qui ment. `sourcesDe()` la construit à
- * la lecture ; `definitions.test.ts` vérifie qu'elle n'est jamais vide.
+ * la lecture ; `definitions.test.ts` vérifie qu'elle n'est jamais vide
+ * pour un agent achevé.
  */
 
-/** Les quatre agents que cette itération construit (0072, `ai_is_supported_agent`). */
-export const AGENTS_PREMIERE_ITERATION = [
-  "executive",
-  "finance",
-  "billing",
-  "quotePricing",
-] as const satisfies readonly CleAgentModele[];
+export {
+  AGENTS_A_COMPLETER,
+  AGENTS_JOIGNABLES,
+  AGENTS_CONSTRUITS,
+  AGENTS_SANS_DONNEES,
+  CLE_BASE,
+  DEFINITIONS,
+  estAgentConstruit,
+  estAgentSansDonnees,
+  type AgentConstruit,
+  type AgentSansDonnees,
+  type DefinitionAgent,
+} from "./agents/index.ts";
 
-export type AgentConstruit = (typeof AGENTS_PREMIERE_ITERATION)[number];
-
-export function estAgentConstruit(valeur: unknown): valeur is AgentConstruit {
-  return (
-    typeof valeur === "string" && (AGENTS_PREMIERE_ITERATION as readonly string[]).includes(valeur)
-  );
-}
-
-/** La graphie de la base pour un agent (0072 : `quote_pricing`). */
-export const CLE_BASE: Record<AgentConstruit, string> = {
-  executive: "executive",
-  finance: "finance",
-  billing: "billing",
-  quotePricing: "quote_pricing",
-};
-
-export type DefinitionAgent = {
-  cle: AgentConstruit;
-  libelle: string;
-  /** Ce qu'il surveille, en une phrase. Sert aussi de `handoffDescription`. */
-  mission: string;
-  /** Ses responsabilités, telles que la fonction Edge les écrivait. */
-  responsabilites: string;
-  /** Ce qu'il NE fait pas. Recopié de la fonction Edge, mot pour mot. */
-  limites: readonly string[];
-  /** Ce que ses fonctions exigent de l'appelant (lu dans les `ai_guard` de 0073). */
-  droitsAttendus: readonly Permission[];
-};
-
-/**
- * LES QUATRE DÉFINITIONS.
- *
- * `droitsAttendus` n'est pas « les droits de l'agent » : un agent n'en
- * a aucun (il agit avec ceux de l'utilisateur). C'est ce que ses
- * fonctions SQL exigent de l'appelant. Un droit qui manque ne fait pas
- * échouer l'agent — il rétrécit ce qu'il peut dire, et l'instruction
- * lui ordonne de le dire.
- */
-export const DEFINITIONS: Readonly<Record<AgentConstruit, DefinitionAgent>> = Object.freeze({
-  executive: {
-    cle: "executive",
-    libelle: "Direction",
-    mission:
-      "Coordonne les autres agents et classe ce qui compte : il n'a aucune donnée à lui, " +
-      "il agrège les leurs.",
-    responsabilites:
-      "Coordonne les trois autres et classe ce qu'il faut faire aujourd'hui. Ne produit aucun " +
-      "chiffre qui lui soit propre : chaque ligne de son brief porte le nom de l'agent qui l'a calculée.",
-    limites: [
-      "N'écrit rien : aucun outil d'action ne lui appartient.",
-      "Ne prévoit pas le chiffre d'affaires — une prévision est une estimation, et elle est interdite.",
-      "Son classement est pondéré par des poids choisis, rendus avec chaque ligne pour être contestés.",
-      "Ne lit JAMAIS la base directement : il interroge les spécialistes et n'utilise que leurs sorties structurées.",
-    ],
-    droitsAttendus: ["projects.read"],
-  },
-  finance: {
-    cle: "finance",
-    libelle: "Finance",
-    mission:
-      "Chiffre d'affaires signé, facturé et encaissé, marges réalisées, créances et trésorerie observée.",
-    responsabilites:
-      "Surveille les trois chiffres d'affaires — signé, facturé, encaissé — la marge estimée contre " +
-      "la marge réelle, les créances et les retards.",
-    limites: [
-      "N'écrit rien.",
-      "Un droit manquant rend « null » et se nomme : jamais zéro.",
-      "Quatre des sept dimensions de marge sont déduites faute de champ dédié, et la réponse le dit.",
-    ],
-    droitsAttendus: ["projects.read", "quotes.read", "invoice.create"],
-  },
-  billing: {
-    cle: "billing",
-    libelle: "Facturation",
-    mission:
-      "Chantiers terminés, interventions clôturées, devis signés sans facture, factures en retard.",
-    responsabilites:
-      "Repère les chantiers terminés, les interventions clôturées et les devis acceptés qui " +
-      "n'ont pas de facture, et prépare les brouillons après confirmation.",
-    limites: [
-      "Crée des BROUILLONS. N'émet aucun numéro de facture, n'envoie rien, n'encaisse rien.",
-      "Acomptes et situations de travaux n'existent pas dans ce modèle de données : ils sont " +
-        "rendus « indisponibles », pas comptés à zéro.",
-      "Exige projects.read, invoice.create et quotes.read ; sans eux il refuse de conclure, " +
-        "parce qu'une vue partielle donnerait une réponse fausse et non pas incomplète.",
-    ],
-    droitsAttendus: ["projects.read", "quotes.read", "invoice.create"],
-  },
-  quotePricing: {
-    cle: "quotePricing",
-    libelle: "Devis et prix",
-    mission:
-      "Prix, coût, marge et cible d'un devis, comparé aux chantiers internes de périmètre équivalent.",
-    responsabilites:
-      "Analyse le prix d'un devis : coût saisi, taux de marque, objectif d'entreprise, " +
-      "chantiers internes comparables.",
-    limites: [
-      "Ne modifie aucun prix, aucune grille tarifaire.",
-      "Ne dit jamais « vous êtes trop cher » en dessous de cinq comparables : le verdict est " +
-        "« données insuffisantes », et la fourchette n'est pas rendue.",
-      "Ne chiffre pas le déplacement : le distancier n'existe pas. Il expose le siège, " +
-        "le chantier et les heures déjà devisées, et laisse le calcul à faire.",
-    ],
-    droitsAttendus: ["quotes.read", "projects.read"],
-  },
-});
 
 /** Les fonctions SQL qu'un agent a le droit d'appeler, déduites du registre. */
 export function sourcesDe(

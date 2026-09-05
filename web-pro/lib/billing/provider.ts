@@ -1,76 +1,77 @@
+import type { SupabaseClient } from "@supabase/supabase-js";
 import { createClient } from "@/lib/supabase/server";
+import { lireAbonnement } from "./abonnement";
+import { lirePlansActifs } from "./plans";
+import { construireStripeBillingProvider } from "./stripe";
+import type { CycleFacturation } from "./composition";
 
 /**
- * §16 BILLING — « Créer abstraction BillingProvider. Prévoir
- * WebBillingProvider, AppleBillingProvider. Réutiliser le système
- * d'entitlements existant de Phase 12. NE PAS créer un deuxième moteur
- * commercial. »
+ * §16 BILLING — L'ABSTRACTION, ET CE QU'ELLE PORTE MAINTENANT.
  *
- * Ce fichier définit l'INTERFACE que devront remplir un encaissement
- * web et un achat In-App, et une seule implémentation : celle qui
- * décrit la réalité d'aujourd'hui — aucun fournisseur de paiement n'est
- * branché. Écrire dès maintenant un `WebBillingProvider` vide donnerait
- * un objet qui ment sur ce qu'il sait faire ; le jour où Stripe (ou
- * autre) sera configuré, il naîtra avec ses clés, son webhook et ses
- * tests, pas avant.
+ * ══════════════════════════════════════════════════════════════════
+ * CE FICHIER A CHANGÉ DE RÔLE, ET L'INTERFACE N'A PAS BOUGÉ
+ * ══════════════════════════════════════════════════════════════════
+ *
+ * Il définissait l'interface ET la seule implémentation possible :
+ * « rien n'encaisse ». Il définit toujours l'interface — mêmes méthodes,
+ * même `CheckoutOutcome`, même `unavailableReason` — mais l'aiguillage
+ * de `getBillingProvider()` mène désormais à Stripe quand ses variables
+ * d'environnement sont posées, et retombe sur « rien n'encaisse »
+ * sinon, EN DISANT CE QUI MANQUE.
  *
  * §"Si aucun fournisseur de paiement web réel configuré : ne pas
- * simuler une transaction." D'où `unavailableReason` : l'écran ne
- * devine pas si le tunnel de paiement est jouable, il demande au
- * fournisseur, et affiche la phrase que celui-ci renvoie.
+ * simuler une transaction." L'absence de clé reste un état NORMAL, pas
+ * une panne : elle rend une phrase, l'écran n'affiche pas de bouton, et
+ * rien ne ment.
  *
- * Pourquoi PAS un deuxième moteur commercial : la Phase 12 accorde des
- * droits à un COMPTE (`subscription_entitlements`, validés par Apple).
- * Oasis Care Pro se vend à une ENTREPRISE. On ajoute donc l'échelle
- * manquante — `organization_subscriptions` — et on se contente de LIRE
- * les entitlements existants (voir `getAccountEntitlements`), sans
- * jamais les recalculer ni les réécrire ici.
+ * ══════════════════════════════════════════════════════════════════
+ * L'INTERFACE S'EST ÉLARGIE — VOICI POURQUOI, PRÉCISÉMENT
+ * ══════════════════════════════════════════════════════════════════
+ *
+ * `CheckoutIntent` portait DEUX champs : `organizationId` et `planKey`.
+ * Avec ces deux-là on ne peut exprimer ni le cycle (mois / an), ni les
+ * modules optionnels — c'est-à-dire la moitié de ce que la grille sait
+ * vendre. Deux champs FACULTATIFS s'y ajoutent donc, `billingCycle` et
+ * `moduleKeys` ; tout appelant existant continue de compiler, et le
+ * défaut est le mois, seul cycle dont tous les prix existent.
+ *
+ * CE QUI N'A PAS ÉTÉ AJOUTÉ, ET C'EST LE POINT : AUCUN MONTANT. Pas de
+ * prix, pas de total, pas de code de remise saisi par le navigateur. Le
+ * client qui posterait « planKey: business, prix: 0 » n'est pas refusé
+ * par politesse — le champ n'existe pas. Le serveur relit l'offre, la
+ * matrice offre × module, les sièges et la remise en base, et calcule.
  */
 
 /** Les valeurs de la colonne `provider` (migration 0060). */
-export type BillingProviderId = "none" | "web" | "apple" | "manual";
+export type { BillingProviderId, SubscriptionStatus } from "./abonnement";
+export type { OrganizationSubscription } from "./abonnement";
+export type { OrganizationPlan } from "./plans";
 
-/** Les valeurs de la colonne `status` (migration 0060). */
-export type SubscriptionStatus = "trialing" | "active" | "pastDue" | "cancelled";
+import type { BillingProviderId, OrganizationSubscription } from "./abonnement";
+import type { OrganizationPlan } from "./plans";
 
 /**
- * Un forfait, tel qu'il est ENREGISTRÉ.
+ * L'INTENTION, et rien d'autre.
  *
- * §"Noms configurables. NE PAS figer définitivement ces noms." — il n'y
- * a donc volontairement aucune énumération `"solo" | "team" | …` dans ce
- * fichier : `key` est un `string`, et renommer « Team » en « Équipe » se
- * fait par un `update`, pas par un déploiement.
+ * `billingCycle` et `moduleKeys` sont facultatifs : un appelant qui n'en
+ * sait rien demande l'offre au mois, sans module supplémentaire. Les
+ * modules DÉJÀ souscrits sont relus en base de toute façon — cette
+ * liste dit ce que le client veut EN PLUS, et la matrice tranche si ça
+ * se facture ou si c'est compris.
  */
-export type OrganizationPlan = {
-  key: string;
-  name: string;
-  tagline: string | null;
-  features: string[];
-  monthlyPriceCents: number | null;
-  /** null = pas de plafond d'utilisateurs sur ce forfait. */
-  maxUsers: number | null;
-  position: number;
-};
-
-export type OrganizationSubscription = {
-  planKey: string;
-  provider: BillingProviderId;
-  status: SubscriptionStatus;
-  startedAt: string;
-  currentPeriodEnd: string | null;
-  cancelledAt: string | null;
-};
-
 export type CheckoutIntent = {
   organizationId: string;
   planKey: string;
+  billingCycle?: CycleFacturation;
+  moduleKeys?: string[];
 };
 
 /**
  * Ce que produit une tentative de souscription.
  *
  * `unavailable` n'est pas une erreur : c'est l'état normal tant qu'aucun
- * encaissement n'existe. Le distinguer d'un échec évite qu'un écran
+ * encaissement n'existe, et c'est aussi la réponse à « cette offre se
+ * construit sur devis ». Le distinguer d'un échec évite qu'un écran
  * affiche « une erreur est survenue » là où il n'y a rien de cassé.
  */
 export type CheckoutOutcome =
@@ -97,105 +98,42 @@ export interface BillingProvider {
 
   /**
    * §15 « Choisir → Résumé → Paiement → Confirmation ». Le point
-   * d'entrée du tunnel. Aucun appelant aujourd'hui : l'écran n'affiche
-   * pas de bouton tant que `unavailableReason` n'est pas null, et c'est
-   * exactement ce que demande la spec.
+   * d'entrée du tunnel.
    */
   startCheckout(intent: CheckoutIntent): Promise<CheckoutOutcome>;
 }
 
 /**
- * Les lignes brutes de `organization_plans`. PostgREST renvoie le jsonb
- * déjà désérialisé, mais rien ne garantit sa FORME : une ligne saisie à
- * la main dans l'éditeur SQL peut contenir autre chose qu'un tableau de
- * chaînes, et un forfait ne doit pas disparaître de l'écran pour ça.
- */
-type PlanRow = {
-  key: string;
-  name: string;
-  tagline: string | null;
-  features: unknown;
-  monthly_price_cents: number | null;
-  max_users: number | null;
-  position: number;
-};
-
-function toFeatures(value: unknown): string[] {
-  if (!Array.isArray(value)) return [];
-  return value.filter((item): item is string => typeof item === "string");
-}
-
-type SubscriptionRow = {
-  plan: string;
-  provider: string;
-  status: string;
-  started_at: string;
-  current_period_end: string | null;
-  cancelled_at: string | null;
-};
-
-const PROVIDER_IDS: BillingProviderId[] = ["none", "web", "apple", "manual"];
-const STATUSES: SubscriptionStatus[] = ["trialing", "active", "pastDue", "cancelled"];
-
-/**
- * L'état réel : rien n'encaisse.
+ * L'état « rien n'encaisse ».
  *
- * Ce fournisseur sait tout lire — les forfaits, l'abonnement en cours —
+ * Ce fournisseur sait tout LIRE — les forfaits, l'abonnement en cours —
  * et refuse la seule chose qu'il ne sait pas faire. C'est ce qui permet
  * à l'écran d'être complet et honnête en même temps : on montre le
  * forfait actuel et le catalogue, on n'ouvre pas une caisse vide.
+ *
+ * LA RAISON EST DÉSORMAIS UN PARAMÈTRE. « Aucun moyen de paiement n'est
+ * branché » et « la clé secrète n'est pas posée sur CE serveur » ne
+ * demandent pas le même geste : la première attend une décision, la
+ * seconde attend une variable d'environnement. Une phrase générique
+ * enverrait chercher au mauvais endroit.
  */
-class UnconfiguredBillingProvider implements BillingProvider {
+export class UnconfiguredBillingProvider implements BillingProvider {
   readonly id = "none" as const;
   readonly label = "Aucun encaissement configuré";
-  readonly unavailableReason =
-    "Aucun moyen de paiement n'est branché sur Oasis Care Pro. Tant que ce n'est pas le cas, cet écran ne peut pas enregistrer de changement de forfait.";
+  readonly unavailableReason: string;
+  readonly #supabase: () => Promise<SupabaseClient>;
+
+  constructor(raison: string, supabase: () => Promise<SupabaseClient> = createClient) {
+    this.unavailableReason = raison;
+    this.#supabase = supabase;
+  }
 
   async listPlans(): Promise<OrganizationPlan[]> {
-    const supabase = await createClient();
-    const { data } = await supabase
-      .from("organization_plans")
-      .select("key, name, tagline, features, monthly_price_cents, max_users, position")
-      .eq("is_active", true)
-      .order("position", { ascending: true });
-
-    return ((data ?? []) as PlanRow[]).map((row) => ({
-      key: row.key,
-      name: row.name,
-      tagline: row.tagline,
-      features: toFeatures(row.features),
-      monthlyPriceCents: row.monthly_price_cents,
-      maxUsers: row.max_users,
-      position: row.position,
-    }));
+    return lirePlansActifs(await this.#supabase());
   }
 
   async getSubscription(organizationId: string): Promise<OrganizationSubscription | null> {
-    const supabase = await createClient();
-    const { data } = await supabase
-      .from("organization_subscriptions")
-      .select("plan, provider, status, started_at, current_period_end, cancelled_at")
-      .eq("organization_id", organizationId)
-      .maybeSingle();
-
-    if (!data) return null;
-    const row = data as SubscriptionRow;
-
-    // Les contraintes `check` de la table garantissent déjà ces valeurs.
-    // On retombe malgré tout sur un défaut plutôt que de laisser passer
-    // une chaîne inconnue : l'écran s'en sert pour choisir une couleur,
-    // et une teinte manquante casserait la page entière.
-    const provider = PROVIDER_IDS.find((id) => id === row.provider) ?? "none";
-    const status = STATUSES.find((value) => value === row.status) ?? "trialing";
-
-    return {
-      planKey: row.plan,
-      provider,
-      status,
-      startedAt: row.started_at,
-      currentPeriodEnd: row.current_period_end,
-      cancelledAt: row.cancelled_at,
-    };
+    return lireAbonnement(await this.#supabase(), organizationId);
   }
 
   async startCheckout(intent: CheckoutIntent): Promise<CheckoutOutcome> {
@@ -207,19 +145,23 @@ class UnconfiguredBillingProvider implements BillingProvider {
   }
 }
 
-const unconfigured = new UnconfiguredBillingProvider();
-
 /**
  * Le fournisseur actif.
  *
- * C'est ici — et nulle part ailleurs — que se fera le choix le jour où
- * un encaissement existera : lire la configuration, rendre le
- * `WebBillingProvider` s'il est complet, l'`AppleBillingProvider` quand
- * la souscription vient de l'app iPhone. Les écrans, eux, ne changeront
- * pas : ils parlent déjà à l'interface.
+ * C'est ICI — et nulle part ailleurs — que se fait le choix, exactement
+ * comme le prévoyait la première version de ce fichier. Les écrans, eux,
+ * n'ont pas changé : ils parlaient déjà à l'interface.
+ *
+ * POURQUOI LA CONSTRUCTION EST REFAITE À CHAQUE APPEL, et non mise en
+ * cache dans un module : une variable d'environnement ajoutée sur
+ * l'hébergeur doit prendre effet au déploiement suivant, pas au
+ * redémarrage suivant d'un processus qu'on ne contrôle pas. Le coût est
+ * une lecture de `process.env` — rien.
  */
 export function getBillingProvider(): BillingProvider {
-  return unconfigured;
+  const stripe = construireStripeBillingProvider(createClient);
+  if ("indisponible" in stripe) return new UnconfiguredBillingProvider(stripe.indisponible);
+  return stripe;
 }
 
 /**
@@ -230,7 +172,8 @@ export function getBillingProvider(): BillingProvider {
  * par elle seule ; la politique RLS ne rend visibles que celles de
  * l'utilisateur connecté. Les afficher ici explique au client pourquoi
  * son abonnement iPhone n'est pas son abonnement Pro — sans dupliquer
- * la moindre règle de droits.
+ * la moindre règle de droits, et sans JAMAIS additionner les deux :
+ * l'un est net de la commission d'Apple, l'autre non.
  */
 export type AccountEntitlementSummary = {
   /** Les plans validés par Apple (« premium », « biolab »…). */

@@ -1,4 +1,5 @@
 import { createClient } from "@/lib/supabase/server";
+import { AGENTS_A_COMPLETER, CLE_BASE } from "@/lib/ai/runtime";
 import type { Permission } from "@/lib/auth/permissions";
 import {
   AGENTS,
@@ -43,6 +44,20 @@ export type AgentPanel = {
   permissions: { permission: Permission; granted: boolean }[];
   /** Vrai quand un droit exigé manque : l'agent ne pourra pas répondre. */
   blocked: boolean;
+  /**
+   * §11Y — VRAI TANT QUE LE FICHIER DE L'AGENT EST UN GABARIT.
+   *
+   * Six des dix agents ont une définition minimale et pas encore leurs
+   * outils propres. Ils RÉPONDENT si on les appelle — pauvrement, ce
+   * qui est l'information utile — mais l'écran ne doit pas les
+   * présenter comme prêts à côté de la Facturation, qui l'est.
+   *
+   * Lu depuis `AGENTS_A_COMPLETER`, qui se déduit du drapeau porté par
+   * chaque fichier d'agent. Jamais recopié : une seconde liste est une
+   * seconde vérité, et celui qui achève un agent ne doit avoir qu'un
+   * seul endroit à modifier.
+   */
+  underConstruction: boolean;
 };
 
 export type AgentsView = {
@@ -125,6 +140,11 @@ export async function getAgentsView(
     lastByAgent.set(agent, String(row.occurred_at));
   }
 
+  // La graphie du runtime (`quotePricing`) n'est pas celle de la base
+  // (`quote_pricing`) : on convertit UNE fois, ici, plutôt que de
+  // comparer deux graphies à chaque tour de boucle.
+  const enConstruction = new Set<string>(AGENTS_A_COMPLETER.map((cle) => CLE_BASE[cle]));
+
   const panels: AgentPanel[] = AGENTS.map((agent) => {
     const setting = settings.get(agent);
     const required = AGENT_REQUIRED_PERMISSIONS[agent];
@@ -146,6 +166,7 @@ export async function getAgentsView(
       openDecisions: openByAgent.get(agent) ?? 0,
       permissions: rows,
       blocked: rows.some((row) => !row.granted),
+      underConstruction: enConstruction.has(agent),
     };
   });
 

@@ -1,5 +1,5 @@
 import { z } from "zod";
-import { AGENTS_PREMIERE_ITERATION } from "@/lib/ai/runtime";
+import { AGENTS_JOIGNABLES } from "@/lib/ai/runtime";
 import { runtimeAgents } from "@/lib/ai/runtime/supabase";
 import { aiguiller } from "../aiguillage";
 import { consommerQuota, lireIdentite, verifierDecision } from "../identite";
@@ -86,8 +86,23 @@ export const LONGUEUR_QUESTION_MAX = 2_000;
 
 const CorpsSchema = z.object({
   question: z.string().min(1).max(LONGUEUR_QUESTION_MAX),
-  /** L'écran sait parfois de quoi il parle. Quand il le sait, il le dit. */
-  agent: z.enum(AGENTS_PREMIERE_ITERATION).nullish(),
+  /**
+   * L'écran sait parfois de quoi il parle. Quand il le sait, il le dit.
+   *
+   * LA LISTE EST CELLE DES AGENTS JOIGNABLES, PAS DES AGENTS DÉCLARÉS,
+   * et la nuance est une faille refermée. Un agent imposé ici gagne
+   * TOUJOURS : `aiguiller()` rend « Agent imposé par l'appelant » sans
+   * rien vérifier. Tant que ce champ acceptait les dix clés, un gabarit
+   * — un agent explicitement déclaré non construit, sans mot-clé, que
+   * l'aiguilleur ne rend jamais — restait atteignable par un simple
+   * champ de requête. On payait alors un raisonnement complet pour un
+   * agent sans source.
+   *
+   * `AGENTS_JOIGNABLES` est dérivé du drapeau `aCompleter` que chaque
+   * fichier d'agent porte : le jour où un gabarit est achevé, il entre
+   * ici tout seul, et le jour où l'on remet le drapeau, il en sort.
+   */
+  agent: z.enum(AGENTS_JOIGNABLES).nullish(),
   quoteId: z.string().uuid().nullish(),
   projectId: z.string().uuid().nullish(),
   customerId: z.string().uuid().nullish(),

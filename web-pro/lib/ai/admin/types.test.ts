@@ -1,6 +1,6 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { readFileSync } from "node:fs";
+import { readFileSync, readdirSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { dirname, join } from "node:path";
 
@@ -50,10 +50,19 @@ const RACINE = join(ICI, "..", "..", "..", "..");
 // 1. Les accords entre fichiers
 // ==================================================================
 
-test("les quatre agents surchargeables sont exactement ceux qu'accepte 0072", () => {
+test("les agents surchargeables sont exactement ceux qu'accepte la DERNIÈRE migration", () => {
   // La contrainte `check (public.ai_is_supported_agent(agent))` porte sur
   // `ai_model_overrides` ; la liste vit dans une fonction SQL, que le
   // TypeScript ne peut pas lire. On relit donc la migration.
+  //
+  // §11Y — ET ON RELIT LA DERNIÈRE, PAS 0072. Ce test lisait 0072 en
+  // dur, ce qui était juste tant que 0072 était la seule à définir la
+  // fonction. 0082 la redéfinit : continuer à lire 0072 aurait fait
+  // passer ce test sur une définition périmée — un test vert qui
+  // certifie la mauvaise liste est pire que pas de test du tout. On
+  // balaie donc TOUTES les migrations et on garde la dernière
+  // occurrence, dans l'ordre des numéros, qui est l'ordre
+  // d'application.
   //
   // L'enjeu a CHANGÉ DE CAMP depuis que l'écran de réglage est parti :
   // ce n'est plus un sélecteur client qui se ferait refuser par un
@@ -61,19 +70,38 @@ test("les quatre agents surchargeables sont exactement ceux qu'accepte 0072", ()
   // reconnaîtrait pas une surcharge posée par l'éditeur et l'ignorerait
   // en silence. Un cinquième agent ajouté d'un seul côté produirait donc
   // une dérogation payée, enregistrée, journalisée — et sans effet.
-  const sql = readFileSync(
-    join(RACINE, "supabase", "migrations", "0072_phase11v_socle.sql"),
-    "utf8",
-  );
-  const corps = /ai_is_supported_agent[\s\S]*?select p_agent in \(([^)]*)\)/.exec(sql);
-  assert.ok(corps, "`ai_is_supported_agent` introuvable dans 0072.");
+  const dossier = join(RACINE, "supabase", "migrations");
+  const fichiers = readdirSync(dossier)
+    .filter((nom) => nom.endsWith(".sql"))
+    .sort();
 
-  const declares = [...corps[1].matchAll(/'([a-z_]+)'/g)].map((m) => m[1]);
+  let derniere: { fichier: string; declares: string[] } | null = null;
+  for (const fichier of fichiers) {
+    const sql = readFileSync(join(dossier, fichier), "utf8");
+    const corps = /create or replace function public\.ai_is_supported_agent[\s\S]*?select p_agent in \(([^)]*)\)/.exec(
+      sql,
+    );
+    if (corps === null) continue;
+    derniere = { fichier, declares: [...corps[1].matchAll(/'([a-z_]+)'/g)].map((m) => m[1]) };
+  }
+
+  assert.ok(derniere, "`ai_is_supported_agent` n'est définie dans aucune migration.");
   assert.deepEqual(
-    new Set(declares),
+    new Set(derniere.declares),
     new Set(AGENTS_SQL),
-    "AGENTS_SQL et `ai_is_supported_agent` (0072) ne désignent plus les mêmes agents.",
+    `AGENTS_SQL et \`ai_is_supported_agent\` (${derniere.fichier}) ne désignent plus les mêmes agents.`,
   );
+
+  // ET LES QUATRE FAÇADES RESTENT DEHORS. Sans cette assertion, ajouter
+  // « market » des DEUX côtés ferait passer le test ci-dessus en
+  // silence, et l'éditeur pourrait surcharger le modèle d'un agent qui
+  // n'existe pas. Les motifs sont dans `runtime/agents/sansDonnees.ts`.
+  for (const facade of ["sales", "market", "risk", "classification"]) {
+    assert.ok(
+      !derniere.declares.includes(facade),
+      `« ${facade} » est déclaré sans données : la base ne doit pas l'accepter.`,
+    );
+  }
 });
 
 test("chaque agent surchargeable a une traduction aller-retour", () => {
@@ -81,13 +109,14 @@ test("chaque agent surchargeable a une traduction aller-retour", () => {
     assert.equal(cleSqlDeLAgent(cleCatalogueDeLaCleSql(agent)), agent);
     assert.ok(estCleAgentSql(agent));
   }
-  // Et les dix autres n'en ont pas — c'est le cas ordinaire, pas une erreur.
+  // Et les quatre déclarés sans données n'en ont pas — c'est le cas voulu,
+  // pas une erreur : on ne surcharge pas le modèle d'un agent inexistant.
   const surchargeables = AGENTS_MODELE.filter((cle) => cleSqlDeLAgent(cle) !== null);
   assert.equal(surchargeables.length, AGENTS_SQL.length);
 });
 
 test("les libellés d'agent ne contredisent pas ceux des écrans métier", () => {
-  // `lib/ai/types.ts` en porte quatre, affichés sur les cartes de
+  // `lib/ai/types.ts` porte les mêmes dix, affichés sur les cartes de
   // décision. Deux noms différents pour le même agent selon l'écran,
   // c'est un utilisateur qui croit qu'il y en a deux.
   for (const agent of AGENTS_METIER) {

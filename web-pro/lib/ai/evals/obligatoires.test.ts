@@ -19,7 +19,7 @@ import {
 } from "../runtime/actionEngine.ts";
 import { BUDGET_SANS_LIMITE, type BudgetIA } from "../runtime/cost.ts";
 import { MESSAGE_INDISPONIBLE, type IdentiteAppel, type SortieModele } from "../runtime/types.ts";
-import { AGENTS_PREMIERE_ITERATION } from "../runtime/definitions.ts";
+import { AGENTS_CONSTRUITS } from "../runtime/definitions.ts";
 import {
   CATALOGUE_EVAL,
   DROITS_COMPLETS,
@@ -337,7 +337,7 @@ test("ESCALATION — un plafond de plan bloque la montée jusqu'au fournisseur",
 
 test("TOOLS — l'offre est déjà filtrée : chaque agent ne voit que les siens", async () => {
   const registre = registreOutils();
-  for (const agent of AGENTS_PREMIERE_ITERATION) {
+  for (const agent of AGENTS_CONSTRUITS) {
     for (const outil of registre.pourAgent(agent, DROITS_COMPLETS)) {
       assert.ok(
         outil.agent === agent || outil.agent === null,

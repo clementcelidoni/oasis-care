@@ -1,6 +1,26 @@
 import { z } from "zod";
 import type { CleAgentModele, NiveauRisque, Permission } from "./types.ts";
 
+// LES OUTILS ÉCRITS PAR LES AGENTS EUX-MÊMES, IMPORTÉS PLUTÔT QUE
+// RECOPIÉS.
+//
+// Chaque agent outillé a écrit sa déclaration dans `outils/<lui>.ts`, à
+// côté de la fonction SQL et de son épreuve — c'est ce qui a permis de
+// les écrire en parallèle sans que deux mains se croisent dans ce
+// fichier-ci. L'intégration les VERSE au catalogue, et elle le fait par
+// un import et non par un copier-coller : une déclaration recopiée ici
+// serait une seconde vérité, et le jour où l'un des deux exemplaires
+// est corrigé — une permission, une description, une borne — c'est
+// l'autre qui part au modèle.
+//
+// PAS DE CYCLE À L'EXÉCUTION : ces fichiers n'importent de celui-ci
+// que le TYPE `OutilOasis`, en `import type`, qui disparaît à la
+// compilation. Ils ne dépendent de rien d'autre que de `zod`.
+import { OUTIL_OPERATIONS_SNAPSHOT } from "./outils/operations.ts";
+import { OUTIL_PLANNING_SUMMARY } from "./outils/planning.ts";
+import { OUTIL_FLEET_SNAPSHOT, OUTIL_FLEET_EQUIPMENT } from "./outils/fleet.ts";
+import { OUTIL_CUSTOMER_VALUE } from "./outils/customer.ts";
+
 /**
  * §11V — ÉTAPE 8 : `OasisAIToolRegistry` (spec p. 10-11).
  *
@@ -501,41 +521,99 @@ const OUTILS_LECTURE: readonly OutilOasis[] = [
     }),
   },
 
-  // ---------- PÉPINIÈRE (agent non construit — voir plus bas) ----------
+  // ---------- PÉPINIÈRE ----------
+  //
+  // LES DEUX PORTENT `nursery.stock.manage`, ET CE MOT A ÉTÉ AJOUTÉ
+  // APRÈS COUP — VOICI POURQUOI, PARCE QUE LE DÉFAUT EST INVISIBLE.
+  //
+  // Les deux fonctions sont `security invoker` et n'appellent PAS
+  // `ai_guard` : elles finissent par `coalesce(jsonb_agg(...), '[]')`.
+  // Or les six tables `nursery_*` sont toutes sous
+  // `has_permission(organization_id, 'nursery.stock.manage')`. Un membre
+  // sans ce droit ne reçoit donc pas un refus : il reçoit UNE LISTE
+  // VIDE, indiscernable d'une pépinière vide. Mesuré en production, à
+  // deux comptes, sur le même lot réel : le propriétaire voit
+  // 40 rosiers, le membre à droits réduits voit `[]`.
+  //
+  // Tant que `permission` valait `null`, l'outil était offert à qui ne
+  // peut pas le lire, et `refusesPourAgent` ne nommait JAMAIS le droit
+  // manquant — la cinquième occurrence de la confusion « zéro / je ne
+  // sais pas » que ce produit a déjà corrigée quatre fois, et la
+  // première atteignable par une simple question d'utilisateur.
+  //
+  // Le mot ci-dessous produit deux effets : l'outil n'est plus proposé
+  // sans le droit, et `refusesPourAgent` le nomme — donc l'agent dit
+  // « il vous manque le droit de stock » au lieu de « vous n'avez rien
+  // en pépinière ». `permissionSource: "rls"` reste exact : le filtrage
+  // vient bien des politiques, pas d'un `ai_guard`. La ceinture côté
+  // base — un `perform public.ai_guard(...)` en tête des deux fonctions
+  // — reste souhaitable et n'entre pas dans ce chantier : ces deux
+  // fonctions datent de 0058 et sont lues par d'autres appelants.
   {
     nom: "getNurseryStock",
     famille: "lecture",
     agent: "nursery",
     rpc: "ai_find_stock",
     injecteOrganisation: true,
-    permission: null,
+    permission: "nursery.stock.manage",
     permissionSource: "rls",
     risque: "low",
     confirmationRequise: false,
     fournit: ["stock", "quantites"],
     maxElements: 40,
-    description: "Stock disponible par espèce, cultivar et conditionnement.",
+    description:
+      "Stock d'une espèce : quantité physique, réservée, disponible, et ce qui est attendu des " +
+      "commandes fournisseur. " +
+      "« attendu » À ZÉRO NE VEUT PAS DIRE « aucune commande » : cette colonne traverse les " +
+      "commandes fournisseur, dont la lecture dépend d'un autre droit que celui du stock. " +
+      "Ne conclus jamais qu'il n'y a rien en commande — dis que tu ne le vois pas.",
     parametres: z.object({
       p_query: z.string().describe("Espèce, cultivar ou fragment de nom."),
     }),
   },
   {
+    // LA DESCRIPTION A ÉTÉ RÉÉCRITE POUR DÉCRIRE LA SORTIE RÉELLE.
+    // L'ancienne annonçait « ce qui sort, ce qui rentre, le déficit ».
+    // La fonction rend exactement DEUX clés — `enProduction` et
+    // `commandesAttendues` — et ne calcule ni consommation ni déficit.
+    // Un modèle qui appelle un outil pour obtenir un déficit et lit une
+    // réponse qui n'en contient pas ne se tait pas : il improvise. Le
+    // nom lui-même reste celui de la spec p. 11 (« Needs »), et il
+    // continue de suggérer un besoin que la fonction ne calcule pas :
+    // la description dit donc en toutes lettres ce qu'elle ne fait pas.
     nom: "getProjectedNurseryNeeds",
     famille: "lecture",
     agent: "nursery",
     rpc: "ai_forecast_availability",
     injecteOrganisation: true,
-    permission: null,
+    permission: "nursery.stock.manage",
     permissionSource: "rls",
     risque: "low",
     confirmationRequise: false,
     fournit: ["stock", "quantites"],
     maxElements: 40,
-    description: "Disponibilité projetée d'une espèce : ce qui sort, ce qui rentre, le déficit.",
+    description:
+      "Ce qui est EN PRODUCTION et pas encore vendable pour une espèce (lot, stade, quantité), " +
+      "et ce qui est ATTENDU des commandes fournisseur. " +
+      "NE CALCULE NI CONSOMMATION PRÉVUE NI DÉFICIT malgré son nom : aucune source ne relie un " +
+      "devis ou un chantier au stock de pépinière. Si on te demande ce que les chantiers " +
+      "engagés vont consommer, dis que ce produit ne le mesure pas. " +
+      "Un lot « vendable: false » n'est PAS du stock disponible : ne l'additionne pas au stock.",
     parametres: z.object({
       p_query: z.string().describe("Espèce, cultivar ou fragment de nom."),
     }),
   },
+
+  // ---------- CHANTIERS · PLANNING · MATÉRIEL · CLIENTS ----------
+  //
+  // Écrits par leurs agents dans `outils/`, avec leur fonction SQL
+  // (posée par 0082) et leur épreuve. Voir l'import en tête de fichier
+  // pour la raison de l'import plutôt que de la recopie.
+  OUTIL_OPERATIONS_SNAPSHOT,
+  OUTIL_PLANNING_SUMMARY,
+  OUTIL_FLEET_SNAPSHOT,
+  OUTIL_FLEET_EQUIPMENT,
+  OUTIL_CUSTOMER_VALUE,
 ];
 
 // ==================================================================
@@ -596,15 +674,48 @@ const OUTILS_PROPOSITION: readonly OutilOasis[] = [
     fournit: [],
     description:
       "PROPOSE un brouillon de commande fournisseur. N'ENVOIE RIEN : l'envoi engage l'achat et " +
-      "reste interdit à Oasis.",
+      "reste interdit à Oasis. Les prix d'achat sont EN CENTIMES ENTIERS ; le total est " +
+      "recalculé par la base. Pour une ligne de VÉGÉTAUX, renseigne « is_plant » et " +
+      "« species_name » : sans eux, la ligne ne remontera jamais dans le « attendu » du stock " +
+      "de pépinière, et le besoin prévisionnel recommandera de recommander ce qui est déjà " +
+      "commandé.",
     parametres: z.object({
       p_supplier_id: z.string().describe("Identifiant du fournisseur (UUID)."),
       p_lines: z.array(
         z.object({
           description: z.string(),
           quantity: z.number(),
-          unit_price_cents: z.number().int().nullable(),
+          // `unit_cost_cents` ET NON `unit_price_cents` — LE SCHÉMA
+          // MENTAIT, ET LE BUG ÉTAIT EN PRODUCTION.
+          //
+          // `ai_create_purchase_order_draft` lit
+          // `coalesce((v_line ->> 'unit_cost_cents')::bigint, 0)`,
+          // vérifié dans le corps de la fonction en base. Tant que le
+          // schéma nommait le prix `unit_price_cents`, la clé remplie
+          // par le modèle n'était lue par PERSONNE, le `coalesce` la
+          // remplaçait par zéro, et TOUTES les lignes du brouillon —
+          // ainsi que le total de la commande — valaient 0 €. Rien ne
+          // le signalait : la proposition s'affichait, complète, à
+          // zéro euro.
+          //
+          // Les quatre champs qui suivent sont dans le même cas à
+          // l'envers : la fonction les lit depuis le début, le schéma
+          // ne les offrait pas, donc le modèle ne pouvait pas les
+          // remplir. `vat_rate` manquant fait une commande sans TVA ;
+          // `is_plant` et `species_name` manquants font disparaître une
+          // ligne de végétaux de la colonne « attendu » du stock.
+          unit_cost_cents: z.number().int().nullable().describe("Prix d'achat unitaire, EN CENTIMES ENTIERS."),
           unit: z.string().nullable(),
+          vat_rate: z.number().nullable().describe("Taux de TVA, en pourcentage (20 pour 20 %)."),
+          is_plant: z
+            .boolean()
+            .nullable()
+            .describe("Vrai si la ligne est un végétal destiné au stock de pépinière."),
+          species_name: z
+            .string()
+            .nullable()
+            .describe("Nom d'espèce, obligatoire pour qu'une ligne de végétaux entre au stock."),
+          container_size: z.string().nullable().describe("Conditionnement (C3, motte, racines nues…)."),
         }),
       ),
       p_expected_on: z.string().nullable().describe("Date de livraison attendue, AAAA-MM-JJ."),
@@ -825,22 +936,52 @@ export const OUTILS_SPEC_SANS_SERVICE: readonly {
   {
     nomSpec: "getSupplierPrices",
     etat: "absent",
+    // LE MOTIF A ÉTÉ CORRIGÉ : il était faux, et sa fausseté aurait
+    // envoyé le prochain lecteur créer une table qui existe déjà.
+    // `public.supplier_prices` est posée depuis 0048, avec
+    // `supplier_id`, `catalog_item_id`, `price_cents`,
+    // `supplier_reference`, `minimum_quantity`, `valid_from`,
+    // `valid_until`. La grille consolidée EXISTE. Ce qui manque est
+    // ailleurs, et c'est ce qui doit être écrit ici.
     explication:
-      "Aucune fonction de tarifs fournisseurs. Les prix d'achat existent ligne à ligne sur les " +
-      "commandes ; il n'existe aucune grille consolidée à interroger.",
+      "La table existe et PERSONNE NE L'ALIMENTE. `public.supplier_prices` (0048) porte prix, " +
+      "quantité minimale et périodes de validité, et compte zéro ligne en production — comme " +
+      "`suppliers`. Aucune fonction ne la lit. Un outil de tarifs fournisseurs rendrait une " +
+      "liste vide qu'un agent lirait « ce fournisseur n'a pas de tarif ». Ce qu'il faut livrer " +
+      "d'abord n'est pas du code : c'est la première ligne saisie.",
   },
   {
     nomSpec: "getFleetCosts",
     etat: "absent",
+    // RESTE « absent » MALGRÉ L'ARRIVÉE DES DEUX OUTILS MATÉRIEL, et
+    // c'est le point délicat de cette entrée. `getFleetSnapshot` et
+    // `getEquipmentRecord` rendent les échéances, la disponibilité et
+    // l'entretien SAISI — pas le coût d'usage. Les faire passer à
+    // « couvert » laisserait croire que la question « combien me coûte
+    // ce camion au kilomètre » a trouvé sa réponse.
+    // `outils/fleet.test.ts` échoue si quelqu'un le change.
     explication:
-      "Aucune fonction de coûts de flotte. Le matériel est suivi, son coût d'usage ne l'est pas.",
+      "Aucune fonction de COÛT D'USAGE, et aucun schéma pour en écrire une : ni carburant, ni " +
+      "relevé kilométrique périodique, ni amortissement (0067 l'exclut par écrit), ni " +
+      "refacturation au chantier. `getFleetSnapshot` et `getEquipmentRecord` rendent le prix " +
+      "d'achat et l'entretien réellement dépensé, ce qui n'est pas un coût au kilomètre : " +
+      "l'agent Matériel refuse la question par son nom plutôt que d'en approcher la réponse.",
   },
   {
     nomSpec: "getPlanningSummary",
-    etat: "absent",
+    // PASSÉ DE « absent » À « couvert » PAR 0082, ET LES DEUX GESTES
+    // SONT INDISSOCIABLES : déclaré absent ici ET présent au registre,
+    // l'un des deux mentirait, et `tools.test.ts` échoue exprès sur cet
+    // écart. La phrase d'origine disait elle-même pourquoi il fallait
+    // l'écrire — « agréger côté modèle reviendrait à lui faire compter
+    // des heures », or les heures sont l'une des huit grandeurs de la
+    // frontière déterministe.
+    etat: "couvert",
     explication:
-      "Aucune fonction de synthèse de planning. Les interventions se lisent une à une ; " +
-      "agréger côté modèle reviendrait à lui faire compter des heures.",
+      "Déclaré sous son nom, adossé à `ai_planning_summary` (0082). Il agrège en SQL ce que le " +
+      "modèle n'a pas le droit de compter : les heures posées, jour par jour et équipe par " +
+      "équipe. Il rend `heuresConnues` et jamais « heures travaillées » — une intervention qui " +
+      "court sur plusieurs jours vaut null sur chacun, jamais son amplitude.",
   },
   {
     nomSpec: "createPlanningProposal",

@@ -4,7 +4,9 @@ import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { dirname, join } from "node:path";
 import {
-  AGENTS_PREMIERE_ITERATION,
+  AGENTS_A_COMPLETER,
+  AGENTS_CONSTRUITS,
+  AGENTS_SANS_DONNEES,
   CLE_BASE,
   CONSIGNE_DIRECTION,
   DEFINITIONS,
@@ -20,7 +22,7 @@ import type { AgentContext } from "./context.ts";
 import type { Permission } from "./types.ts";
 
 /**
- * §11V — LES QUATRE AGENTS : QUI ILS SONT, ET CE QU'ON LEUR DIT.
+ * §11V, §11Y — LES DIX AGENTS : QUI ILS SONT, ET CE QU'ON LEUR DIT.
  *
  * ══════════════════════════════════════════════════════════════════
  * ON N'ÉPROUVE PAS UNE INSTRUCTION EN LA RELISANT
@@ -30,7 +32,8 @@ import type { Permission } from "./types.ts";
  * qu'un modèle l'a comprise. Ce qu'un test PEUT vérifier, et qui casse
  * réellement en pratique, c'est qu'elle soit COMPLÈTE — que les six
  * règles qui protègent contre une erreur coûteuse y soient toutes, dans
- * chacun des quatre agents.
+ * chacun des dix agents — gabarits compris, puisqu'un gabarit qu'on appelle
+ * répond.
  *
  * La panne visée est banale : quelqu'un ajoute un cinquième agent, le
  * construit à partir d'un copier-coller, et oublie la ligne sur les
@@ -42,7 +45,7 @@ import type { Permission } from "./types.ts";
  * `CONSIGNE_DIRECTION` — « tu ne lis pas la base, tu interroges les
  * spécialistes » (p. 8) — n'a de sens que pour la Direction. Collée sur
  * Finance, qui EST un spécialiste, elle lui ordonnerait de déléguer à
- * personne. Un test l'exige sur un agent et l'interdit sur les trois
+ * personne. Un test l'exige sur un agent et l'interdit sur les neuf
  * autres.
  */
 
@@ -68,55 +71,181 @@ function contexte(surcharge: Partial<AgentContext> = {}): AgentContext {
 }
 
 // ==================================================================
-// 1. Les quatre agents, et pas un cinquième
+// 1. Les dix agents, et pas un onzième
 // ==================================================================
 
-test("les quatre agents construits sont ceux que 0072 accepte", () => {
-  assert.deepEqual([...AGENTS_PREMIERE_ITERATION], ["executive", "finance", "billing", "quotePricing"]);
-  for (const agent of AGENTS_PREMIERE_ITERATION) {
+test("les dix agents construits sont ceux que 0072 + 0082 acceptent", () => {
+  assert.deepEqual(
+    [...AGENTS_CONSTRUITS],
+    [
+      "executive",
+      "finance",
+      "billing",
+      "quotePricing",
+      "operations",
+      "planning",
+      "procurement",
+      "nursery",
+      "fleet",
+      "customer",
+    ],
+  );
+  for (const agent of AGENTS_CONSTRUITS) {
     assert.ok(DEFINITIONS[agent], `« ${agent} » n'a pas de définition`);
     assert.equal(DEFINITIONS[agent].cle, agent, "la clé de la définition doit être sa propre clé");
   }
 });
 
-test("la graphie de la base est celle de 0072, pas celle de la spec", () => {
+test("la graphie de la base est celle des migrations, pas celle de la spec", () => {
   // La spec écrit `quotePricing`, `ai_is_supported_agent` écrit
   // `quote_pricing`. Une action enregistrée sous le mauvais nom serait
   // refusée par la contrainte — après avoir payé l'appel.
   // La CLÉ est la graphie de la spec, la VALEUR celle de la base. Le
   // seul couple qui diffère est celui du chiffrage, et c'est
-  // exactement le piège que cette table existe pour désamorcer.
+  // exactement le piège que cette table existe pour désamorcer : les
+  // six agents ajoutés en 0082 s'écrivent pareil des deux côtés, ce
+  // qui est une chance et non une règle.
   const attendu: Record<AgentConstruit, string> = {
     executive: "executive",
     finance: "finance",
     billing: "billing",
     quotePricing: "quote_pricing",
+    operations: "operations",
+    planning: "planning",
+    procurement: "procurement",
+    nursery: "nursery",
+    fleet: "fleet",
+    customer: "customer",
   };
   assert.deepEqual(CLE_BASE, attendu);
 
-  const socle = readFileSync(
-    join(racineDepot, "supabase", "migrations", "0072_phase11v_socle.sql"),
-    "utf8",
-  );
+  // LES DEUX MIGRATIONS SONT RELUES ENSEMBLE. 0072 a posé les quatre
+  // premières valeurs, 0082 les six autres : chercher dans l'une ou
+  // dans l'autre seulement laisserait passer la moitié du contrat.
+  const migrations =
+    readFileSync(join(racineDepot, "supabase", "migrations", "0072_phase11v_socle.sql"), "utf8") +
+    readFileSync(join(racineDepot, "supabase", "migrations", "0082_agents_ia.sql"), "utf8");
   for (const cle of Object.values(CLE_BASE)) {
-    assert.ok(socle.includes(`'${cle}'`), `« ${cle} » doit exister dans 0072`);
+    assert.ok(migrations.includes(`'${cle}'`), `« ${cle} » doit exister dans 0072 ou 0082`);
   }
 });
 
-test("estAgentConstruit refuse les dix agents que la spec nomme sans qu'on les construise", () => {
+test("estAgentConstruit refuse les quatre agents déclarés sans données", () => {
   assert.equal(estAgentConstruit("finance"), true);
-  for (const absent of ["sales", "operations", "planning", "procurement", "nursery", "fleet", "customer", "market", "risk", "classification"]) {
-    assert.equal(estAgentConstruit(absent), false, `« ${absent} » n'est pas construit dans cette itération`);
+  assert.equal(estAgentConstruit("nursery"), true);
+  // Ceux-là ne sont pas oubliés : ils sont DÉCLARÉS indisponibles, avec
+  // leur motif, dans `agents/sansDonnees.ts`. Les accepter ici
+  // permettrait de leur fixer un plafond de coût et de leur choisir un
+  // modèle — un réglage qui a l'air actif pour un agent inexistant.
+  for (const absent of ["sales", "market", "risk", "classification"]) {
+    assert.equal(estAgentConstruit(absent), false, `« ${absent} » n'a aucune donnée derrière lui`);
   }
   assert.equal(estAgentConstruit(null), false);
 });
 
+test("les quatre agents déclarés sans données le disent, et disent quoi livrer d'abord", () => {
+  assert.deepEqual(
+    AGENTS_SANS_DONNEES.map((e) => e.cle),
+    ["sales", "market", "risk", "classification"],
+  );
+  for (const entree of AGENTS_SANS_DONNEES) {
+    // Un « pas encore » sans motif ni condition de levée est un refus
+    // définitif déguisé en délai. C'est la manière de
+    // `OUTILS_SPEC_SANS_SERVICE`, et elle vaut aussi pour les agents.
+    assert.ok(entree.motif.length > 80, `« ${entree.cle} » n'explique pas pourquoi`);
+    assert.ok(entree.aLivrerDabord.length > 0, `« ${entree.cle} » ne dit pas ce qui manque`);
+    assert.equal(
+      estAgentConstruit(entree.cle),
+      false,
+      `« ${entree.cle} » est déclaré sans données ET construit : les deux listes se contredisent`,
+    );
+  }
+});
+
+test("un gabarit se déclare gabarit, et les quatre premiers n'en sont pas", () => {
+  // Le drapeau vit dans le fichier de l'agent, et lui seul : celui qui
+  // finit un agent le retire sans croiser le travail des neuf autres.
+  for (const acheve of ["executive", "finance", "billing", "quotePricing"] as const) {
+    assert.equal(
+      DEFINITIONS[acheve].aCompleter,
+      undefined,
+      `« ${acheve} » était achevé avant ce chantier : le déménagement l'a marqué gabarit`,
+    );
+  }
+
+  // ══════════════════════════════════════════════════════════════
+  // L'ASSERTION EST DÉRIVÉE, PLUS RECOPIÉE — ET C'EST UNE CORRECTION
+  // ══════════════════════════════════════════════════════════════
+  //
+  // Cette ligne était une liste écrite à la main. Elle a fait tomber le
+  // dépôt à CHAQUE agent achevé, et chacun des six constructeurs l'a
+  // heurtée à son tour — sur un fichier partagé, donc en conflit de
+  // fusion avec les cinq autres. Un test qui transforme tout progrès en
+  // conflit n'est pas un garde-fou, c'est un péage.
+  //
+  // Ce qu'elle prétendait défendre — « la liste est à jour » — n'était
+  // d'ailleurs pas défendable : `AGENTS_A_COMPLETER` est CONSTRUITE en
+  // filtrant `aCompleter`, donc la recopier revenait à comparer la
+  // liste à elle-même, écrite deux fois. Le vrai risque est ailleurs, et
+  // c'est lui qu'on vérifie maintenant : qu'un drapeau et la RÉALITÉ
+  // divergent.
+  assert.deepEqual(
+    [...AGENTS_A_COMPLETER],
+    AGENTS_CONSTRUITS.filter((a) => DEFINITIONS[a].aCompleter === true),
+    "AGENTS_A_COMPLETER n'est plus le reflet des drapeaux : c'est une seconde liste",
+  );
+});
+
+test("un gabarit n'est jamais joignable, et un agent achevé l'est", () => {
+  // ══════════════════════════════════════════════════════════════
+  // LA RÈGLE QUE LE CHANTIER A FAILLI PERDRE
+  // ══════════════════════════════════════════════════════════════
+  //
+  // Le drapeau `aCompleter` ne bride rien à l'exécution. Ce qui rend un
+  // agent joignable, ce sont ses MOTS-CLÉS d'aiguillage. Les deux
+  // peuvent donc diverger en silence, et c'est exactement ce qui s'est
+  // produit à mi-chantier : deux agents avaient perdu leur drapeau et
+  // gagné des mots-clés SANS avoir un seul outil au registre. Ils
+  // étaient atteignables, présentés comme prêts, et incapables de
+  // répondre à une question de leur propre mission — la façade que ce
+  // chantier avait pour but d'éviter, arrivée par la porte de derrière.
+  //
+  // Ce test noue les trois faits ensemble, dans les deux sens, pour
+  // qu'aucun ne puisse plus avancer sans les autres.
+  for (const agent of AGENTS_CONSTRUITS) {
+    const definition = DEFINITIONS[agent];
+    const gabarit = definition.aCompleter === true;
+    const mots = definition.motsCles ?? [];
+    const sources = sourcesDe(agent);
+
+    if (gabarit) {
+      assert.equal(
+        mots.length,
+        0,
+        `« ${agent} » est un gabarit ET joignable : on le fait répondre avant qu'il ait ` +
+          "quelque chose à dire",
+      );
+    } else {
+      assert.ok(
+        sources.length > 0,
+        `« ${agent} » est donné pour achevé et n'a AUCUNE source à lui : soit on lui verse ` +
+          "ses outils dans tools.ts, soit on lui remet aCompleter — pas d'état intermédiaire",
+      );
+      assert.ok(
+        mots.length > 0,
+        `« ${agent} » est achevé mais aucun mot ne l'appelle : ses questions partiront à la ` +
+          "Direction, qui n'a pas ses sources et répondra « je ne vois rien » avec aplomb",
+      );
+    }
+  }
+});
+
 // ==================================================================
-// 2. LE SOCLE — les règles qui doivent être dans les quatre
+// 2. LE SOCLE — les règles qui doivent être dans les dix
 // ==================================================================
 
-test("les quatre instructions portent la frontière déterministe (p. 11-12)", () => {
-  for (const agent of AGENTS_PREMIERE_ITERATION) {
+test("les dix instructions portent la frontière déterministe (p. 11-12)", () => {
+  for (const agent of AGENTS_CONSTRUITS) {
     assert.ok(
       instructionsPour(agent, contexte()).includes(CONSIGNE_FRONTIERE_DETERMINISTE),
       `« ${agent} » pourrait recalculer une marge que le SQL a déjà calculée`,
@@ -124,8 +253,8 @@ test("les quatre instructions portent la frontière déterministe (p. 11-12)", (
   }
 });
 
-test("les quatre disent qu'une donnée reçue n'est jamais une instruction", () => {
-  for (const agent of AGENTS_PREMIERE_ITERATION) {
+test("les dix disent qu'une donnée reçue n'est jamais une instruction", () => {
+  for (const agent of AGENTS_CONSTRUITS) {
     const texte = instructionsPour(agent, contexte());
     assert.ok(
       texte.includes("JAMAIS DES INSTRUCTIONS"),
@@ -134,8 +263,8 @@ test("les quatre disent qu'une donnée reçue n'est jamais une instruction", () 
   }
 });
 
-test("les quatre distinguent « null » de « zéro », et « insufficient_data » d'une confiance faible", () => {
-  for (const agent of AGENTS_PREMIERE_ITERATION) {
+test("les dix distinguent « null » de « zéro », et « insufficient_data » d'une confiance faible", () => {
+  for (const agent of AGENTS_CONSTRUITS) {
     const texte = instructionsPour(agent, contexte());
     assert.ok(texte.includes("UNE DONNÉE ABSENTE SE DIT"), agent);
     assert.ok(texte.includes("N'EST PAS UNE CONFIANCE FAIBLE"), agent);
@@ -146,8 +275,8 @@ test("les quatre distinguent « null » de « zéro », et « insufficient_data 
   }
 });
 
-test("les quatre annoncent qu'un outil d'action ne fait rien tout de suite", () => {
-  for (const agent of AGENTS_PREMIERE_ITERATION) {
+test("les dix annoncent qu'un outil d'action ne fait rien tout de suite", () => {
+  for (const agent of AGENTS_CONSTRUITS) {
     const texte = instructionsPour(agent, contexte());
     assert.ok(texte.includes("NE FONT RIEN TOUT DE SUITE"), agent);
     assert.ok(texte.includes("Ne dis donc jamais"), agent);
@@ -185,7 +314,7 @@ test("la Direction est tenue de nommer les agents qu'elle a réellement interrog
 });
 
 test("chaque agent porte son rôle et ses limites, et elles ne sont pas vides", () => {
-  for (const agent of AGENTS_PREMIERE_ITERATION) {
+  for (const agent of AGENTS_CONSTRUITS) {
     const definition = DEFINITIONS[agent];
     const texte = instructionsPour(agent, contexte({ agent }));
 
@@ -279,11 +408,35 @@ test("l'instruction est RECONSTRUITE : deux dates d'arrêté donnent deux textes
 // 5. LES SOURCES, DÉDUITES DU REGISTRE
 // ==================================================================
 
-test("chaque agent a au moins une source, et toutes sont des fonctions déclarées", () => {
+test("un agent ACHEVÉ a au moins une source, et toutes sont des fonctions déclarées", () => {
+  // LA NUANCE EST LE SUJET, et elle est nouvelle depuis §11Y.
+  //
+  // Un agent achevé sans source propre serait creux : il n'aurait que
+  // les trois outils transverses, donc rien à dire que la Direction ne
+  // dise déjà. Un GABARIT sans source propre, en revanche, est l'état
+  // juste : `runtime/tools.ts` est un fichier partagé, et l'outil d'un
+  // agent s'y ajoute quand cet agent est écrit, pas avant.
+  //
+  // ─── L'EXEMPTION EST BORNÉE AILLEURS, ET ELLE DOIT L'ÊTRE ───
+  //
+  // Exempter les gabarits est défendable, mais une exemption sans
+  // contrepartie laisse passer exactement ce qu'elle prétend surveiller :
+  // il suffirait de garder `aCompleter: true` sur un agent joignable
+  // pour qu'un agent creux réponde en silence. La contrepartie est
+  // écrite plus haut, dans « un gabarit n'est jamais joignable » : un
+  // agent qui porte le drapeau n'a AUCUN mot-clé, donc l'aiguilleur ne
+  // le rend jamais, et la route refuse qu'un appelant l'impose. Les
+  // deux tests ne valent que pris ensemble.
+  //
+  // Après §11Y, un seul agent reste dans ce cas — les Achats — et sa
+  // situation est mesurée, pas subie : ses trois volets comptent zéro
+  // ligne en production.
   const registre = registreOutils();
-  for (const agent of AGENTS_PREMIERE_ITERATION) {
+  for (const agent of AGENTS_CONSTRUITS) {
     const sources = sourcesDe(agent, registre);
-    assert.ok(sources.length > 0, `« ${agent} » n'aurait rien à lire`);
+    if (DEFINITIONS[agent].aCompleter !== true) {
+      assert.ok(sources.length > 0, `« ${agent} » est donné pour achevé et n'aurait rien à lire`);
+    }
     for (const rpc of sources) {
       assert.equal(typeof rpc, "string");
       assert.ok(rpc.length > 0);
@@ -293,7 +446,7 @@ test("chaque agent a au moins une source, et toutes sont des fonctions déclaré
 
 test("les sources d'un agent lui appartiennent réellement dans le registre", () => {
   const registre = registreOutils();
-  for (const agent of AGENTS_PREMIERE_ITERATION) {
+  for (const agent of AGENTS_CONSTRUITS) {
     for (const rpc of sourcesDe(agent, registre)) {
       const outil = registre.tous().find((o) => o.rpc === rpc && o.agent === agent);
       assert.ok(outil, `« ${rpc} » est attribué à « ${agent} » sans lui appartenir`);

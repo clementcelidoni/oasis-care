@@ -194,16 +194,21 @@ export {
 } from "./autonomy.ts";
 
 export {
-  AGENTS_PREMIERE_ITERATION,
+  AGENTS_A_COMPLETER,
+  AGENTS_JOIGNABLES,
+  AGENTS_CONSTRUITS,
+  AGENTS_SANS_DONNEES,
   CLE_BASE,
   CONSIGNE_DIRECTION,
   DEFINITIONS,
   SOCLE_INSTRUCTIONS,
   consigneContexte,
   estAgentConstruit,
+  estAgentSansDonnees,
   instructionsPour,
   sourcesDe,
   type AgentConstruit,
+  type AgentSansDonnees,
   type DefinitionAgent,
 } from "./definitions.ts";
 

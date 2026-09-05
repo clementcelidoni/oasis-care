@@ -16,7 +16,7 @@ import {
   type NiveauAutonomie,
   type ReglageAgent,
 } from "./autonomy.ts";
-import { AGENTS_PREMIERE_ITERATION } from "./definitions.ts";
+import { AGENTS_CONSTRUITS } from "./definitions.ts";
 
 /**
  * §11V — LE CURSEUR D'AUTONOMIE, ÉPROUVÉ.
@@ -149,11 +149,11 @@ test("les cinq niveaux ont une clé et un libellé, et les clés sont celles de 
 test("la carte rendue porte exactement les agents demandés, ni plus ni moins", async () => {
   const carte = await lireReglagesAgents(
     "org-A",
-    AGENTS_PREMIERE_ITERATION,
+    AGENTS_CONSTRUITS,
     async () => [{ agent: "billing", enabled: true, autonomy_level: 3 }],
   );
 
-  assert.deepEqual(Object.keys(carte).sort(), [...AGENTS_PREMIERE_ITERATION].sort());
+  assert.deepEqual(Object.keys(carte).sort(), [...AGENTS_CONSTRUITS].sort());
   assert.equal(carte.billing.niveau, 3);
   assert.equal(carte.billing.parDefaut, false);
   assert.equal(carte.finance.niveau, 1, "un agent absent de la table reçoit le défaut");
@@ -166,7 +166,7 @@ test("`quote_pricing` de la base rejoint `quotePricing` de la spec", async () =>
   // accident, et invisible depuis l'écran.
   const carte = await lireReglagesAgents(
     "org-A",
-    AGENTS_PREMIERE_ITERATION,
+    AGENTS_CONSTRUITS,
     async () => [{ agent: "quote_pricing", enabled: true, autonomy_level: 4 }],
   );
 
@@ -177,21 +177,30 @@ test("`quote_pricing` de la base rejoint `quotePricing` de la spec", async () =>
 test("une ligne pour un agent qu'on n'a pas demandé est ignorée, pas ajoutée", async () => {
   const carte = await lireReglagesAgents(
     "org-A",
-    AGENTS_PREMIERE_ITERATION,
+    AGENTS_CONSTRUITS,
     async () => [
-      { agent: "fleet", enabled: true, autonomy_level: 4 },
+      // `market` et non `fleet` depuis §11Y : le Matériel est devenu
+      // l'un des dix agents construits, et une ligne pour lui serait
+      // désormais parfaitement légitime. Il fallait un agent que la
+      // base refuse VRAIMENT — l'un des quatre déclarés sans données
+      // (`agents/sansDonnees.ts`), que 0082 laisse dehors exprès.
+      { agent: "market", enabled: true, autonomy_level: 4 },
       { agent: "inconnu-du-produit", enabled: true, autonomy_level: 4 },
     ],
   );
 
-  assert.equal(carte.fleet, undefined, "un cinquième agent n'entre pas dans le produit par la base");
-  assert.equal(Object.keys(carte).length, AGENTS_PREMIERE_ITERATION.length);
+  assert.equal(
+    (carte as Record<string, unknown>).market,
+    undefined,
+    "un agent que personne ne construit n'entre pas dans le produit par la base",
+  );
+  assert.equal(Object.keys(carte).length, AGENTS_CONSTRUITS.length);
 });
 
 test("`enabled: null` ne suffit PAS à éteindre un agent, mais `false` oui", async () => {
   const carte = await lireReglagesAgents(
     "org-A",
-    AGENTS_PREMIERE_ITERATION,
+    AGENTS_CONSTRUITS,
     async () => [
       { agent: "billing", enabled: null, autonomy_level: 2 },
       { agent: "finance", enabled: false, autonomy_level: 2 },
@@ -206,14 +215,14 @@ test("une table illisible retombe au niveau 1 pour tous, et le SIGNALE", async (
   const dits: string[] = [];
   const carte = await lireReglagesAgents(
     "org-A",
-    AGENTS_PREMIERE_ITERATION,
+    AGENTS_CONSTRUITS,
     async () => {
       throw new Error("relation ai_agent_settings does not exist");
     },
     (m) => dits.push(m),
   );
 
-  for (const agent of AGENTS_PREMIERE_ITERATION) {
+  for (const agent of AGENTS_CONSTRUITS) {
     assert.equal(carte[agent].niveau, 1);
     assert.equal(carte[agent].parDefaut, true);
     assert.equal(peutPreparerUneAction(carte[agent]), false, "au niveau 1, rien ne s'écrit");

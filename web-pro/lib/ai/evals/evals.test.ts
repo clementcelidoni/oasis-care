@@ -4,7 +4,7 @@ import { readFileSync, readdirSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 import { OUTILS_SPEC_SANS_SERVICE, registreOutils } from "../runtime/tools.ts";
-import { AGENTS_PREMIERE_ITERATION } from "../runtime/definitions.ts";
+import { AGENTS_CONSTRUITS } from "../runtime/definitions.ts";
 import { CAS_EVAL, CAS_EXECUTABLES } from "./cas.ts";
 import { executerCas, executerSuite } from "./executeur.ts";
 import { DROITS_COMPLETS } from "./harnais.ts";
@@ -147,17 +147,36 @@ test("le mode réel ne se rabat JAMAIS sur le simulé en silence", async () => {
 // 2. LA COUVERTURE — les fils tendus sous les trois cas absents
 // ==================================================================
 
-test("« planning inefficace » et « camion coûteux » restent sans service", () => {
+test("« camion coûteux » et le déplacement restent sans service — le planning, lui, en a un", () => {
   const declarees = fonctionsDeclarees();
   assert.ok(declarees.size > 50, "les migrations n'ont pas été lues correctement");
 
+  // ══════════════════════════════════════════════════════════════
+  // CE FIL A FAIT SON TRAVAIL : `ai_planning_summary` EST APPARUE
+  // ══════════════════════════════════════════════════════════════
+  //
+  // Le test tendait un fil sous TROIS cas d'évaluation marqués « non
+  // exécutables » faute de donnée, et il devait sonner le jour où l'un
+  // d'eux gagnait une fonction. Il a sonné pour le planning, à
+  // l'intégration de 0082 — c'est exactement ce pour quoi il était
+  // écrit, et le cas « planning-inefficace » a été rebranché en même
+  // temps que cette ligne bouge.
+  //
+  // Les deux autres restent tendus, et il faut dire pourquoi ils ne
+  // sonnent PAS alors que l'agent Matériel vient d'être construit :
+  // `ai_fleet_snapshot` et `ai_fleet_equipment` rendent les échéances,
+  // la disponibilité et l'entretien SAISI. Aucune des deux ne porte un
+  // coût d'usage — ni carburant, ni coût au kilomètre, ni
+  // amortissement — et le motif ci-dessous ne les attrape donc pas, à
+  // juste titre. Le cas « camion coûteux » de la p. 24 est précisément
+  // celui auquel ces données ne peuvent pas répondre.
+  //
   // On cherche large : n'importe quelle fonction dont le nom évoque un
-  // coût de flotte ou une synthèse de planning. Chercher un nom exact
-  // laisserait passer `ai_fleet_cost_summary`, et le cas d'évaluation
-  // resterait marqué « absent » alors que la donnée serait là.
+  // coût de flotte. Chercher un nom exact laisserait passer
+  // `ai_fleet_cost_summary`, et le cas resterait marqué « absent »
+  // alors que la donnée serait là.
   const motifs: readonly { cas: string; motif: RegExp }[] = [
     { cas: "camion-couteux", motif: /^ai_.*(fleet|flotte).*(cost|cout|couts)/ },
-    { cas: "planning-inefficace", motif: /^ai_.*(planning|schedule).*(summary|synthese|resume)/ },
     { cas: "devis-sous-tarife (déplacement)", motif: /^ai_.*(travel|trajet|distance|itinerair)/ },
   ];
 
@@ -175,15 +194,36 @@ test("« planning inefficace » et « camion coûteux » restent sans service", 
       "correspondant attend d'être branché, sinon il restera marqué « non exécutable » " +
       "alors que le produit sait désormais répondre",
   );
+
+  // ET DANS L'AUTRE SENS. Le fil du planning est retiré parce que la
+  // fonction existe ; si elle disparaissait, le cas d'évaluation
+  // redeviendrait faux sans que rien ne le dise.
+  assert.ok(
+    declarees.has("ai_planning_summary"),
+    "`ai_planning_summary` a disparu des migrations : le cas « planning-inefficace » décrit " +
+      "un produit qui n'existe plus, et l'agent Planning n'a plus rien à lire",
+  );
 });
 
-test("les quatre outils de la spec déclarés « absents » le sont toujours", () => {
+test("les trois outils de la spec déclarés « absents » le sont toujours", () => {
   const registre = registreOutils();
   const absents = OUTILS_SPEC_SANS_SERVICE.filter((o) => o.etat === "absent").map((o) => o.nomSpec);
 
+  // ILS ÉTAIENT QUATRE. `getPlanningSummary` A ÉTÉ LIVRÉ PAR 0082, et
+  // son entrée est passée à « couvert » dans le même geste — l'un sans
+  // l'autre aurait fait mentir l'une des deux lignes.
+  //
+  // Les trois qui restent ne sont pas trois oublis, et c'est ce que
+  // cette liste sert à empêcher de croire :
+  //   • `getFleetCosts` — l'agent Matériel EXISTE et lit son parc, mais
+  //     le coût d'usage n'a aucun schéma : ni carburant, ni relevé
+  //     périodique, ni amortissement.
+  //   • `getSupplierPrices` — la table existe (0048) et personne ne
+  //     l'alimente : zéro ligne, aucune fonction ne la lit.
+  //   • `getTravelEstimate` — aucun distancier dans le produit.
   assert.deepEqual(
     absents.toSorted(),
-    ["getFleetCosts", "getPlanningSummary", "getSupplierPrices", "getTravelEstimate"],
+    ["getFleetCosts", "getSupplierPrices", "getTravelEstimate"],
     "la liste des manques a changé : les cas d'évaluation qui s'appuient dessus doivent être relus",
   );
   for (const nom of absents) {
@@ -195,7 +235,7 @@ test("les quatre outils de la spec déclarés « absents » le sont toujours", (
   }
 });
 
-test("« stock insuffisant » : les outils existent, et aucun agent construit ne les reçoit", () => {
+test("« stock insuffisant » : les outils existent, et seule la Pépinière les reçoit", () => {
   const registre = registreOutils();
   const declarees = fonctionsDeclarees();
 
@@ -209,16 +249,43 @@ test("« stock insuffisant » : les outils existent, et aucun agent construit ne
     );
   }
 
-  // La conséquence, et c'est elle qui fait du cas un « outils_seuls » :
-  // les deux outils appartiennent à un agent que personne ne construit,
-  // donc aucun des quatre ne peut les appeler. Le jour où un agent
-  // Pépinière existe, ce test échoue et le cas 5 se rebranche.
-  for (const agent of AGENTS_PREMIERE_ITERATION) {
+  // ══════════════════════════════════════════════════════════════
+  // §11Y — CE TEST A CHANGÉ DE SENS, ET IL FAUT LE DIRE
+  // ══════════════════════════════════════════════════════════════
+  //
+  // Il vérifiait qu'AUCUN agent ne recevait ces deux outils : c'était
+  // vrai tant que `nursery` n'existait pas, et c'est ce qui faisait du
+  // cas n° 5 un « outils_seuls ». L'agent Pépinière est aujourd'hui
+  // ACHEVÉ — plan de contexte, mots-clés, huit limites, et ses deux
+  // outils sous `nursery.stock.manage` — et `pourAgent("nursery")` les
+  // lui offre donc.
+  //
+  // Ce que le test défend désormais est le vrai risque restant, et
+  // c'est le même que la page 20 : QUE PERSONNE D'AUTRE NE LES VOIE.
+  // Un outil de pépinière offert à la Facturation serait une source
+  // qu'elle n'a aucune raison de lire — la minimisation prise à
+  // l'envers. L'exemption ci-dessous ne dispense donc de rien : elle
+  // dit seulement que le propriétaire n'est pas un intrus, et
+  // l'assertion qui suit la boucle vérifie qu'il les reçoit bien.
+  //
+  // POURQUOI LE CAS N° 5 RESTE « outils_seuls » — la raison a changé,
+  // et l'ancienne (« le gabarit n'a ni plan ni scénario ») n'est plus
+  // vraie. Ce qui reste hors de portée est le JUGEMENT : « disponible »
+  // a deux sens contradictoires dans ses propres sources, et éprouver
+  // que l'agent rende toujours les deux chiffres demande de lire une
+  // phrase, pas de compter des outils. Le `raison` du cas le dit.
+  for (const agent of AGENTS_CONSTRUITS) {
+    if (agent === "nursery") continue;
     const offerts = registre.pourAgent(agent, DROITS_COMPLETS).map((o) => o.nom);
     assert.ok(
       !offerts.includes("getNurseryStock") && !offerts.includes("getProjectedNurseryNeeds"),
-      `l'agent « ${agent} » se voit offrir un outil de pépinière : le cas « stock insuffisant » ` +
-        "n'est plus « outils seuls » et doit devenir un scénario complet",
+      `l'agent « ${agent} » se voit offrir un outil de pépinière alors qu'il n'est pas la Pépinière`,
     );
   }
+
+  const pepiniere = registreOutils().pourAgent("nursery", DROITS_COMPLETS).map((o) => o.nom);
+  assert.ok(
+    pepiniere.includes("getNurseryStock") && pepiniere.includes("getProjectedNurseryNeeds"),
+    "les deux outils appartiennent à `nursery` : l'agent construit doit les recevoir",
+  );
 });

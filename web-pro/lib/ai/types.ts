@@ -20,24 +20,61 @@ import type { Permission } from "@/lib/auth/permissions";
  */
 
 // ------------------------------------------------------------------
-// Les agents de la première itération. Pas un de plus.
+// Les dix agents construits. Pas un de plus.
 // ------------------------------------------------------------------
-// La spec p. 49 impose de ne construire que ceux-là, et
-// `ai_is_supported_agent` (0072) refuse les autres noms en base. Cette
-// liste est donc un miroir, pas une décision.
+// `ai_is_supported_agent` (0072, élargie par 0082) refuse les autres
+// noms en base. Cette liste est donc un miroir, pas une décision — et
+// c'est `lib/ai/admin/types.test.ts` qui la tient contre la migration.
+//
+// LES QUATRE QUI N'Y SONT PAS — `sales`, `market`, `risk`,
+// `classification` — ne sont pas oubliés : ils sont DÉCLARÉS
+// indisponibles, avec leur motif et ce qu'il faudrait livrer d'abord,
+// dans `lib/ai/runtime/agents/sansDonnees.ts`. L'écran de réglages les
+// affiche à part, en lecture seule. Un dirigeant qui a lu la spec
+// cherchera « Marché » ; lui montrer le silence est pire que lui
+// montrer « pas encore, et voici pourquoi ».
+//
+// SIX DE CES DIX SONT ENCORE DES GABARITS. Y figurer ne veut pas dire
+// « fini » : cela veut dire « il y a de la matière derrière, et la base
+// accepte son nom ». L'écran le distingue par `underConstruction`, lu
+// depuis `AGENTS_A_COMPLETER` — jamais recopié ici, parce qu'une
+// seconde liste est une seconde vérité.
 
-export const AGENTS = ["executive", "finance", "billing", "quote_pricing"] as const;
+export const AGENTS = [
+  "executive",
+  "finance",
+  "billing",
+  "quote_pricing",
+  "operations",
+  "planning",
+  "procurement",
+  "nursery",
+  "fleet",
+  "customer",
+] as const;
 export type AgentKey = (typeof AGENTS)[number];
 
 export function isAgentKey(value: unknown): value is AgentKey {
   return typeof value === "string" && (AGENTS as readonly string[]).includes(value);
 }
 
+/**
+ * Le nom métier. Il doit dire EXACTEMENT la même chose que
+ * `LIBELLES_AGENT` (lib/ai/admin/types.ts) : deux noms différents pour
+ * le même agent selon l'écran, c'est un utilisateur qui croit qu'il y
+ * en a deux. Un test tient les deux tables ensemble.
+ */
 export const AGENT_LABELS: Record<AgentKey, string> = {
   executive: "Direction",
   finance: "Finance",
   billing: "Facturation",
   quote_pricing: "Devis & prix",
+  operations: "Chantiers",
+  planning: "Planning",
+  procurement: "Achats",
+  nursery: "Pépinière",
+  fleet: "Matériel",
+  customer: "Clients",
 };
 
 /** Ce que l'agent surveille, en une phrase. Affiché sur son panneau. */
@@ -50,6 +87,25 @@ export const AGENT_MISSIONS: Record<AgentKey, string> = {
     "Chantiers terminés, interventions clôturées, devis signés sans facture, factures en retard.",
   quote_pricing:
     "Prix, coût, marge et cible d'un devis, comparé aux chantiers internes de périmètre équivalent.",
+  operations:
+    "Avancement des chantiers en cours, heures réellement pointées et écart entre l'intervention prévue et l'intervention faite.",
+  planning:
+    "Ce qui est posé sur la semaine, par jour et par équipe, et les interventions qui se chevauchent.",
+  // CES QUATRE MISSIONS PORTENT UNE CLAUSE DE REFUS, ET CE N'EST PAS DU
+  // STYLE. `mission` sert de `handoffDescription` : c'est sur elle que
+  // la Direction décide à qui déléguer. Une mission qui promet ce que
+  // l'agent ne sait pas faire fait payer une délégation complète pour
+  // recevoir un refus — l'appel de modèle est facturé avant que le
+  // spécialiste ait la parole. La clause est donc la moitié utile du
+  // texte, pas une précaution ajoutée à la fin.
+  procurement:
+    "Prépare un brouillon de commande fournisseur à partir de lignes qu'on lui donne. Ne lit ni fournisseurs, ni commandes, ni prix d'achat, et ne calcule aucun besoin : ces sources n'existent pas dans ce produit.",
+  nursery:
+    "Stock par espèce et par lot, ce qui est réellement vendable, et ce qui est attendu des commandes. Ne dit pas ce que les chantiers engagés vont consommer : rien ne relie un devis au stock.",
+  fleet:
+    "Échéances qui tombent, machines immobilisées, affectations en cours et entretiens réellement enregistrés. Ne chiffre aucun coût d'usage : ce produit ne le mesure pas.",
+  customer:
+    "Histoire d'un client : ses devis, ses chantiers, ses factures, ce qu'il a réellement payé et ce qu'il doit encore. Ni satisfaction ni risque de départ : ce produit ne les mesure pas.",
 };
 
 /**
@@ -57,12 +113,23 @@ export const AGENT_MISSIONS: Record<AgentKey, string> = {
  * quelque chose. Ce ne sont PAS les droits de l'agent : il n'en a
  * aucun (spec p. 30). C'est ce que ses fonctions exigent de l'appelant,
  * lu dans les `ai_guard` de la migration 0073.
+ *
+ * Les six ajoutés en §11Y recopient le `droitsAttendus` de leur fichier
+ * (`runtime/agents/*.ts`), et un test les compare : un agent qui
+ * annoncerait un droit ici et un autre là ferait afficher « droit
+ * manquant » à un utilisateur qui l'a — ou l'inverse, plus grave.
  */
 export const AGENT_REQUIRED_PERMISSIONS: Record<AgentKey, Permission[]> = {
   executive: ["projects.read"],
   finance: ["projects.read", "quotes.read", "invoice.create"],
   billing: ["projects.read", "quotes.read", "invoice.create"],
   quote_pricing: ["quotes.read", "projects.read"],
+  operations: ["projects.read"],
+  planning: ["projects.read"],
+  procurement: ["projects.read"],
+  nursery: ["nursery.stock.manage", "projects.read"],
+  fleet: ["projects.read"],
+  customer: ["clients.read", "projects.read"],
 };
 
 // ------------------------------------------------------------------

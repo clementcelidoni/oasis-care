@@ -317,3 +317,105 @@ test("chaque outil non déclaré porte une explication, pas seulement une mentio
     );
   }
 });
+
+// ==================================================================
+// 8. LE DOSSIER `outils/` — AUCUNE DÉCLARATION ORPHELINE
+// ==================================================================
+
+/**
+ * ══════════════════════════════════════════════════════════════════
+ * POURQUOI CE TEST EXISTE : 260 Ko QUI N'ÉTAIENT BRANCHÉS NULLE PART
+ * ══════════════════════════════════════════════════════════════════
+ *
+ * `runtime/outils/` a été créé pour que six agents puissent être
+ * écrits en parallèle sans se croiser dans ce fichier-ci : chacun y
+ * dépose sa déclaration, et l'intégration la verse au catalogue.
+ *
+ * Le défaut de ce découpage s'est produit, et il est très difficile à
+ * voir en relecture : les déclarations ont été écrites, testées,
+ * documentées — et jamais versées. Le dossier contenait des outils
+ * complets que SEULS LEURS PROPRES TESTS lisaient, pendant que quatre
+ * fichiers d'agents décrivaient en détail des outils qu'ils croyaient
+ * avoir. Tout avait l'air fini. `tsc` passait, la suite était verte.
+ *
+ * Ce test ferme la porte : toute constante `OUTIL_*` exportée par le
+ * dossier doit être AU REGISTRE, ou figurer nommément ci-dessous avec
+ * la raison de son absence. Il n'y a plus d'état « écrit mais oublié ».
+ */
+const OUTILS_ECRITS_NON_BRANCHES: readonly { nom: string; pourquoi: string }[] = Object.freeze([
+  {
+    nom: "getNurseryAnalytics",
+    pourquoi:
+      "Prête et éprouvée, adossée à `pro_analytics_nursery` déjà affichée aux humains sur " +
+      "/analytics. Non branchée à dessein : elle RÉCONCILIE les deux sens de « disponible » " +
+      "que la Pépinière doit aujourd'hui rendre séparément, et changer cette réponse-là " +
+      "demande de reprendre la limite centrale de l'agent, pas d'ajouter une ligne.",
+  },
+  {
+    nom: "createNurseryLot",
+    pourquoi:
+      "Écriture. `lib/ai/proposals.ts` en connaît déjà la plomberie d'approbation, mais la " +
+      "brancher donnerait à la Pépinière un outil d'écriture que ses limites nient — les deux " +
+      "doivent bouger dans le même geste, et personne ne l'a demandé.",
+  },
+  {
+    nom: "recordStockMovement",
+    pourquoi: "Même raison que `createNurseryLot` : écriture, plomberie prête, décision non prise.",
+  },
+]);
+
+test("aucune déclaration d'outil n'est écrite dans `outils/` sans être branchée", async () => {
+  const dossier = join(ici, "outils");
+  const excuses = new Set(OUTILS_ECRITS_NON_BRANCHES.map((e) => e.nom));
+
+  let vus = 0;
+  for (const fichier of readdirSync(dossier).filter((f) => f.endsWith(".ts") && !f.endsWith(".test.ts"))) {
+    // NE PAS RENOMMER EN `module` : Next l'interdit
+    // (@next/next/no-assign-module-variable) parce que l'identifiant est
+    // réservé côté CommonJS, et `npm run lint` échoue — pas un
+    // avertissement, une erreur.
+    const declarations: Record<string, unknown> = await import(`./outils/${fichier}`);
+    for (const [nom, valeur] of Object.entries(declarations)) {
+      if (!nom.startsWith("OUTIL_")) continue;
+      // `OUTILS_MATERIEL` et consorts sont des tableaux de regroupement :
+      // on descend dedans plutôt que de les ignorer, sinon un outil ne
+      // serait couvert que par le nom sous lequel il est exporté seul.
+      const entrees = Array.isArray(valeur) ? valeur : [valeur];
+      for (const entree of entrees) {
+        const outil = entree as { nom?: string };
+        if (typeof outil?.nom !== "string") continue;
+        vus += 1;
+        if (excuses.has(outil.nom)) continue;
+        assert.notEqual(
+          registre.chercher(outil.nom),
+          null,
+          `« ${outil.nom} » est déclaré dans outils/${fichier} et n'est AU REGISTRE nulle part. ` +
+            "Un outil écrit et non versé n'existe pas pour le modèle, alors que le fichier de " +
+            "son agent le décrit comme acquis. Versez-le dans `OUTILS_LECTURE` (et sa fonction " +
+            "SQL dans une migration), ou inscrivez-le dans OUTILS_ECRITS_NON_BRANCHES avec la " +
+            "raison.",
+        );
+      }
+    }
+  }
+
+  assert.ok(vus >= 5, "aucune déclaration lue dans outils/ : le balayage ne fonctionne plus");
+});
+
+test("chaque outil mis de côté dit pourquoi, et n'est pas au registre", () => {
+  // La liste d'exceptions doit rester une liste d'exceptions. Sans ce
+  // second sens, elle deviendrait l'endroit où l'on range ce qu'on ne
+  // veut pas expliquer — et un outil branché qui y figurerait encore
+  // ferait croire à un manque qui n'existe plus.
+  for (const entree of OUTILS_ECRITS_NON_BRANCHES) {
+    assert.ok(
+      entree.pourquoi.length > 60,
+      `« ${entree.nom} » : dire « pas branché » sans dire pourquoi ne sert à personne`,
+    );
+    assert.equal(
+      registre.chercher(entree.nom),
+      null,
+      `« ${entree.nom} » est au registre ET déclaré mis de côté : retirez-le de la liste`,
+    );
+  }
+});

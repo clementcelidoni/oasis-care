@@ -9,7 +9,7 @@ import {
 } from "./actionEngine.ts";
 import { OasisAgentsRuntime } from "./agents.ts";
 import { lireReglagesAgents, type PortReglagesAgents } from "./autonomy.ts";
-import { AGENTS_PREMIERE_ITERATION } from "./definitions.ts";
+import { AGENTS_CONSTRUITS } from "./definitions.ts";
 import { configurerTracing } from "./tracingSdk.ts";
 import { AgentContextBuilder, type PortLectureSource } from "./context.ts";
 import {
@@ -544,7 +544,7 @@ export async function runtimeAgents(identite: IdentiteAppel): Promise<OasisAgent
   configurerTracing();
 
   const [reglages, modeles] = await Promise.all([
-    lireReglagesAgents(identite.organizationId, AGENTS_PREMIERE_ITERATION, reglagesAgentsSupabase),
+    lireReglagesAgents(identite.organizationId, AGENTS_CONSTRUITS, reglagesAgentsSupabase),
     lireSurchargesModeles(identite.organizationId),
   ]);
 

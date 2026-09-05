@@ -21,6 +21,7 @@ import {
 } from "@/lib/ai/agents";
 import { setAgentAutonomy, setAgentEnabled, saveAutopilotRule } from "@/lib/ai/agentActions";
 import { getAiHistory, confirmationLabel, type HistoryEntry } from "@/lib/ai/history";
+import { AGENTS_SANS_DONNEES } from "@/lib/ai/runtime";
 import { libelleAgentCatalogue, libellePermission } from "@/lib/ai/etiquettes";
 import {
   AGENT_LABELS,
@@ -84,6 +85,12 @@ export default async function ReglagesIaPage() {
   const eligibles = automatisations.rules.filter((rule) => rule.eligible);
   const verrouillees = automatisations.rules.filter((rule) => !rule.eligible);
 
+  // COMPTÉ SUR LES PANNEAUX EUX-MÊMES, pas sur une liste écrite dans la
+  // phrase. Le texte annonçait « six agents en construction » pendant
+  // que trois badges s'affichaient : l'écran se contredisait, et c'est
+  // celui où l'on vient chercher précisément cette information.
+  const enConstruction = agents.panels.filter((panel) => panel.underConstruction).length;
+
   return (
     <div className="mx-auto max-w-5xl px-8 py-10">
       <PageHeader
@@ -146,9 +153,27 @@ export default async function ReglagesIaPage() {
         <h2 className="mb-1 text-[length:var(--text-section)] font-semibold tracking-tight">
           Agents et autonomie
         </h2>
+        {/* LE COMPTE EST CALCULÉ, PAS ÉCRIT. Il annonçait « six » en
+            toutes lettres pendant que trois badges seulement
+            s'affichaient — l'écran se contredisait à deux paragraphes
+            d'intervalle, et c'est précisément ici que le dirigeant vient
+            chercher l'information. Le nombre et les badges sortent
+            maintenant de la même source, `AGENTS_A_COMPLETER`, elle-même
+            déduite du drapeau que porte le fichier de chaque agent. */}
         <p className="mb-4 max-w-2xl text-[var(--text-body)] text-ink-soft">
-          Quatre agents pour cette première itération. Chacun dit ce qu&apos;il surveille,
-          ce qu&apos;il a produit, et jusqu&apos;où vous l&apos;autorisez à aller.
+          Dix agents. Chacun dit ce qu&apos;il surveille, ce qu&apos;il a produit, et
+          jusqu&apos;où vous l&apos;autorisez à aller.{" "}
+          {enConstruction === 0 ? (
+            <>Tous répondent sur l&apos;ensemble de leur domaine.</>
+          ) : (
+            <>
+              {enConstruction === 1
+                ? "L'un d'eux est encore en construction : il répond"
+                : `${enConstruction} d'entre eux sont encore en construction : ils répondent`}{" "}
+              sur une partie seulement de leur domaine, et le disent eux-mêmes plutôt que de
+              faire bonne figure.
+            </>
+          )}
         </p>
 
         <div className="flex flex-col gap-4">
@@ -156,6 +181,58 @@ export default async function ReglagesIaPage() {
             <BlocAgent key={panel.agent} panel={panel} canConfigure={agents.canConfigure} />
           ))}
         </div>
+
+        {/* ──────────────────────────────────────────────────────────
+            CE QU'OASIS NE SAIT PAS ENCORE FAIRE, ET POURQUOI.
+
+            LE SILENCE SERAIT PIRE QUE CE TABLEAU. Le document
+            d'architecture nomme quatorze agents ; le produit en
+            construit dix. Un dirigeant qui a lu ce document cherchera
+            « Marché », ne le trouvera pas, et en conclura ce qu'il
+            voudra : un oubli, un bogue, une promesse non tenue.
+
+            On lui montre donc les quatre manquants AVEC leur motif
+            mesuré et ce qu'il faudrait alimenter d'abord. Un agent sans
+            données ne rendrait qu'une phrase polie que personne ne peut
+            contredire — et il la facturerait.
+
+            La source est lib/ai/runtime/agents/sansDonnees.ts, sur le
+            modèle d'OUTILS_SPEC_SANS_SERVICE : la raison est écrite là
+            où la décision a été prise, pas dans cet écran.
+            ────────────────────────────────────────────────────────── */}
+        <Panel
+          title={"Ce qu'Oasis ne sait pas encore faire"}
+          count={AGENTS_SANS_DONNEES.length}
+          className="mt-8"
+        >
+          <div className="border-b border-line px-5 py-3.5">
+            <p className="text-[var(--text-body)] text-ink-soft">
+              Quatre agents décrits dans notre architecture ne sont pas construits, faute
+              de données derrière eux. Ce n&apos;est pas un oubli : un agent qui n&apos;a
+              rien à lire répond quand même, poliment, et personne ne peut le contredire.
+              Voici ce qu&apos;il faudrait alimenter pour les ouvrir.
+            </p>
+          </div>
+          <ul className="divide-y divide-line">
+            {AGENTS_SANS_DONNEES.map((entree) => (
+              <li key={entree.cle} className="px-5 py-4">
+                <div className="flex flex-wrap items-center gap-2">
+                  <p className="text-[var(--text-body)] font-medium">{entree.libelle}</p>
+                  <Badge tone="neutral">Pas construit</Badge>
+                </div>
+                <p className="mt-1.5 text-[var(--text-secondary)] text-ink-soft">
+                  {entree.motif}
+                </p>
+                <p className="eyebrow mt-3">À alimenter d&apos;abord</p>
+                <ul className="mt-1 list-disc space-y-1 pl-5 text-[var(--text-secondary)] text-ink-soft">
+                  {entree.aLivrerDabord.map((etape) => (
+                    <li key={etape}>{etape}</li>
+                  ))}
+                </ul>
+              </li>
+            ))}
+          </ul>
+        </Panel>
       </section>
 
       {/* ================================================================
@@ -282,14 +359,33 @@ export default async function ReglagesIaPage() {
         </p>
 
         <Card className="divide-y divide-line">
+          {/* CE BLOC A ÉTÉ FAUX, ET IL L'EST RESTÉ LONGTEMPS. Il
+              s'intitulait « Les neuf agents non construits » et nommait
+              Opérations, Planning, Pépinière, Flotte et Client parmi
+              eux — cinq agents qui répondent aujourd'hui, avec leurs
+              propres sources. Écrit à l'époque des quatre premiers, il
+              n'a pas suivi, et il contredisait le panneau « Ce
+              qu'Oasis ne sait pas encore faire » deux sections plus
+              haut : deux comptes différents sur le même écran, dont le
+              plus visible était le périmé.
+
+              Il ne nomme donc plus personne en dur. Le compte vient de
+              `AGENTS_SANS_DONNEES`, qui est aussi la source du panneau
+              du haut : une seule vérité, et elle ne peut plus vieillir
+              toute seule. */}
           <div className="px-5 py-4">
-            <h3 className="text-[var(--text-body)] font-medium">Les neuf agents non construits</h3>
+            <h3 className="text-[var(--text-body)] font-medium">
+              {AGENTS_SANS_DONNEES.length === 1
+                ? "L'agent que nous n'avons pas construit"
+                : `Les ${AGENTS_SANS_DONNEES.length} agents que nous n'avons pas construits`}
+            </h3>
             <p className="mt-1 text-[var(--text-secondary)] text-ink-soft">
-              Ventes, Opérations, Planning, Achats, Pépinière, Flotte, Client, Marché et
-              Risque sont décrits par la spécification mais ne sont pas construits. Ce ne
-              sont pas des agents éteints : la base refuse leur nom, et aucune décision ne
-              peut être ouverte à leur compte. Ils viendront quand ces quatre-là auront
-              fait leurs preuves.
+              {AGENTS_SANS_DONNEES.map((entree) => entree.libelle).join(", ")} sont décrits
+              par la spécification, et nous ne les avons pas construits : il n&apos;y a rien
+              derrière eux à lire. Ce ne sont pas des agents éteints — la base refuse leur
+              nom, et aucune décision ne peut être ouverte à leur compte. Le détail de ce
+              qu&apos;il faudrait alimenter d&apos;abord est plus haut, dans «&nbsp;Ce
+              qu&apos;Oasis ne sait pas encore faire&nbsp;».
             </p>
           </div>
 
@@ -357,6 +453,11 @@ function BlocAgent({ panel, canConfigure }: { panel: AgentPanel; canConfigure: b
       description={AGENT_MISSIONS[panel.agent]}
       action={
         <>
+          {/* EN CONSTRUCTION N'EST PAS « ÉTEINT ». L'agent répond ; il
+              répond sur une partie de son domaine seulement, et ses
+              limites nomment le reste. Confondre les deux ferait
+              chercher un interrupteur qui n'existe pas. */}
+          {panel.underConstruction && <Badge tone="neutral">En construction</Badge>}
           <StatusBadge tone={panel.enabled ? "positive" : "neutral"}>
             {panel.enabled ? "Actif" : "En veille"}
           </StatusBadge>

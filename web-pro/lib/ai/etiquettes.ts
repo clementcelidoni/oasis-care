@@ -68,14 +68,32 @@ export function libellePermission(code: string): string {
 // ==================================================================
 
 /**
- * Le catalogue d'actions nomme un agent QUI N'EXISTE PAS — `procurement`
- * y figure pour déclarer que l'envoi d'une commande existe et qu'il est
- * interdit d'autopilote. Déclarer un interdit n'est pas construire ce
- * qu'il interdit.
+ * §11Y — `procurement` N'EST PLUS « NON CONSTRUIT ».
  *
- * L'écran affichait donc `procurement` tel quel, avec un commentaire qui
- * assumait le choix. Le nommer en français ne construit rien de plus :
- * ça évite seulement un mot anglais dans une liste de mots français.
+ * Le catalogue d'actions nommait `procurement` alors qu'aucun agent
+ * Achats n'existait : la ligne y figurait pour déclarer que l'envoi
+ * d'une commande existe et qu'il est interdit d'autopilote — déclarer
+ * un interdit n'est pas construire ce qu'il interdit. L'étiquette
+ * portait donc « (non construit) », et c'était juste.
+ *
+ * L'agent Achats existe maintenant (0082, `agents/procurement.ts`),
+ * encore à l'état de gabarit. Garder la parenthèse ferait dire à
+ * l'écran le contraire de ce que l'écran de réglages affiche deux
+ * onglets plus loin — et c'est exactement le genre de désaccord entre
+ * deux surfaces que ce produit a déjà payé.
+ *
+ * La table ne liste que les agents qui APPARAISSENT réellement dans
+ * `ai_action_catalog` — vérifié en production : `billing`,
+ * `quote_pricing`, `executive` et `procurement`, neuf lignes en tout.
+ * Les cinq autres agents construits n'y ont aucune ligne, et n'ont pas
+ * à en avoir : ils PROPOSENT des brouillons (`PROPOSAL_KINDS`), ils
+ * n'exécutent rien. Un nom de plus ici serait une promesse d'action que
+ * le moteur ne tient pas.
+ *
+ * `finance` y figure sans ligne au catalogue, et c'est un reste
+ * antérieur : inoffensif, puisque cette table ne fait que traduire une
+ * clé rencontrée. On ne le retire pas pour ne pas mêler un nettoyage à
+ * ce chantier.
  */
 const AGENTS_CATALOGUE_FR: Record<string, string> = {
   executive: "Direction",
@@ -83,7 +101,7 @@ const AGENTS_CATALOGUE_FR: Record<string, string> = {
   billing: "Facturation",
   quote_pricing: "Devis & Prix",
   quotePricing: "Devis & Prix",
-  procurement: "Achats (non construit)",
+  procurement: "Achats",
 };
 
 export function libelleAgentCatalogue(code: string): string {

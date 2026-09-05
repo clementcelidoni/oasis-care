@@ -252,10 +252,116 @@ const PLANS: Partial<Record<CleAgentModele, readonly EtapePlan[]>> = {
     { outil: "getExecutiveBrief", requis: true, arguments: () => ({}) },
     { outil: "getDailyPriorities", requis: false, arguments: () => ({}) },
   ],
+
+  // ==================================================================
+  // §11Y — LES QUATRE PLANS DES AGENTS OUTILLÉS PAR 0082
+  // ==================================================================
+  //
+  // POURQUOI UN PLAN ALORS QUE CES AGENTS SAVENT APPELER LEURS OUTILS.
+  //
+  // Un agent SANS plan n'est jamais déclaré « contexte vide » — la
+  // condition est `requisTotal > 0 && requisLu === 0`, donc zéro source
+  // requise ne peut pas la déclencher. Il part au modèle et appelle ses
+  // outils lui-même, ce qui marche. Mais deux choses lui échappent, et
+  // ce sont précisément celles qui font mentir un agent :
+  //
+  //   • une source qui ÉCHOUE ne se distingue pas d'une source vide.
+  //     Sans plan, `sources` est vide, `consigneContexte` n'annonce ni
+  //     échec ni droit manquant, et le modèle lit « rien à signaler »
+  //     là où il fallait lire « je n'ai pas pu regarder » ;
+  //   • un droit manquant ne se NOMME pas. Il rend une liste vide, que
+  //     l'agent rapporte comme un fait.
+  //
+  // Le coût est mesuré et borné : chaque appel de ces plans est une
+  // fonction `stable`, bornée par sa propre fenêtre (50 chantiers,
+  // 31 jours, 366 jours d'échéances) et déjà éprouvée en production.
+
+  // LE FIL DE DISCUSSION NE TRANSMET AUCUN IDENTIFIANT : il envoie une
+  // phrase. Ces deux agents partent donc TOUJOURS aveugles, et le plan
+  // garantit que les blocs « retard » et « nonMesurable » — ceux qui
+  // disent ce que le produit ne sait pas voir — arrivent au modèle même
+  // s'il ne pense pas à demander.
+  operations: [{ outil: "getOperationsSnapshot", requis: true, arguments: () => ({}) }],
+
+  // ══════════════════════════════════════════════════════════════
+  // LA PÉPINIÈRE : UN PLAN QUI NE LIT RIEN, ET QUI SERT QUAND MÊME
+  // ══════════════════════════════════════════════════════════════
+  //
+  // Ses deux outils exigent une ESPÈCE (`p_query`), et aucune cible de
+  // ce produit n'en porte : `CibleContexte` a sept clés fixes, toutes
+  // des identifiants d'entité. Les arguments valent donc toujours
+  // `null`, l'étape est toujours sautée, et AUCUN appel n'est fait.
+  // L'agent interroge ses outils lui-même, avec l'espèce que
+  // l'utilisateur a nommée — c'est le bon fonctionnement, et il n'y a
+  // rien à pré-lire.
+  //
+  // POURQUOI ALORS UNE CLÉ ICI. Parce que `permissionsManquantes` est
+  // calculé À PARTIR DU PLAN, et de nulle part ailleurs : un agent sans
+  // plan ne peut STRUCTURELLEMENT pas signaler un droit manquant. Le
+  // contrôle du droit passe AVANT celui des arguments dans la boucle de
+  // `construire()` — donc cette étape, qui n'appelle jamais rien,
+  // suffit à faire dire à l'instruction « il vous manque
+  // nursery.stock.manage ».
+  //
+  // Sans elle, un pépiniériste sans ce droit recevait « aucun stock ».
+  // Avec elle, il reçoit « je n'ai pas le droit de regarder ». C'est la
+  // cinquième occurrence de la même confusion dans ce produit, et la
+  // seule qu'une question d'utilisateur pouvait atteindre.
+  //
+  // Coût : zéro appel, zéro donnée sortie. `requis: false` parce qu'une
+  // source qui ne peut pas s'appliquer ne doit pas faire déclarer le
+  // contexte vide et refuser la question avant le modèle.
+  nursery: [
+    {
+      outil: "getNurseryStock",
+      requis: false,
+      arguments: () => null,
+    },
+  ],
+
+  planning: [{ outil: "getPlanningSummary", requis: true, arguments: () => ({}) }],
+
+  // `requis: true` N'EST PAS INDIFFÉRENT ICI. Sans `projects.read`, la
+  // RLS masquerait les quatre tables du parc et la lecture rendrait
+  // « aucun matériel enregistré » — un mensonge rassurant, indiscernable
+  // d'un parc réellement vide. Requis, le runner refuse AVANT tout appel
+  // de modèle en nommant le droit qui manque.
+  fleet: [{ outil: "getFleetSnapshot", requis: true, arguments: () => ({}) }],
+
+  // ET POUR LES CLIENTS, C'EST L'INVERSE, délibérément. `requis: true`
+  // ferait refuser dès qu'aucun client n'est désigné — or c'est le cas
+  // ORDINAIRE d'une conversation, et l'agent sait s'en sortir :
+  // `searchEntities` transforme « Robert » en identifiant. Le refus doit
+  // venir de l'absence de client trouvé, jamais de l'absence de cible
+  // dans la requête.
+  customer: [
+    {
+      outil: "getClientContext",
+      requis: false,
+      arguments: (cible) => (cible.customerId ? { p_customer_id: cible.customerId } : null),
+    },
+    {
+      outil: "getCustomerValue",
+      requis: false,
+      arguments: (cible) => (cible.customerId ? { p_customer_id: cible.customerId } : null),
+    },
+  ],
 };
 
 /** Les agents pour lesquels un contexte peut être construit aujourd'hui. */
 export const AGENTS_AVEC_PLAN = Object.freeze(Object.keys(PLANS) as CleAgentModele[]);
+
+/**
+ * Les plans, en lecture seule, pour qui doit MESURER ce qu'ils coûtent.
+ *
+ * Exporté parce que le vrai coût par appel n'est pas « combien d'agents
+ * ont un plan » mais « combien de sources chacun pré-lit à chaque
+ * question ». `coherence.test.ts` plafonne la seconde ; la première a
+ * longtemps été surveillée par une liste écrite à la main, qui tombait
+ * à chaque agent achevé sans qu'aucun défaut ne soit en cause.
+ */
+export const PLANS_LISIBLES: Readonly<Partial<Record<CleAgentModele, readonly EtapePlan[]>>> =
+  Object.freeze({ ...PLANS });
 
 // ==================================================================
 // 4. L'ÉLAGAGE — la barrière contre nous-mêmes
@@ -483,8 +589,24 @@ export class AgentContextBuilder {
 
       // L'ORGANISATION EST POSÉE ICI, PAR LE SERVEUR. Elle n'est jamais
       // passée par l'appelant du modèle ni lue dans les arguments.
+      //
+      // ─── ELLE PASSE EN DERNIER, ET L'ORDRE EST LA GARANTIE ───
+      //
+      // Elle était étalée EN PREMIER, donc `...args` l'aurait recouverte.
+      // Aucun plan n'exploitait la faille — les six étapes construisent
+      // des objets à clés littérales, et la cible vient de la route, pas
+      // du modèle —, mais le commentaire au-dessus affirmait une
+      // garantie que l'ordre ne donnait pas : il se contentait de ne pas
+      // la contredire, et c'était la main du prochain auteur de plan qui
+      // décidait si elle s'ouvrait. Quatre plans viennent d'être ajoutés
+      // juste au-dessus.
+      //
+      // `toolsSdk.ts` — l'autre point d'injection, celui qui reçoit
+      // vraiment des arguments du modèle — étale déjà dans ce sens-là.
+      // Les deux disent maintenant la même chose, ce qui évite d'avoir à
+      // se rappeler lequel des deux était le bon.
       const argumentsComplets = outil.injecteOrganisation
-        ? { p_organization_id: identite.organizationId, ...args }
+        ? { ...args, p_organization_id: identite.organizationId }
         : args;
 
       const resultat = await this.#lire({ rpc: outil.rpc, arguments: argumentsComplets });

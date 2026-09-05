@@ -19,7 +19,7 @@ import {
   type PortActionEngine,
   type PortServicesMetier,
 } from "../runtime/actionEngine.ts";
-import { AGENTS_PREMIERE_ITERATION } from "../runtime/definitions.ts";
+import { AGENTS_CONSTRUITS } from "../runtime/definitions.ts";
 import type { ReglageAgent } from "../runtime/autonomy.ts";
 import type { IdentiteAppel, NiveauModele, Permission } from "../runtime/types.ts";
 import { FournisseurObserve, ModeleSimule, fournisseurDe, type Scripts } from "./modeleSimule.ts";
@@ -115,14 +115,37 @@ export const CATALOGUE_EVAL: Readonly<Record<string, EntreeCatalogue>> = Object.
   },
 });
 
-/** Tous les droits dont les quatre agents construits ont besoin. */
+/**
+ * Tous les droits dont les DIX agents construits ont besoin.
+ *
+ * ─── POURQUOI CETTE LISTE A GRANDI, ET CE QU'ELLE A FAILLI CACHER ───
+ *
+ * Elle disait « les quatre agents construits » et en couvrait quatre.
+ * Six autres ont été construits depuis, et deux droits leur manquaient
+ * ici : `nursery.stock.manage` (les six tables de pépinière) et
+ * `projects.manage` (la proposition d'intervention du Planning).
+ *
+ * Ce n'est pas une liste de test parmi d'autres : `harnaisEvaluation`
+ * s'en sert comme droits PAR DÉFAUT de tout cas d'évaluation. Une
+ * liste incomplète y produit exactement le défaut que ces évaluations
+ * ont pour mission d'attraper — un agent qui répond « je ne vois rien »
+ * parce qu'on ne lui a rien donné à voir — et elle le produit dans le
+ * banc d'essai lui-même, où personne ne le soupçonnerait.
+ *
+ * Elle est restée EXPLICITE plutôt que dérivée de `PERMISSIONS` : un
+ * « tous les droits » calculé donnerait au harnais des droits que
+ * personne n'a jamais eu l'intention de lui donner le jour où un
+ * nouveau droit apparaît dans le produit.
+ */
 export const DROITS_COMPLETS: readonly Permission[] = Object.freeze([
   "projects.read",
+  "projects.manage",
   "quotes.read",
   "quotes.create",
   "quotes.edit",
   "invoice.create",
   "clients.read",
+  "nursery.stock.manage",
 ]);
 
 export const ORGANISATION_A = "org-A-evaluation";
@@ -336,7 +359,7 @@ export function monterHarnais(options: OptionsHarnais = {}): Harnais {
   };
 
   const reglages: Record<string, ReglageAgent> = {};
-  for (const agent of AGENTS_PREMIERE_ITERATION) {
+  for (const agent of AGENTS_CONSTRUITS) {
     reglages[agent] = {
       agent,
       actif: true,

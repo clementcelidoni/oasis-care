@@ -14,6 +14,7 @@ import {
 } from "./context.ts";
 import { OasisAIToolRegistry, registreOutils } from "./tools.ts";
 import type { IdentiteAppel, Permission } from "./types.ts";
+import { AGENTS_CONSTRUITS, DEFINITIONS } from "./agents/index.ts";
 
 /**
  * §11V — LE CONTEXTE MINIMAL (spec p. 20-22).
@@ -325,8 +326,25 @@ test("un plan qui nomme un outil inexistant lève, au lieu de rendre un contexte
   );
 });
 
-test("seuls les agents réellement construits ont un plan", () => {
-  assert.deepEqual([...AGENTS_AVEC_PLAN].sort(), ["billing", "executive", "finance", "quotePricing"]);
+test("seuls les agents réellement construits ont un plan, et tous les joignables en ont un", () => {
+  // L'ASSERTION ÉTAIT UNE LISTE ÉCRITE À LA MAIN — « billing, executive,
+  // finance, quotePricing » — que chaque agent achevé faisait tomber
+  // pour une raison qui n'était pas un défaut. Elle est dérivée
+  // maintenant, et elle dit la règle dans les DEUX sens, qui sont deux
+  // pannes différentes :
+  //
+  //   • un plan pour un GABARIT ferait sortir des données de
+  //     l'entreprise à chaque appel d'un agent que personne n'atteint ;
+  //   • un agent JOIGNABLE sans plan ne peut pas signaler un droit
+  //     manquant — `permissionsManquantes` se calcule à partir du plan,
+  //     et de nulle part ailleurs. Il rendrait « rien » là où il faut
+  //     lire « je n'ai pas pu regarder ».
+  const joignables = AGENTS_CONSTRUITS.filter((a) => DEFINITIONS[a].aCompleter !== true);
+  assert.deepEqual(
+    [...AGENTS_AVEC_PLAN].sort(),
+    [...joignables].sort(),
+    "les agents qui ont un plan ne sont plus exactement les agents joignables",
+  );
 });
 
 // ==================================================================

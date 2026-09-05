@@ -1,8 +1,8 @@
-import type { AgentConstruit } from "@/lib/ai/runtime";
+import { DEFINITIONS, type AgentConstruit } from "@/lib/ai/runtime";
 import type { ComplexiteTache } from "@/lib/ai/model";
 
 /**
- * §11V — À QUEL AGENT UNE QUESTION S'ADRESSE.
+ * §11V, §11Y — À QUEL AGENT UNE QUESTION S'ADRESSE.
  *
  * ══════════════════════════════════════════════════════════════════
  * AUCUN MODÈLE N'EST APPELÉ POUR CHOISIR L'AGENT
@@ -53,75 +53,113 @@ type Regle = {
 };
 
 /**
- * LES RÈGLES, DANS L'ORDRE OÙ ELLES SONT ESSAYÉES.
+ * L'ORDRE DANS LEQUEL LES AGENTS SONT ESSAYÉS — ET RIEN D'AUTRE.
  *
- * Elles sont volontairement courtes et sans finesse. Un mot ambigu —
- * « prix », qui appartient autant au chiffrage qu'à la facturation —
- * n'est PAS dans la liste : il vaut mieux tomber sur la Direction, qui
- * ira demander aux deux, que sur le mauvais spécialiste, qui répondra à
- * côté avec aplomb.
+ * ══════════════════════════════════════════════════════════════════
+ * LES MOTS-CLÉS NE SONT PLUS ÉCRITS ICI. C'EST §11Y
+ * ══════════════════════════════════════════════════════════════════
  *
- * L'ordre compte pour les questions qui portent plusieurs mots :
- * « facturer un devis signé » contient « factur » et « devis », et
- * c'est la facturation qui gagne — c'est bien elle qu'on interroge.
+ * Ils vivent dans le fichier de chaque agent (`runtime/agents/*.ts`),
+ * et cette liste ne dit plus que l'ORDRE. La raison est la même que
+ * celle qui a fait éclater `definitions.ts` : dix agents qui ajoutent
+ * chacun sa règle au même tableau, ce sont dix conflits sur le même
+ * tableau, et celui qui fusionne en dernier arbitre sans le savoir.
+ *
+ * L'ordre, lui, reste ICI parce qu'il n'appartient à AUCUN agent : il
+ * est un arbitrage ENTRE eux, et aucun ne peut le décider seul. C'est
+ * précisément la question « qui gagne quand deux mots tombent dans la
+ * même phrase », et elle se tranche à un seul endroit.
+ *
+ * ─── CE QUE L'ORDRE DÉCIDE, CONCRÈTEMENT ───
+ *
+ * « facturer un devis signé » contient « factur » et « devis » : la
+ * facturation gagne, et c'est bien elle qu'on interroge. « facture en
+ * retard » ne doit jamais partir aux Chantiers sous prétexte que le
+ * mot « retard » y ressemble — d'où la facturation en tête, et d'où
+ * l'interdiction, dans les fichiers d'agents, d'y écrire un mot nu
+ * comme « retard ».
+ *
+ * La Direction reste EN DERNIER : ses mots sont les plus généraux du
+ * lot (« la situation », « aujourd'hui »), et ils ne doivent gagner
+ * contre aucun mot précis.
+ *
+ * ─── LES GABARITS N'ONT PAS DE MOTS, ET C'EST VOULU ───
+ *
+ * Six des dix agents sont encore des gabarits : leur `motsCles` est
+ * absent, donc `reglesActives()` ne produit aucune règle pour eux et
+ * une question libre ne les atteint jamais. On ne fait pas répondre un
+ * agent avant qu'il ait quelque chose à dire. Le jour où l'un d'eux est
+ * fini, son auteur écrit ses mots dans SON fichier, et l'aiguillage
+ * s'allume sans que personne touche à celui-ci.
  */
-const REGLES: readonly Regle[] = Object.freeze([
-  {
-    agent: "billing",
-    motsCles: [
-      "factur",
-      "à facturer",
-      "impay",
-      "encaiss",
-      "relance de paiement",
-      "avoir",
-      "brouillon de facture",
-    ],
-  },
-  {
-    agent: "quotePricing",
-    motsCles: ["devis", "chiffrage", "chiffrer", "taux de marque", "grille tarifaire", "sous-tarif"],
-  },
-  {
-    agent: "finance",
-    motsCles: [
-      "chiffre d'affaires",
-      "chiffre d affaires",
-      "marge",
-      "tresorerie",
-      "trésorerie",
-      "créance",
-      "creance",
-      "rentabilit",
-      "dépense",
-      "depense",
-      "objectif",
-      "budget",
-    ],
-  },
-  {
-    agent: "executive",
-    motsCles: [
-      "que dois-je faire",
-      "priorit",
-      "brief",
-      "aujourd'hui",
-      "aujourd hui",
-      "situation",
-      "résum",
-      "resum",
-      "quoi de neuf",
-      "urgent",
-    ],
-  },
+const ORDRE: readonly AgentConstruit[] = Object.freeze([
+  // Les précis d'abord, du plus spécifique au plus général.
+  "billing",
+  "quotePricing",
+
+  // ─── LA FINANCE EST REMONTÉE ICI, ET C'EST UNE CORRECTION ───
+  //
+  // Elle fermait la marche juste avant la Direction, ce qui allait de
+  // soi tant que six des dix agents étaient muets. Dès que les
+  // Chantiers, la Pépinière et le Matériel ont reçu leurs mots, l'ordre
+  // s'est retourné contre lui-même : « quelle rentabilité sur ce
+  // chantier ? » partait aux Chantiers sur le mot « chantier », et
+  // « mes dépenses de pépinière » à la Pépinière sur le mot
+  // « pépinière ». Mesuré en exécutant le vrai `aiguiller()`, pas
+  // déduit.
+  //
+  // LE CRITÈRE N'EST PAS « QUI EST LE PLUS PRÉCIS » MAIS « QUI A LA
+  // SOURCE ». Aucun autre agent n'agrège d'argent : les Chantiers
+  // portent une limite qui dit « ni marge ni budget, ils appartiennent
+  // à la Finance », la Pépinière une autre qui dit « ne connaît aucun
+  // prix d'achat », le Matériel une troisième qui refuse tout coût
+  // d'usage. Les laisser gagner sur un mot d'argent, c'est remplacer un
+  // agent qui répond par un agent qui décline poliment — et faire payer
+  // l'appel de modèle pour ce refus.
+  //
+  // Et « la marge du chantier Dupont » a bien une réponse côté Finance :
+  // `analyzeProjectMargin`, un outil par chantier qu'elle est seule à
+  // posséder. Ce n'était donc pas un arbitrage entre deux bonnes
+  // réponses, c'était le choix de la mauvaise.
+  //
+  // La Facturation et le Chiffrage restent AVANT elle : « facture »,
+  // « impayé » et « devis » sont plus précis que « marge », et leurs
+  // agents ont, eux aussi, la source correspondante.
+  "finance",
+
+  "procurement",
+  "nursery",
+  "fleet",
+  "planning",
+  "operations",
+  "customer",
+  // La Direction ferme la marche : voir l'en-tête.
+  "executive",
 ]);
+
+/**
+ * Les règles réellement actives, construites depuis les définitions.
+ *
+ * Recalculée à chaque appel plutôt que mémorisée : `DEFINITIONS` est
+ * figé au démarrage, le coût est celui de dix lectures de propriété, et
+ * un cache ici ne servirait qu'à faire diverger les tests du produit.
+ */
+function reglesActives(): readonly Regle[] {
+  const regles: Regle[] = [];
+  for (const agent of ORDRE) {
+    const mots = DEFINITIONS[agent].motsCles;
+    if (mots === undefined || mots.length === 0) continue;
+    regles.push({ agent, motsCles: mots });
+  }
+  return regles;
+}
 
 /**
  * Normalisation : minuscules, accents retirés.
  *
  * Les accents sont retirés des DEUX côtés — de la question et des
  * mots-clés — sans quoi « trésorerie » tapé sans accent ne
- * correspondrait à rien. La liste ci-dessus porte volontairement les
+ * correspondrait à rien. Les fichiers d'agents portent volontairement les
  * deux graphies là où l'usage hésite, mais la normalisation est ce qui
  * rend cela sûr plutôt qu'exhaustif.
  */
@@ -162,7 +200,7 @@ export function aiguiller(question: string, agentDemande?: AgentConstruit | null
 
   const normalisee = normaliser(question);
 
-  for (const regle of REGLES) {
+  for (const regle of reglesActives()) {
     for (const mot of regle.motsCles) {
       if (normalisee.includes(normaliser(mot))) {
         return {

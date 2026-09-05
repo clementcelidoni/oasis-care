@@ -46,40 +46,67 @@ import type { MotifPanne } from "../runtime/types.ts";
  *      compris dans la ventilation de la consommation.
  *
  * ══════════════════════════════════════════════════════════════════
- * POURQUOI QUATRE AGENTS SEULEMENT ONT UNE CLÉ SQL
+ * POURQUOI DIX AGENTS SEULEMENT ONT UNE CLÉ SQL
  * ══════════════════════════════════════════════════════════════════
  *
- * `ai_is_supported_agent` (0072) n'accepte que `executive`, `finance`,
- * `billing`, `quote_pricing` dans `ai_model_overrides`. Ce n'est plus
- * une contrainte d'écran — le client n'écrit plus rien — mais elle
- * reste la clé du ROUTAGE : `routage.ts` s'en sert pour reconnaître un
- * agent surchargé par l'éditeur, et `runtime/supabase.ts` pour lire la
- * carte à chaque requête. Ces deux-là survivent au déménagement : le
- * moteur reste ici, seule l'interface de réglage est partie.
+ * `ai_is_supported_agent` (0072, élargie par 0082) accepte dix noms
+ * dans `ai_model_overrides` — et refuse les quatre derniers : `sales`,
+ * `market`, `risk`, `classification` n'ont aucune donnée derrière eux
+ * et sont DÉCLARÉS indisponibles, avec leur motif, dans
+ * `runtime/agents/sansDonnees.ts`.
+ *
+ * Ce refus n'est pas une lacune à combler : une surcharge de modèle
+ * pour un agent qui n'existe pas serait une dérogation payée,
+ * enregistrée, journalisée — et sans effet, faute d'appelant.
+ *
+ * Ce n'est plus une contrainte d'écran — le client n'écrit plus rien —
+ * mais elle reste la clé du ROUTAGE : `routage.ts` s'en sert pour
+ * reconnaître un agent surchargé par l'éditeur, et
+ * `runtime/supabase.ts` pour lire la carte à chaque requête. Ces
+ * deux-là survivent au déménagement : le moteur reste ici, seule
+ * l'interface de réglage est partie.
  */
 
 // ------------------------------------------------------------------
-// Les quatre agents que la base accepte de surcharger
+// Les dix agents que la base accepte de surcharger
 // ------------------------------------------------------------------
 
 /**
- * Les agents de `ai_is_supported_agent` (0072), dans la graphie SQL.
+ * Les agents de `ai_is_supported_agent` (0072 + 0082), en graphie SQL.
  *
  * Recopiés ici parce que le TypeScript ne peut pas lire une contrainte
- * `check` ; un test relit la migration et échoue si les deux listes
- * divergent, ce qui est la seule façon de ne pas découvrir l'écart au
- * moment où le moteur ignore une surcharge posée par l'éditeur.
+ * `check` ; un test relit LA DERNIÈRE migration qui redéfinit la
+ * fonction — pas 0072 par habitude — et échoue si les deux listes
+ * divergent. C'est la seule façon de ne pas découvrir l'écart au moment
+ * où le moteur ignore une surcharge posée par l'éditeur.
  */
-export const AGENTS_SQL = ["executive", "finance", "billing", "quote_pricing"] as const;
+export const AGENTS_SQL = [
+  "executive",
+  "finance",
+  "billing",
+  "quote_pricing",
+  "operations",
+  "planning",
+  "procurement",
+  "nursery",
+  "fleet",
+  "customer",
+] as const;
 
 export type CleAgentSql = (typeof AGENTS_SQL)[number];
 
 /**
  * La clé SQL d'un agent du catalogue, ou `null` s'il n'en a pas.
  *
- * `null` n'est pas un cas d'erreur : c'est le cas ordinaire de dix
- * agents sur quatorze. Il veut dire « celui-ci ne se surcharge pas en
+ * `null` n'est pas un cas d'erreur : c'est le cas des quatre agents
+ * déclarés sans données. Il veut dire « celui-ci ne se surcharge pas en
  * base », et `appliquerSurcharges` en tire un passage sans effet.
+ *
+ * Le `switch` reste écrit à la main plutôt que calculé : `quotePricing`
+ * est le seul couple dont les deux graphies diffèrent, et une règle
+ * générale « camel → tiret bas » marcherait par accident sur les neuf
+ * autres tout en cachant ce cas particulier — celui qui, justement, a
+ * déjà coûté.
  */
 export function cleSqlDeLAgent(cle: CleAgentModele): CleAgentSql | null {
   switch (cle) {
@@ -91,6 +118,18 @@ export function cleSqlDeLAgent(cle: CleAgentModele): CleAgentSql | null {
       return "billing";
     case "quotePricing":
       return "quote_pricing";
+    case "operations":
+      return "operations";
+    case "planning":
+      return "planning";
+    case "procurement":
+      return "procurement";
+    case "nursery":
+      return "nursery";
+    case "fleet":
+      return "fleet";
+    case "customer":
+      return "customer";
     default:
       return null;
   }
@@ -112,11 +151,16 @@ export function estCleAgentSql(valeur: unknown): valeur is CleAgentSql {
 /**
  * Le nom métier d'un agent.
  *
- * `lib/ai/types.ts` en porte déjà quatre (`AGENT_LABELS`) ; les dix
- * autres n'existent nulle part puisque ces agents ne sont pas encore
- * écrits. On ne modifie pas `AGENT_LABELS` — il sert les écrans métier
- * et ne doit annoncer que ce qui existe — et un test vérifie que les
- * quatre communs disent bien la même chose des deux côtés.
+ * Cette table porte les QUATORZE de la spec p. 5, y compris les quatre
+ * qu'on ne construit pas : le grand livre doit savoir nommer un
+ * consommateur même quand il n'est pas un agent réglable.
+ *
+ * `lib/ai/types.ts` en porte DIX (`AGENT_LABELS`) — ceux que l'écran
+ * métier permet de régler — et un test vérifie que les dix communs
+ * disent bien la même chose des deux côtés. Depuis §11Y ce n'est plus
+ * quatre : `AGENT_LABELS` a suivi l'élargissement de 0082, et le seul
+ * écart qui subsiste est une esperluette sur « Devis & prix », nommée
+ * là où le test la tolère.
  */
 export const LIBELLES_AGENT: Readonly<Record<CleAgentModele, string>> = Object.freeze({
   executive: "Direction",

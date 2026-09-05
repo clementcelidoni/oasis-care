@@ -1,6 +1,6 @@
 import { Usage } from "@openai/agents";
 import type { Model, ModelProvider, ModelRequest, ModelResponse } from "@openai/agents";
-import { AGENTS_PREMIERE_ITERATION, DEFINITIONS, type AgentConstruit } from "../runtime/definitions.ts";
+import { AGENTS_CONSTRUITS, DEFINITIONS, type AgentConstruit } from "../runtime/definitions.ts";
 import type { Tour } from "./types.ts";
 
 /**
@@ -135,7 +135,7 @@ export class ModeleSimule implements Model {
   }
 
   #agentDe(instructions: string): AgentConstruit {
-    for (const agent of AGENTS_PREMIERE_ITERATION) {
+    for (const agent of AGENTS_CONSTRUITS) {
       if (instructions.includes(`TON RÔLE — ${DEFINITIONS[agent].libelle}.`)) return agent;
     }
     throw new Error(

@@ -28,19 +28,48 @@ import type { CasEval } from "./types.ts";
  * TROIS CAS SUR SEPT NE SE JOUENT PAS. C'EST LE RÉSULTAT, PAS UN TROU.
  * ══════════════════════════════════════════════════════════════════
  *
- * « Planning inefficace » et « camion coûteux » n'ont ni agent ni
- * fonction : `OUTILS_SPEC_SANS_SERVICE` (tools.ts) nomme déjà
- * `getPlanningSummary` et `getFleetCosts` comme absents du produit.
- * « Stock insuffisant » a bien ses deux outils — ils existent, ils sont
- * branchés sur des fonctions réelles — mais aucun agent construit ne
- * les porte : `AGENTS_PREMIERE_ITERATION` en compte quatre, et
- * `nursery` n'en fait pas partie.
+ * ATTENTION EN LISANT CE PARAGRAPHE : IL A DÉJÀ ÉTÉ FAUX UNE FOIS.
+ * Il affirmait que Planning, Matériel et Pépinière étaient « à l'état
+ * de gabarit » et que `getPlanningSummary` était absent du produit.
+ * Les trois agents ont été ACHEVÉS et la fonction POSÉE (0082) sans
+ * que ces lignes bougent : de la prose qu'aucune assertion ne lit
+ * vieillit sans bruit, et elle se recopie ensuite de rapport en
+ * rapport. Le `raison` de chaque cas, lui, est à jour — c'est lui qui
+ * fait foi, et ce qui suit n'en est que le résumé.
  *
- * Les trois sont donc déclarés `absent` / `outils_seuls`, sans
- * scénario, avec la raison écrite. Le rapport les compte à part. Le
- * jour où la fonction manquante arrive, `evals.test.ts` — qui
- * relit les migrations — échoue et rappelle qu'un cas d'évaluation
- * attend d'être branché.
+ * CE QUI A CHANGÉ, ET CE QUI N'A PAS CHANGÉ. Les trois agents sont
+ * achevés : Planning a `ai_planning_summary`, Matériel a
+ * `ai_fleet_snapshot` et `ai_fleet_equipment`, Pépinière a ses deux
+ * outils sous `nursery.stock.manage`, son plan de contexte et ses
+ * limites. Ce qui manque n'est donc plus « un agent », ni même « ce
+ * qu'il lirait » : les trois cas ne se jouent plus pour TROIS RAISONS
+ * DIFFÉRENTES, et les distinguer est tout l'intérêt de les garder.
+ *
+ *   • « PLANNING INEFFICACE » — la donnée existe, le JUGEMENT est
+ *     impossible. `ai_planning_summary` agrège bien les heures posées,
+ *     mais ce produit n'a ni congés, ni absences, ni jours fériés, ni
+ *     heures contractuelles, ni distancier. « Rien n'est posé jeudi »
+ *     ne veut pas dire « l'équipe est libre jeudi ». La fonction rend
+ *     un bloc `nonMesurable` qui nomme ces manques ; aucune donnée ne
+ *     permet de trancher entre un planning inefficace et un planning
+ *     creux.
+ *
+ *   • « STOCK INSUFFISANT » — la donnée existe, le contrôle demande de
+ *     LIRE UNE PHRASE. Sa difficulté réelle est que « disponible » a
+ *     deux sens contradictoires dans ses propres sources ; ce qu'on
+ *     veut éprouver est que l'agent rende toujours les deux chiffres
+ *     et n'en choisisse jamais un. Cela ne se compte pas en outils.
+ *
+ *   • « CAMION COÛTEUX » — le seul dont la donnée MANQUE encore, et
+ *     elle manque au sens fort : `getFleetCosts` n'est pas une table
+ *     vide, c'est une table ABSENTE. Ni carburant, ni relevé
+ *     kilométrique périodique, ni amortissement (0067 l'exclut par
+ *     écrit).
+ *
+ * Les trois restent donc déclarés `absent` / `outils_seuls`, sans
+ * scénario, avec la raison écrite. Le rapport les compte à part.
+ * `evals.test.ts` relit les migrations et échoue le jour où la
+ * fonction manquante du troisième arrive.
  *
  * ══════════════════════════════════════════════════════════════════
  * LE SEPTIÈME CAS EST LE PLUS IMPORTANT, ET IL A DEUX VOLETS
@@ -529,15 +558,21 @@ export const CAS_EVAL: readonly CasEval[] = Object.freeze([
   {
     id: "planning-inefficace",
     titre: "Planning inefficace",
-    couverture: "absent",
+    couverture: "outils_seuls",
     raison:
-      "Aucun agent « planning » n'est construit (AGENTS_PREMIERE_ITERATION en compte quatre) et " +
-      "aucune fonction de synthèse de planning n'existe : `getPlanningSummary` figure dans " +
-      "OUTILS_SPEC_SANS_SERVICE avec l'état « absent ». Juger l'efficacité d'un planning " +
-      "supposerait d'agréger des interventions une à une côté modèle, c'est-à-dire de lui faire " +
-      "compter des heures — exactement ce que la frontière déterministe interdit (p. 11-12).",
+      "L'agent « planning » est ACHEVÉ depuis §11Y : il a son plan de contexte, ses mots-clés, " +
+      "et `ai_planning_summary` (0082) qui agrège en SQL les heures posées, jour par jour et " +
+      "équipe par équipe — c'est précisément ce que la frontière déterministe (p. 11-12) " +
+      "interdit au modèle de compter lui-même. Ce que le cas ne peut TOUJOURS pas juger, c'est " +
+      "« l'efficacité » : ce produit n'a ni congés, ni absences, ni jours fériés, ni heures " +
+      "contractuelles, ni distancier. « Rien n'est posé jeudi » ne veut donc pas dire " +
+      "« l'équipe est libre jeudi », et aucune donnée ne permet de conclure qu'un planning " +
+      "est inefficace plutôt que creux. La fonction rend un bloc « nonMesurable » qui nomme " +
+      "ces manques, et l'agent a l'ordre de ne jamais faire la conversion.",
     sansModele: [
-      "que les deux outils nommés par la spec restent déclarés comme absents, et que personne ne les ait branchés en douce",
+      "que `getPlanningSummary` soit déclaré, branché sur `ai_planning_summary`, et offert au SEUL agent Planning",
+      "que son unique écriture (`scheduleIntervention`) reste une PROPOSITION à confirmer, et qu'aucun outil ne permette de déplacer une intervention déjà posée",
+      "que « heuresConnues » ne soit jamais présenté comme des heures travaillées : une intervention à cheval sur plusieurs jours vaut null sur chacun, jamais son amplitude",
     ],
     avecUnVraiModele: [],
     scenarios: [],
@@ -551,14 +586,21 @@ export const CAS_EVAL: readonly CasEval[] = Object.freeze([
     titre: "Stock insuffisant",
     couverture: "outils_seuls",
     raison:
-      "Les deux outils existent et pointent sur des fonctions réelles (`getNurseryStock` → " +
-      "ai_find_stock, `getProjectedNurseryNeeds` → ai_forecast_availability), mais aucun agent " +
-      "« nursery » n'est construit : ils n'appartiennent à aucun des quatre agents de cette " +
-      "itération, aucun plan de contexte ne les lit, et aucune instruction ne les gouverne. " +
-      "Le cas se rejouera tel quel le jour où l'agent Pépinière existera.",
+      "L'agent « nursery » est ACHEVÉ depuis §11Y : ses deux outils (`getNurseryStock` → " +
+      "ai_find_stock, `getProjectedNurseryNeeds` → ai_forecast_availability) portent désormais " +
+      "le droit `nursery.stock.manage`, des mots-clés l'atteignent, et huit limites nomment ses " +
+      "angles morts. Le cas reste « outils seuls » pour une raison qui n'est PAS un " +
+      "inachèvement : sa difficulté réelle ne se juge pas sans modèle. « Disponible » a deux " +
+      "sens dans ses propres sources — le stock appelle disponible ce qui n'est pas réservé sur " +
+      "un lot au statut disponible, la production appelle vendable un lot dont le stade est " +
+      "arrivé au bout — et un même lot peut être l'un sans l'autre, en même temps, les deux " +
+      "étant vrais. Ce qu'on veut éprouver est qu'il rende TOUJOURS les deux chiffres et n'en " +
+      "choisisse jamais un ; cela demande de lire une phrase, pas de compter des outils.",
     sansModele: [
       "que les deux outils de pépinière soient bien déclarés et branchés sur une fonction existante",
-      "qu'AUCUN des quatre agents construits ne se les voie offrir par erreur",
+      "que SEULE la Pépinière se les voie offrir : un outil de stock chez la Facturation serait la minimisation prise à l'envers",
+      "qu'ils exigent `nursery.stock.manage` : sans ce droit les fonctions rendent une liste vide, indiscernable d'une pépinière vide",
+      "qu'aucun outil d'écriture ne lui soit offert : ses limites disent qu'il ne dépose aucun brouillon de lot ni de mouvement",
     ],
     avecUnVraiModele: [],
     scenarios: [],
@@ -572,13 +614,20 @@ export const CAS_EVAL: readonly CasEval[] = Object.freeze([
     titre: "Camion coûteux",
     couverture: "absent",
     raison:
-      "Aucun agent « fleet », et aucune donnée : `getFleetCosts` figure dans " +
-      "OUTILS_SPEC_SANS_SERVICE avec l'état « absent » — le matériel est suivi, son coût d'usage " +
-      "ne l'est pas. Sans coût d'usage, un modèle interrogé sur un camion coûteux répondrait à " +
-      "partir de généralités du métier, ce qui serait une invention chiffrée présentée comme " +
-      "une analyse de l'entreprise.",
+      "L'AGENT EXISTE ET RÉPOND, ET LE CAS RESTE POURTANT NON EXÉCUTABLE — c'est la " +
+      "distinction que ce cas sert à tenir. Depuis §11Y, « fleet » est achevé : il lit les " +
+      "échéances, la disponibilité et l'entretien réellement dépensé (`ai_fleet_snapshot`, " +
+      "`ai_fleet_equipment`, 0082). Mais `getFleetCosts` reste « absent » dans " +
+      "OUTILS_SPEC_SANS_SERVICE, et ce n'est pas une table vide : c'est une table ABSENTE. Ni " +
+      "carburant, ni relevé kilométrique périodique, ni amortissement (0067 l'exclut par " +
+      "écrit), ni refacturation au chantier n'existent dans ce schéma. Un modèle interrogé sur " +
+      "un camion coûteux répondrait donc à partir de généralités du métier — une invention " +
+      "chiffrée présentée comme une analyse de l'entreprise. L'agent refuse la question par " +
+      "son nom, et sa mission le dit avant même qu'on la lui pose.",
     sansModele: [
       "que l'absence soit toujours vraie côté base : aucune fonction de coût de flotte n'est apparue",
+      "que les deux outils du Matériel n'aient PAS fait passer `getFleetCosts` à « couvert » : ils rendent le prix d'achat et l'entretien saisi, jamais un coût au kilomètre",
+      "que la mission affichée porte la clause de refus : c'est elle qui sert de description de délégation à la Direction",
     ],
     avecUnVraiModele: [],
     scenarios: [],
