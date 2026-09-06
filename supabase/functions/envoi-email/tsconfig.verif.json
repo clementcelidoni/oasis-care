@@ -1,0 +1,40 @@
+// Oasis Care — Chantier courriel. LA VÉRIFICATION DE TYPES DE LA MACHINE.
+//
+//   npx --prefix web-pro tsc -p supabase/functions/envoi-email/tsconfig.verif.json
+//
+// POURQUOI UN FICHIER À PART, et surtout pas un `tsconfig.json`. Ce
+// dossier est du code Deno vivant à l'intérieur d'un dépôt Node : un
+// `tsconfig.json` ici serait découvert tout seul par les outils de
+// `web-pro` (build Next.js, ESLint), qui essaieraient alors de compiler
+// du code Deno avec leurs propres réglages. Le nom distinct évite cette
+// collision : rien ne le trouve par hasard, on l'invoque.
+//
+// `typeRoots` pointe vers les types de Node installés dans `web-pro` :
+// ce dossier n'a pas de `node_modules` à lui, et il n'en aura pas — une
+// fonction Edge ne s'installe pas, elle se déploie.
+{
+  "compilerOptions": {
+    "target": "es2022",
+    "module": "esnext",
+    "moduleResolution": "bundler",
+    "lib": ["es2023", "dom"],
+    "strict": true,
+    // Deno importe ses voisins avec l'extension `.ts` écrite en toutes
+    // lettres. C'est sa règle, pas une négligence.
+    "allowImportingTsExtensions": true,
+    "noUnusedLocals": true,
+    "noUnusedParameters": true,
+    "noEmit": true,
+    "skipLibCheck": true,
+    "typeRoots": ["../../../web-pro/node_modules/@types"],
+    "types": ["node"]
+  },
+  "files": [
+    "verification.d.ts",
+    "bibliotheque.ts",
+    "porte.ts",
+    "traitement.ts",
+    "index.ts",
+    "traitement.test.ts"
+  ]
+}
