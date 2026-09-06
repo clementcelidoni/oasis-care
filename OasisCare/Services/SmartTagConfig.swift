@@ -49,13 +49,21 @@ import Foundation
 /// les deux ne se verrait sur aucun écran — il se verrait sur un
 /// autocollant, des mois plus tard.
 ///
-/// LE DÉFAUT EST UNE PROPOSITION, PAS UNE DÉCISION PRISE :
-/// `oasisrarecare.fr`. Le dirigeant possède ce domaine et son jumeau en
-/// `.com` (déjà authentifié auprès du transporteur de courriel, donc la
-/// maîtrise DNS des deux est acquise). Le `.fr` fait un caractère de
-/// moins, et sur une étiquette de 25 × 15 mm un caractère fait parfois
-/// basculer une version de QR entière. À confirmer avant la première
-/// impression en série.
+/// LE DÉFAUT EST UNE DÉCISION PRISE : `oasisrarecare.com`.
+///
+/// Le `.fr` avait été proposé pour son caractère de moins. Le calcul a
+/// montré que l'argument ne tenait pas : 27 + 32 caractères contre
+/// 28 + 32, les deux tombent dans la MÊME version de QR (la 4, capacité
+/// 62 en mode octet). Le seul cas où le domaine bascule quelque chose
+/// suppose un jeton de 11 caractères ET l'adresse écrite en majuscules —
+/// le mode compact du QR n'accepte pas les minuscules —, ce que le
+/// générateur d'Apple employé ici ne sait de toute façon pas faire.
+/// C'est la longueur du JETON qui décide de la lisibilité, jamais celle
+/// du domaine.
+///
+/// Le dirigeant a donc tranché pour le `.com`, celui qui porte déjà
+/// l'authentification du courrier : une seule zone DNS à surveiller
+/// plutôt que deux.
 ///
 /// ══════════════════════════════════════════════════════════════════
 /// POURQUOI CHANGER L'ADRESSE NE COÛTE RIEN
@@ -68,7 +76,7 @@ import Foundation
 /// l'application, qui ne regarde pas l'hôte.
 enum SmartTagConfig {
     /// Le domaine proposé, employé quand rien n'a été réglé.
-    static let domaineParDefaut = "oasisrarecare.fr"
+    static let domaineParDefaut = "oasisrarecare.com"
 
     /// La clé du réglage enregistré, celle qui prime sur tout.
     static let cleReglageDomaine = "etiquettes.domaine"
