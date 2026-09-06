@@ -48,6 +48,17 @@
  * intégration.
  */
 
+/**
+ * UN SEUL IMPORT, ET IL EST DE TYPE SEUL.
+ *
+ * Ce fichier n'importe AUCUNE valeur, et c'est ce qui le garde pur : il
+ * se charge sans rien tirer derrière lui, donc il se teste sans base ni
+ * réseau. `import type` s'efface à la compilation — il ne crée aucune
+ * dépendance à l'exécution, pas même circulaire (`essai.ts` importe en
+ * retour `CycleFacturation` d'ici, de type seul lui aussi).
+ */
+import type { AnnonceEssai } from "./essai.ts";
+
 /** Les deux cycles que 0081 connaît. Il n'y en a pas de troisième. */
 export type CycleFacturation = "monthly" | "yearly";
 
@@ -746,6 +757,20 @@ export type ResumeSouscription =
         montantTvaCents: number;
         totalTtcCents: number;
       };
+      /**
+       * QUAND LA CARTE SERA DÉBITÉE, ET DE COMBIEN — dit AVANT le clic.
+       *
+       * `null` quand le calendrier n'a pas été demandé (un appelant qui
+       * ne connaît pas l'essai, par exemple une intégration tierce) :
+       * l'écran affiche alors le montant sans la date, et surtout
+       * n'invente pas « dans un mois ».
+       *
+       * ELLE VIT DANS LE RÉSUMÉ, ET NON À CÔTÉ, pour la même raison que
+       * le total : la date annoncée et la date envoyée au prestataire
+       * doivent sortir du même calcul. Deux calendriers, ce sont deux
+       * dates, et l'écart ne se verrait qu'au relevé bancaire.
+       */
+      essai: AnnonceEssai | null;
     }
   | { jouable: false; code: string; motif: string };
 
@@ -758,7 +783,18 @@ export type ResumeSouscription =
  * renvoyer au serveur, et le serveur à s'en servir. Le montant fait foi
  * côté serveur : le navigateur n'a besoin de rien pour l'afficher.
  */
-export function versResumePublic(composition: Composition): ResumeSouscription {
+export function versResumePublic(
+  composition: Composition,
+  /**
+   * LE CALENDRIER DE PRÉLÈVEMENT, quand l'appelant l'a établi.
+   *
+   * Facultatif et non calculé ici : ce fichier ne sait rien de l'essai
+   * — il ne sait pas si l'entreprise a déjà été abonnée, ni ce que le
+   * client a choisi. Le lui faire deviner reviendrait à annoncer une
+   * date qui ne serait pas celle envoyée au prestataire.
+   */
+  essai: AnnonceEssai | null = null,
+): ResumeSouscription {
   if (!composition.jouable) {
     return { jouable: false, code: composition.code, motif: composition.motif };
   }
@@ -801,5 +837,6 @@ export function versResumePublic(composition: Composition): ResumeSouscription {
       montantTvaCents: composition.taxe.montantTvaCents,
       totalTtcCents: composition.taxe.totalTtcCents,
     },
+    essai,
   };
 }

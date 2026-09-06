@@ -3,10 +3,29 @@
 import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import { Badge } from "@/components/ui";
-import type { CycleFacturation, LigneResume, ResumeSouscription } from "@/lib/billing/provider";
+import type {
+  AnnonceEssai,
+  CycleFacturation,
+  LigneResume,
+  ResumeSouscription,
+} from "@/lib/billing/provider";
 import type { Catalogue, OffreAffichable } from "./catalogue.ts";
 import type { AnnonceEngagement, TexteEngagement } from "./engagement.ts";
-import { ouvrirLePaiement } from "./actions.ts";
+import { ouvrirLePaiement, resumerSouscription } from "./actions.ts";
+
+/**
+ * LES DEUX JEUX D'ANNONCES D'ENGAGEMENT, préparés au serveur.
+ *
+ * La date de fin d'engagement dépend du chemin : avec essai, il démarre
+ * au premier prélèvement ; sans essai, aujourd'hui. Le navigateur
+ * bascule d'un chemin à l'autre, mais IL NE CALCULE PAS LA DATE — un
+ * « ajouter un mois » écrit ici dirait le 3 mars pour un 31 janvier. Il
+ * choisit entre deux annonces déjà faites.
+ */
+export type AnnoncesEngagement = {
+  avecEssai: AnnonceEngagement[];
+  sansEssai: AnnonceEngagement[];
+};
 
 /**
  * §15 « Choisir → Résumé → Paiement → Confirmation », joué pour de bon.
@@ -18,13 +37,31 @@ import { ouvrirLePaiement } from "./actions.ts";
  * Il n'y a pas une multiplication, pas une addition, pas une division
  * par cent dans ce fichier. Les prix du catalogue arrivent DÉJÀ FORMÉS
  * du serveur (« 79,90 € HT / mois »), et le total du résumé vient d'un
- * aller-retour vers `/api/stripe/resume`, qui le fait produire par le
- * MÊME code que celui qui encaissera. Deux arrondis vaudraient deux
- * montants, et l'écart ne se verrait qu'au relevé bancaire.
+ * aller-retour vers la Server Action `resumerSouscription`, qui le fait
+ * produire par le MÊME code que celui qui encaissera. Deux arrondis
+ * vaudraient deux montants, et l'écart ne se verrait qu'au relevé
+ * bancaire.
  *
  * Ce que le navigateur choisit, c'est une INTENTION : une offre, un
- * rythme, des modules. Trois clés. Aucun montant ne fait le trajet dans
- * ce sens-là — le champ n'existe pas dans la requête.
+ * rythme, des modules, et le CHEMIN D'ENTRÉE — par l'essai, ou en
+ * payant tout de suite. Quatre clés. Aucun montant ne fait le trajet
+ * dans ce sens-là, et aucune DATE non plus : le serveur calcule la fin
+ * d'essai, le navigateur ne fait que l'afficher.
+ *
+ * ══════════════════════════════════════════════════════════════════
+ * L'ESSAI SE DIT AVANT, AVEC SA DATE
+ * ══════════════════════════════════════════════════════════════════
+ *
+ * « Un mois gratuit, puis 79,90 € HT par mois. Votre carte est
+ * enregistrée aujourd'hui et débitée le 6 octobre 2026. » La date est
+ * CALCULÉE, pas « dans un mois » : un client surpris par un premier
+ * prélèvement fait une réclamation, et il a raison — d'autant qu'une
+ * carte enregistrée sans débit laisse facilement croire que rien n'a
+ * été souscrit.
+ *
+ * Et la phrase entière arrive du serveur, montants et date compris. Ce
+ * fichier n'ajoute pas un mois à une date, pas plus qu'il n'additionne
+ * des centimes.
  *
  * ══════════════════════════════════════════════════════════════════
  * LE RÉSUMÉ EST DEMANDÉ AU SERVEUR À CHAQUE CHANGEMENT
@@ -80,8 +117,10 @@ export function ChoixOffre({
   raisonNonSouscription,
   identiteManquante,
   lienIdentite,
-  engagements = [],
+  engagements = { avecEssai: [], sansEssai: [] },
   texteEngagement = null,
+  essaiPossible = false,
+  datesPremierPrelevement = null,
 }: {
   catalogue: Catalogue;
   /** L'offre déjà souscrite, pour la marquer « Votre forfait ». */
@@ -99,9 +138,29 @@ export function ChoixOffre({
    * non une `Map` : ce qui traverse la frontière serveur → client doit
    * être sérialisable, et une `Map` ne l'est pas.
    */
-  engagements?: AnnonceEngagement[];
+  engagements?: AnnoncesEngagement;
   /** Le texte contractuel courant. `null` quand rien n'est publié. */
   texteEngagement?: TexteEngagement | null;
+  /**
+   * L'ESSAI D'UN MOIS EST-IL OUVERT À CETTE ENTREPRISE ?
+   *
+   * Il l'est au PREMIER abonnement, et à celui-là seulement — c'est la
+   * règle de la base, pas un choix d'écran. Une entreprise qui a déjà
+   * été abonnée, même résiliée, n'y a plus droit.
+   */
+  essaiPossible?: boolean;
+  /**
+   * LES DEUX DATES DE PREMIER PRÉLÈVEMENT, DÉJÀ MISES EN FORME.
+   *
+   * Elles ne dépendent pas de l'offre — seulement du chemin choisi — et
+   * l'écran peut donc les dire AVANT même qu'une offre soit
+   * sélectionnée. C'est le moment où la question se pose vraiment :
+   * « si je clique ici, quand serai-je débité ? »
+   *
+   * Des CHAÎNES et non des dates : formater un jour dans le navigateur,
+   * c'est risquer le décalage de fuseau qui affiche le 5 pour un 6.
+   */
+  datesPremierPrelevement?: { avecEssai: string; sansEssai: string } | null;
 }) {
   const router = useRouter();
   const [cycle, setCycle] = useState<CycleFacturation>("monthly");
@@ -115,10 +174,28 @@ export function ChoixOffre({
    * ferait accepter un engagement qu'on n'a pas relu.
    */
   const [engagementCoche, setEngagementCoche] = useState(false);
+  /**
+   * LE CHEMIN D'ENTRÉE — par l'essai, ou en payant tout de suite.
+   *
+   * Le défaut est l'ESSAI quand il est ouvert : c'est la lecture
+   * retenue de la décision du dirigeant, « tout nouveau client entre
+   * par l'essai ». Quand il ne l'est pas — l'entreprise a déjà été
+   * abonnée — il n'y a pas de choix à faire, et la valeur reste
+   * « sans essai ».
+   */
+  const [avecEssai, setAvecEssai] = useState(essaiPossible);
 
   const offreChoisie = catalogue.offres.find((o) => o.offre.key === choisie) ?? null;
+  /**
+   * L'ANNONCE D'ENGAGEMENT QUI CORRESPOND AU CHEMIN CHOISI.
+   *
+   * Les deux jeux sont calculés au serveur ; on choisit, on ne calcule
+   * pas. Avec essai, l'engagement démarre au premier prélèvement — un
+   * mois plus tard — et sa date de fin n'est donc pas la même.
+   */
+  const annoncesCourantes = avecEssai ? engagements.avecEssai : engagements.sansEssai;
   const engagementChoisi =
-    engagements.find((annonce) => annonce.planKey === choisie) ?? null;
+    annoncesCourantes.find((annonce) => annonce.planKey === choisie) ?? null;
 
   /**
    * CHANGER D'OFFRE REMET LES MODULES À ZÉRO, et ce n'est pas un détail
@@ -147,6 +224,25 @@ export function ChoixOffre({
     setModules([]);
     // Même raison : un engagement se lit au mois, et basculer le rythme
     // change ce qui sera prélevé. On redemande l'acceptation.
+    setEngagementCoche(false);
+    if (choisie !== null) setResume({ phase: "chargement" });
+  }
+
+  /**
+   * CHANGER DE CHEMIN DÉCOCHE L'ENGAGEMENT, ET CE N'EST PAS UN EXCÈS DE
+   * ZÈLE.
+   *
+   * L'essai décale l'engagement d'un mois : la phrase acceptée porte
+   * « du 6 octobre 2026 au 6 octobre 2027 », et renoncer à l'essai la
+   * transforme en « du 6 septembre 2026 au 6 septembre 2027 ». Garder
+   * la case cochée reviendrait à conserver l'acceptation d'un texte que
+   * l'écran vient de remplacer sous les yeux de la personne.
+   *
+   * Le résumé se redemande aussi : c'est lui qui porte la date du
+   * premier prélèvement, et elle vient de changer.
+   */
+  function changerChemin(valeur: boolean) {
+    setAvecEssai(valeur);
     setEngagementCoche(false);
     if (choisie !== null) setResume({ phase: "chargement" });
   }
@@ -182,24 +278,40 @@ export function ChoixOffre({
     if (choisie === null) return;
 
     let obsolete = false;
-    const controleur = new AbortController();
 
-    fetch("/api/stripe/resume", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      // AUCUN MONTANT NE PART D'ICI. Une offre, un rythme, des modules —
-      // et l'entreprise vient de la session, pas du corps.
-      body: JSON.stringify({ planKey: choisie, billingCycle: cycle, moduleKeys: modules }),
-      signal: controleur.signal,
+    /**
+     * ON PASSE PAR LA SERVER ACTION, PLUS PAR LA ROUTE HTTP.
+     *
+     * La route `/api/stripe/resume` ne sait pas dire « avec essai » ou
+     * « sans essai » : son lecteur d'intention n'accepte que trois clés,
+     * et c'est très bien qu'il les refuse toutes les autres. Mais le
+     * résumé doit poser EXACTEMENT la question que posera le paiement,
+     * sinon il annonce une date de prélèvement que le bouton d'à côté
+     * ne tiendra pas.
+     *
+     * L'action, elle, refait les mêmes contrôles côté serveur — session,
+     * rôle, lecture d'intention — et appelle le même
+     * `previewCheckout()`. Le montant reste calculé par le seul code
+     * qui encaisse.
+     *
+     * `AbortController` disparaît avec le `fetch` : une Server Action ne
+     * s'annule pas. Le drapeau `obsolete` reste, et c'est lui qui
+     * comptait — il empêche une réponse en retard d'écraser une plus
+     * récente, ce qui afficherait un montant qui ne correspond plus à
+     * ce qui est coché.
+     */
+    void resumerSouscription({
+      // AUCUN MONTANT NE PART D'ICI. Une offre, un rythme, des modules,
+      // un chemin — et l'entreprise vient de la session.
+      planKey: choisie,
+      billingCycle: cycle,
+      moduleKeys: modules,
+      avecEssai,
     })
-      .then((reponse) => reponse.json() as Promise<ResumeSouscription>)
       .then((contenu) => {
         if (!obsolete) setResume({ phase: "recu", resume: contenu });
       })
       .catch(() => {
-        // Une requête abandonnée n'est pas une panne : elle a été
-        // remplacée par une plus récente. Afficher une erreur ferait
-        // clignoter l'écran à chaque case cochée.
         if (obsolete) return;
         setResume({
           phase: "erreur",
@@ -210,9 +322,8 @@ export function ChoixOffre({
 
     return () => {
       obsolete = true;
-      controleur.abort();
     };
-  }, [choisie, cycle, modules]);
+  }, [choisie, cycle, modules, avecEssai]);
 
   async function payer() {
     if (choisie === null) return;
@@ -238,6 +349,10 @@ export function ChoixOffre({
         // comparant que le serveur refuse une acceptation donnée devant
         // un texte qui a changé depuis.
         versionEngagementAffichee: texteEngagement?.version ?? null,
+        // LE CHEMIN, pas la date : le serveur recalcule la date de fin
+        // d'essai lui-même. Lui laisser choisir la date reviendrait à
+        // laisser le navigateur décider quand il sera débité.
+        avecEssai,
       });
 
       if (sortie.kind === "redirect") {
@@ -306,6 +421,54 @@ export function ChoixOffre({
         </span>
       </div>
 
+      {/* ---------------- Le chemin d'entrée ----------------
+          Il se choisit AU MÊME NIVEAU que le rythme, et avant l'offre :
+          c'est une décision sur l'argent, pas une option enfouie dans
+          un dépliant. La date exacte, elle, s'affiche dans le résumé —
+          elle dépend de l'offre, donc elle vient du serveur. */}
+      {essaiPossible && (
+        <div className="flex flex-wrap items-center gap-3">
+          <div
+            role="group"
+            aria-label="Comment commencer"
+            className="inline-flex rounded-[var(--radius-pill)] border border-line-strong bg-surface p-0.5"
+          >
+            <button
+              type="button"
+              onClick={() => changerChemin(true)}
+              aria-pressed={avecEssai}
+              className={`rounded-[var(--radius-pill)] px-3.5 py-1.5 text-[var(--text-secondary)] font-medium transition-colors ${
+                avecEssai ? "bg-accent text-accent-ink" : "text-ink-soft hover:text-ink"
+              }`}
+            >
+              Un mois d&apos;essai gratuit
+            </button>
+            <button
+              type="button"
+              onClick={() => changerChemin(false)}
+              aria-pressed={!avecEssai}
+              className={`rounded-[var(--radius-pill)] px-3.5 py-1.5 text-[var(--text-secondary)] font-medium transition-colors ${
+                !avecEssai ? "bg-accent text-accent-ink" : "text-ink-soft hover:text-ink"
+              }`}
+            >
+              Commencer tout de suite
+            </button>
+          </div>
+          <span className="text-[var(--text-secondary)] text-ink-faint">
+            {avecEssai
+              ? "Votre carte est enregistrée dès aujourd'hui, mais rien n'est prélevé pendant l'essai"
+              : "Le premier mois est prélevé aujourd'hui, puis chaque mois à la même date"}
+            {datesPremierPrelevement === null
+              ? "."
+              : ` — premier prélèvement le ${
+                  avecEssai
+                    ? datesPremierPrelevement.avecEssai
+                    : datesPremierPrelevement.sansEssai
+                }.`}
+          </span>
+        </div>
+      )}
+
       {/* ---------------- La grille ---------------- */}
       <div className="grid gap-4 lg:grid-cols-2">
         {catalogue.offres.map((offre) => (
@@ -322,7 +485,7 @@ export function ChoixOffre({
                 : null
             }
             engagement={
-              engagements.find((annonce) => annonce.planKey === offre.offre.key) ?? null
+              annoncesCourantes.find((annonce) => annonce.planKey === offre.offre.key) ?? null
             }
             modulesCoches={choisie === offre.offre.key ? modules : []}
             onChoisir={() => choisirOffre(offre.offre.key)}
@@ -417,11 +580,22 @@ export function ChoixOffre({
                   disabled={paiementEnCours}
                   className="inline-flex items-center justify-center rounded-[var(--radius-control)] bg-accent px-3.5 py-2 text-[var(--text-secondary)] font-medium text-accent-ink transition-colors hover:bg-accent-hover disabled:cursor-not-allowed disabled:opacity-50"
                 >
-                  {paiementEnCours ? "Ouverture du paiement…" : "Procéder au paiement"}
+                  {/* LE BOUTON DIT CE QU'IL FAIT, ET IL NE FAIT PAS LA
+                      MÊME CHOSE DANS LES DEUX CAS. « Procéder au
+                      paiement » devant un essai gratuit annoncerait un
+                      débit qui n'aura pas lieu aujourd'hui — et la page
+                      suivante demanderait quand même une carte, ce qui
+                      ressemblerait à une contradiction. */}
+                  {paiementEnCours
+                    ? "Ouverture de la page sécurisée…"
+                    : avecEssai
+                      ? "Commencer mon essai gratuit"
+                      : "Procéder au paiement"}
                 </button>
                 <span className="text-[var(--text-secondary)] text-ink-faint">
-                  Vous serez redirigé vers notre prestataire de paiement. Votre abonnement ne prendra
-                  effet qu&apos;une fois le règlement confirmé.
+                  {avecEssai
+                    ? "Vous serez redirigé vers notre prestataire de paiement pour enregistrer votre carte. Elle ne sera pas débitée aujourd'hui, et votre abonnement ne prendra effet qu'une fois l'enregistrement confirmé."
+                    : "Vous serez redirigé vers notre prestataire de paiement. Votre abonnement ne prendra effet qu'une fois le règlement confirmé."}
                 </span>
               </div>
             )}
@@ -477,6 +651,20 @@ function PanneauEngagement({
       {/* LES TROIS CHIFFRES, ANNONCÉS AVANT. Les chaînes arrivent du
           serveur, mention « HT » comprise : ce gabarit ne peut ni les
           recalculer ni oublier la mention. */}
+      {/* LES DATES, AVANT LA CASE — c'est la moitié de l'exigence.
+          « Douze mois » se compte de tête et se compte mal ; « jusqu'au
+          6 octobre 2027 » se relit. Et quand l'entreprise entre par
+          l'essai, l'engagement NE COMMENCE PAS aujourd'hui : il démarre
+          au premier prélèvement, un mois plus tard. Le dire est la
+          contrepartie honnête de « l'essai ne compte pas dans
+          l'engagement » — l'abonné reste treize mois au total, dont un
+          gratuit qu'il peut arrêter sans rien devoir.
+          La chaîne est calculée au serveur : ce gabarit n'ajoute pas un
+          mois à une date. */}
+      <p className="mt-2 text-[var(--text-body)] font-medium">
+        Engagement {annonce.periodeEngagement}.
+      </p>
+
       <dl className="mt-3 grid gap-2 sm:grid-cols-3">
         <div>
           <dt className="text-[var(--text-secondary)] text-ink-faint">Durée d&apos;engagement</dt>
@@ -665,6 +853,46 @@ function PanneauResume({ etat }: { etat: EtatResume }) {
               : "Prestation hors du champ de la TVA française : aucune taxe n'est ajoutée."}
         </p>
       </div>
+
+      {resume.essai !== null && <PanneauEssai annonce={resume.essai} />}
+    </div>
+  );
+}
+
+/**
+ * QUAND LA CARTE SERA DÉBITÉE — DIT AVANT, PAS APRÈS.
+ *
+ * ══════════════════════════════════════════════════════════════════
+ * UNE DATE, PAS « DANS UN MOIS »
+ * ══════════════════════════════════════════════════════════════════
+ *
+ * « Dans un mois » ne se retrouve nulle part sur un relevé bancaire ;
+ * une date, si. Un client surpris par un premier prélèvement fait une
+ * réclamation, et il a raison — surtout quand la carte a été
+ * enregistrée un mois plus tôt sans rien débiter, ce qui laisse
+ * facilement croire que rien n'a été souscrit.
+ *
+ * TOUTES LES PHRASES VIENNENT DU SERVEUR, montants et dates compris.
+ * Ce gabarit ne calcule rien, n'ajoute pas un mois, ne formate pas une
+ * date : il affiche. C'est ce qui garantit que la date lue ici est
+ * exactement celle qui part au prestataire de paiement.
+ */
+function PanneauEssai({ annonce }: { annonce: AnnonceEssai }) {
+  return (
+    <div
+      className={`mt-4 rounded-[var(--radius-control)] border p-4 ${
+        annonce.plan.avecEssai
+          ? "border-positive/30 bg-positive-wash"
+          : "border-line bg-surface-sunken"
+      }`}
+      aria-live="polite"
+    >
+      <p className="text-[var(--text-body)] font-medium">{annonce.titre}</p>
+      <p className="mt-1.5 text-[var(--text-body)] text-ink-soft">{annonce.carte}</p>
+      <p className="mt-1 tabular text-[var(--text-body)] text-ink-soft">{annonce.prelevement}</p>
+      {annonce.sortie !== null && (
+        <p className="mt-2 text-[var(--text-secondary)] text-ink-faint">{annonce.sortie}</p>
+      )}
     </div>
   );
 }

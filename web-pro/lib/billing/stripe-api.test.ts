@@ -145,6 +145,11 @@ const DEMANDE = {
   // n existe pas encore — mais ce dernier cas n arrive jamais jusqu ici,
   // la composition ayant deja ferme la caisse.
   tauxTaxe: [],
+  // Par défaut SANS ESSAI : c'est le chemin de celui qui paie le
+  // premier mois à la souscription. Les tests d'essai le surchargent
+  // explicitement, ce qui rend visible, dans chaque test, lequel des
+  // deux chemins il mesure.
+  essai: null,
 };
 
 test("la session part avec la version d'API épinglée et la clé d'idempotence", async () => {
@@ -229,6 +234,81 @@ test("LA TAXE SE POSE SUR L'ABONNEMENT, DONC SUR CHAQUE ÉCHÉANCE", async () =>
   );
   // Et surtout PAS sur la seule première facture.
   assert.equal(corps.includes("line_items[0][tax_rates]"), false);
+});
+
+test("L'ESSAI SE POSE SUR L'ABONNEMENT, AVEC UNE DATE ET NON UN NOMBRE DE JOURS", async () => {
+  // ══════════════════════════════════════════════════════════════
+  // POURQUOI `trial_end` ET NON `trial_period_days`
+  // ══════════════════════════════════════════════════════════════
+  //
+  // Le prestataire accepte les deux. « Un mois » n'est pas « trente
+  // jours » : un essai ouvert le 31 janvier finit le 28 février, et
+  // c'est cette date-là que l'écran a annoncée. Envoyer « 30 jours »
+  // ferait débiter le 2 mars une carte dont le titulaire a lu
+  // « 28 février ».
+  const { appels, impl } = fetchSimule({ charge: { id: "cs_1", url: "https://p/cs_1" } });
+  const client = new ClientStripeHttp({ cleSecrete: FAUSSE_CLE, mode: "test" }, impl);
+
+  await client.creerSessionPaiement({
+    ...DEMANDE,
+    essai: { finLeIso: "2026-10-06", finLeHorodatage: 1_791_266_400 },
+  });
+
+  const corps = appels[0]!.corps;
+  assert.match(corps, /subscription_data%5Btrial_end%5D=1791266400/);
+  // AUCUN NOMBRE DE JOURS : les deux paramètres ne doivent pas coexister.
+  assert.doesNotMatch(corps, /trial_period_days/);
+});
+
+test("SI LA CARTE DISPARAÎT PENDANT L'ESSAI, L'ABONNEMENT S'ANNULE — il ne se suspend pas", async () => {
+  // Ce garde-fou ne devrait jamais servir : la carte est exigée à
+  // l'entrée. Mais elle peut être retirée, expirer ou être refusée
+  // pendant le mois. Sans consigne, l'abonnement basculerait en impayé
+  // et le droit resterait ouvert sans contrepartie. « Suspendre »
+  // laisserait un abonnement dormir indéfiniment, sans facture et sans
+  // fin, et personne ne va voir.
+  const { appels, impl } = fetchSimule({ charge: { id: "cs_1", url: "https://p/cs_1" } });
+  const client = new ClientStripeHttp({ cleSecrete: FAUSSE_CLE, mode: "test" }, impl);
+
+  await client.creerSessionPaiement({
+    ...DEMANDE,
+    essai: { finLeIso: "2026-10-06", finLeHorodatage: 1_791_266_400 },
+  });
+
+  assert.match(
+    appels[0]!.corps,
+    /subscription_data%5Btrial_settings%5D%5Bend_behavior%5D%5Bmissing_payment_method%5D=cancel/,
+  );
+});
+
+test("LA CARTE EST TOUJOURS COLLECTÉE, ESSAI COMPRIS", async () => {
+  // « Essai gratuit un mois avec carte OBLIGATOIREMENT. » Le défaut du
+  // prestataire va déjà dans ce sens, mais une décision ne se confie
+  // pas à un défaut : `payment_method_collection = 'if_required'` est
+  // ce qui la désactiverait, et il ne doit jamais apparaître.
+  const { appels, impl } = fetchSimule({ charge: { id: "cs_1", url: "https://p/cs_1" } });
+  const client = new ClientStripeHttp({ cleSecrete: FAUSSE_CLE, mode: "test" }, impl);
+
+  await client.creerSessionPaiement({
+    ...DEMANDE,
+    essai: { finLeIso: "2026-10-06", finLeHorodatage: 1_791_266_400 },
+  });
+
+  assert.match(appels[0]!.corps, /payment_method_collection=always/);
+  assert.doesNotMatch(appels[0]!.corps, /if_required/);
+});
+
+test("SANS ESSAI, AUCUN CHAMP D'ESSAI NE PART — le premier mois se prélève aujourd'hui", async () => {
+  const { appels, impl } = fetchSimule({ charge: { id: "cs_1", url: "https://p/cs_1" } });
+  const client = new ClientStripeHttp({ cleSecrete: FAUSSE_CLE, mode: "test" }, impl);
+
+  await client.creerSessionPaiement(DEMANDE);
+
+  const corps = appels[0]!.corps;
+  assert.doesNotMatch(corps, /trial_end/);
+  assert.doesNotMatch(corps, /trial_settings/);
+  // La carte reste exigée : sans elle, aucun renouvellement ne partirait.
+  assert.match(corps, /payment_method_collection=always/);
 });
 
 test("UNE LISTE DE TAUX VIDE N'ENVOIE RIEN — autoliquidation, hors Union", async () => {

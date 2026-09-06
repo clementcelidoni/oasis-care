@@ -20,6 +20,7 @@ import type {
   TermesTarif,
   TermesTaxe,
 } from "./composition.ts";
+import { essaiDisponible, planifierEssai } from "./essai.ts";
 
 /**
  * §STRIPE — LE FOURNISSEUR, ÉPROUVÉ CONTRE UN DOUBLE SIMULÉ.
@@ -522,10 +523,160 @@ test("la clé d'idempotence porte l'entreprise : deux clients ne la partagent pa
     },
   };
 
-  const a = clefPourIntention("org-a", composition);
-  const b = clefPourIntention("org-b", composition);
+  const plan = planifierEssai({ souscritLe: "2026-09-06", avecEssai: true, cycle: "monthly" });
+  const a = clefPourIntention("org-a", composition, plan);
+  const b = clefPourIntention("org-b", composition, plan);
   assert.notEqual(a, b);
   assert.ok(a.includes("org-a"));
+});
+
+test("LA CLÉ D'IDEMPOTENCE DISTINGUE L'ESSAI DU PAIEMENT IMMÉDIAT", () => {
+  // ══════════════════════════════════════════════════════════════
+  // CE QUI SE PASSERAIT SANS ELLE
+  // ══════════════════════════════════════════════════════════════
+  //
+  // Le client regarde l'essai, puis change d'avis et choisit de payer
+  // tout de suite. Même offre, même rythme, même total : sans le
+  // calendrier dans la clé, le prestataire rendrait la session d'essai
+  // DÉJÀ CRÉÉE. Un mois gratuit accordé à quelqu'un qui venait d'y
+  // renoncer, et pas un centime encaissé aujourd'hui.
+  const composition = {
+    jouable: true as const,
+    planKey: "team",
+    billingCycle: "monthly" as const,
+    devise: "EUR",
+    lignes: [
+      {
+        nature: "plan" as const,
+        moduleKey: null,
+        libelle: "Pro",
+        quantite: 1,
+        prixUnitaireHtCents: 7990,
+        providerPriceId: "price_team_m",
+        devise: "EUR",
+      },
+    ],
+    totalHtCents: 7990,
+    siegesFacturables: 0,
+    modulesInclusSansFrais: [],
+    remise: null,
+    taxe: {
+      regime: "france" as const,
+      tauxBps: 2000,
+      providerTaxRateId: "txr_fr_20",
+      montantTvaCents: 1598,
+      totalTtcCents: 9588,
+    },
+  };
+
+  const avec = planifierEssai({ souscritLe: "2026-09-06", avecEssai: true, cycle: "monthly" });
+  const sans = planifierEssai({ souscritLe: "2026-09-06", avecEssai: false, cycle: "monthly" });
+
+  assert.notEqual(
+    clefPourIntention("org-a", composition, avec),
+    clefPourIntention("org-a", composition, sans),
+  );
+});
+
+// ══════════════════════════════════════════════════════════════════
+// L'ESSAI : LA CARTE SANS LE DÉBIT
+// ══════════════════════════════════════════════════════════════════
+
+test("PAR DÉFAUT, UN NOUVEAU CLIENT ENTRE PAR L'ESSAI", async () => {
+  // C'est la lecture retenue de la décision du dirigeant. Un appelant
+  // qui ne dit rien obtient donc le parcours nominal, pas un
+  // prélèvement immédiat qu'il n'a pas demandé.
+  const api = new ApiSimulee();
+  const provider = fournisseur(api, new SourceSimulee());
+
+  await provider.startCheckout({ organizationId: ORG, planKey: "team" });
+
+  const demande = api.demandes[0]!;
+  assert.notEqual(demande.essai, null);
+  assert.equal(demande.metadonnees.avecEssai, "true");
+});
+
+test("LA DATE ANNONCÉE EST LA DATE ENVOYÉE AU PRESTATAIRE", async () => {
+  // ══════════════════════════════════════════════════════════════
+  // LE TEST QUI TIENT TOUT LE PARAGRAPHE
+  // ══════════════════════════════════════════════════════════════
+  //
+  // L'écran promet « votre carte est débitée le 6 octobre » ; c'est le
+  // prestataire qui tiendra l'échéance. Si les deux dates sortaient de
+  // deux calculs, l'écart ne se verrait qu'au relevé bancaire — et il
+  // ne se verrait que chez les clients ayant souscrit un 29, un 30 ou
+  // un 31.
+  const api = new ApiSimulee();
+  const provider = fournisseur(api, new SourceSimulee());
+
+  const resume = await provider.previewCheckout({ organizationId: ORG, planKey: "team" });
+  await provider.startCheckout({ organizationId: ORG, planKey: "team" });
+
+  assert.equal(resume.jouable, true);
+  if (!resume.jouable) return;
+  assert.notEqual(resume.essai, null);
+
+  const annonce = resume.essai!;
+  const envoye = api.demandes[0]!.essai;
+  assert.notEqual(envoye, null);
+  assert.equal(annonce.plan.premierPrelevementLe, envoye!.finLeIso);
+  assert.equal(annonce.plan.finEssaiLe, envoye!.finLeIso);
+  // Et la métadonnée que lira la fonction Edge dit la même chose.
+  assert.equal(api.demandes[0]!.metadonnees.finEssaiLe, envoye!.finLeIso);
+});
+
+test("LE RÉSUMÉ PORTE LA PHRASE, MONTANTS ET DATE COMPRIS", async () => {
+  // « Un mois gratuit, puis 79,90 € HT par mois. Votre carte est
+  // enregistrée aujourd'hui et débitée le […]. » La phrase est
+  // assemblée au serveur, à partir du montant que le serveur vient de
+  // calculer : le navigateur n'a rien à additionner.
+  const api = new ApiSimulee();
+  const provider = fournisseur(api, new SourceSimulee());
+
+  const resume = await provider.previewCheckout({ organizationId: ORG, planKey: "team" });
+  assert.equal(resume.jouable, true);
+  if (!resume.jouable || resume.essai === null) {
+    assert.fail("le résumé doit porter le calendrier de prélèvement");
+    return;
+  }
+
+  assert.match(resume.essai.titre, /Un mois gratuit, puis 79,90 € HT \/ mois\./);
+  assert.match(resume.essai.carte, /enregistrée aujourd'hui et débitée le /);
+  assert.match(resume.essai.prelevement, /95,88 € TTC/);
+});
+
+test("RENONCER À L'ESSAI FAIT PRÉLEVER LE JOUR MÊME", async () => {
+  // « S'il s'abonne il paie le premier mois direct » : aucun champ
+  // d'essai ne part, donc le prestataire facture à la création de
+  // l'abonnement.
+  const api = new ApiSimulee();
+  const provider = fournisseur(api, new SourceSimulee());
+
+  const resume = await provider.previewCheckout({
+    organizationId: ORG,
+    planKey: "team",
+    avecEssai: false,
+  });
+  await provider.startCheckout({ organizationId: ORG, planKey: "team", avecEssai: false });
+
+  assert.equal(api.demandes[0]!.essai, null);
+  assert.equal(api.demandes[0]!.metadonnees.avecEssai, "false");
+  assert.equal(api.demandes[0]!.metadonnees.finEssaiLe, undefined);
+
+  assert.equal(resume.jouable, true);
+  if (!resume.jouable || resume.essai === null) return;
+  assert.equal(resume.essai.plan.finEssaiLe, null);
+  assert.equal(resume.essai.plan.premierPrelevementLe, resume.essai.plan.souscritLe);
+});
+
+test("UN REFUS N'ANNONCE AUCUNE DATE DE PRÉLÈVEMENT", async () => {
+  // Afficher « débitée le 6 octobre » sous un motif de refus laisserait
+  // croire que quelque chose partira quand même.
+  const api = new ApiSimulee();
+  const provider = fournisseur(api, new SourceSimulee());
+
+  const resume = await provider.previewCheckout({ organizationId: ORG, planKey: "enterprise" });
+  assert.equal(resume.jouable, false);
 });
 
 test("le RÉSUMÉ et le PAIEMENT sont calculés par le même code", async () => {
@@ -593,7 +744,26 @@ test("un abonnement DÉJÀ EN COURS ferme la caisse plutôt que d'ouvrir un doub
   assert.equal(api.demandes.length, 0);
 });
 
-test("un abonnement RÉSILIÉ ne ferme pas la caisse : on peut se réabonner", async () => {
+test("UN ABONNEMENT RÉSILIÉ FERME LA CAISSE AUSSI — sinon on encaisse sans pouvoir enregistrer", async () => {
+  // ══════════════════════════════════════════════════════════════
+  // CE TEST DISAIT L'INVERSE, ET IL A ÉTÉ RETOURNÉ EXPRÈS
+  // ══════════════════════════════════════════════════════════════
+  //
+  // Il affirmait « un abonnement résilié ne ferme pas la caisse : on
+  // peut se réabonner ». C'était vrai de l'écran, et faux de la suite :
+  // la souscription ne s'enregistre pas dans le tunnel, elle
+  // s'enregistre par `saas_start_subscription()` quand l'encaissement
+  // est confirmé — et cette fonction refuse net toute entreprise
+  // portant DÉJÀ une ligne dans `organization_subscriptions`. Or une
+  // résiliation met la ligne à « cancelled », elle ne la supprime pas.
+  //
+  // Laisser passer, c'était donc prendre l'argent puis échouer à
+  // rouvrir les droits : un encaissement sans facture et sans
+  // abonnement, exactement ce que tout ce chantier refuse.
+  //
+  // CE VERROU DOIT SAUTER le jour où le réabonnement aura son chemin
+  // (reprise de la ligne existante plutôt que création). Ce sera alors
+  // une décision, et ce test le dira.
   const api = new ApiSimulee();
   const provider = fournisseur(api, new SourceSimulee(), {
     abonnement: {
@@ -605,7 +775,20 @@ test("un abonnement RÉSILIÉ ne ferme pas la caisse : on peut se réabonner", a
   });
 
   const sortie = await provider.startCheckout({ organizationId: ORG, planKey: "team" });
-  assert.equal(sortie.kind, "redirect");
+  assert.equal(sortie.kind, "unavailable");
+  if (sortie.kind !== "unavailable") return;
+  assert.match(sortie.reason, /déjà été abonnée/);
+  // Et surtout : RIEN N'EST PARTI AU PRESTATAIRE.
+  assert.equal(api.demandes.length, 0);
+});
+
+test("L'ESSAI EST RÉSERVÉ AU PREMIER ABONNEMENT — une ligne existante le referme", () => {
+  // La règle est celle de la base, pas un choix d'écran : offrir un
+  // second mois gratuit à qui revient serait un mois offert par
+  // résiliation.
+  assert.equal(essaiDisponible(null), true);
+  assert.equal(essaiDisponible({ status: "cancelled" }), false);
+  assert.equal(essaiDisponible({ status: "active" }), false);
 });
 
 test("une session expirée refuse au lieu d'encaisser sous une identité inconnue", async () => {

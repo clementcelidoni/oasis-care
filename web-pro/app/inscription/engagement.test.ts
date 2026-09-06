@@ -37,8 +37,19 @@ function offre(patch: Partial<OffreEngageante> = {}): OffreEngageante {
   };
 }
 
+/**
+ * LE CALENDRIER DE RÉFÉRENCE DES TESTS.
+ *
+ * L'engagement démarre au PREMIER PRÉLÈVEMENT — donc, quand il y a un
+ * essai, un mois après la souscription. Les tests fixent la date plutôt
+ * que d'employer « aujourd'hui » : une assertion sur une date de fin
+ * calculée depuis `new Date()` passerait onze mois sur douze et
+ * tomberait le 29 février.
+ */
+const DEBUT_ENGAGEMENT = { debutLe: "2026-10-06" };
+
 function annonce(): AnnonceEngagement {
-  const resultat = annoncerEngagement(offre(), PRO_PUBLIC);
+  const resultat = annoncerEngagement(offre(), PRO_PUBLIC, DEBUT_ENGAGEMENT);
   assert.notEqual(resultat, null, "l'annonce du tarif fondateur doit être calculable");
   return resultat as AnnonceEngagement;
 }
@@ -77,20 +88,67 @@ test("SANS PRIX PUBLIC, ON N'ANNONCE RIEN", () => {
   // tarif public : « le prix d'APRÈS ne peut pas être annoncé, donc
   // l'engagement ne peut pas être accepté ». L'écran suit la même règle
   // plutôt que d'afficher deux chiffres sur trois.
-  assert.equal(annoncerEngagement(offre(), null), null);
+  assert.equal(annoncerEngagement(offre(), null, DEBUT_ENGAGEMENT), null);
 });
 
 test("le prix d'après SUIT la grille, il n'est pas recopié", () => {
   // Le jour où Pro passe à 89,90, l'annonce doit dire 89,90 sans qu'on
   // touche à une ligne de code. C'est pour cela que le prix public est
   // un paramètre et non une constante.
-  const a = annoncerEngagement(offre(), 8990);
+  const a = annoncerEngagement(offre(), 8990, DEBUT_ENGAGEMENT);
   assert.equal(a?.prixApres, "89,90 € HT / mois");
 });
 
 test("une durée d'un mois annonce le deuxième mois, pas le « 2er »", () => {
-  const a = annoncerEngagement(offre({ dureeMois: 1 }), PRO_PUBLIC);
+  const a = annoncerEngagement(offre({ dureeMois: 1 }), PRO_PUBLIC, DEBUT_ENGAGEMENT);
   assert.equal(a?.quandLePrixChange, "au 2e mois");
+});
+
+test("L'ANNONCE PORTE LES DEUX DATES DE L'ENGAGEMENT, CALCULÉES", () => {
+  // « Douze mois » se compte de tête et se compte mal ; « jusqu'au
+  // 6 octobre 2027 » se relit. L'écran doit afficher la date de fin
+  // AVANT que la case ne soit cochée.
+  const a = annonce();
+  assert.equal(a.debutEngagementLe, "2026-10-06");
+  assert.equal(a.finEngagementLe, "2027-10-06");
+  assert.equal(a.periodeEngagement, "du 6 octobre 2026 au 6 octobre 2027");
+  assert.match(a.resume, /du 6 octobre 2026 au 6 octobre 2027/);
+});
+
+test("LA PHRASE ACCEPTÉE PORTE LA DATE DE FIN, pas seulement la durée", () => {
+  // C'est cette phrase-là que le client coche, et c'est elle qu'on lui
+  // rappellera le jour où il voudra partir.
+  assert.match(annonce().phraseAcceptation, /du 6 octobre 2026 au 6 octobre 2027/);
+});
+
+test("L'ESSAI DÉCALE L'ENGAGEMENT D'UN MOIS, ET L'ANNONCE LE DIT", () => {
+  // ══════════════════════════════════════════════════════════════
+  // LA RÈGLE DU SOCLE, VUE DEPUIS L'ÉCRAN
+  // ══════════════════════════════════════════════════════════════
+  //
+  // L'essai ne compte pas dans l'engagement : les deux partent du
+  // premier prélèvement. Poser la remise le jour de la souscription
+  // ferait payer ONZE mois à 49,90 € au lieu de douze, et le douzième
+  // basculerait au tarif public sans que personne l'ait annoncé.
+  //
+  // Le client qui entre par l'essai voit donc une fin d'engagement un
+  // mois plus tard que celui qui paie tout de suite — et c'est
+  // l'affichage honnête, parce que c'est ce que la base posera.
+  const parEssai = annoncerEngagement(offre(), PRO_PUBLIC, { debutLe: "2026-10-06" });
+  const toutDeSuite = annoncerEngagement(offre(), PRO_PUBLIC, { debutLe: "2026-09-06" });
+
+  assert.equal(parEssai?.finEngagementLe, "2027-10-06");
+  assert.equal(toutDeSuite?.finEngagementLe, "2027-09-06");
+});
+
+test("un engagement démarré un 31 janvier finit un 31 janvier", () => {
+  // 0081 pose `starts_on + interval 'N months'` : douze mois retombent
+  // sur le même quantième, sauf le 29 février.
+  const a = annoncerEngagement(offre(), PRO_PUBLIC, { debutLe: "2026-01-31" });
+  assert.equal(a?.finEngagementLe, "2027-01-31");
+
+  const bissextile = annoncerEngagement(offre(), PRO_PUBLIC, { debutLe: "2028-02-29" });
+  assert.equal(bissextile?.finEngagementLe, "2029-02-28");
 });
 
 // ------------------------------------------------------------------

@@ -51,6 +51,7 @@
 import type { SupabaseClient } from "@supabase/supabase-js";
 import {
   composerSouscription,
+  jourDeReference,
   phrasePourMotif,
   versResumePublic,
   type Composition,
@@ -58,6 +59,13 @@ import {
   type ResumeSouscription,
   type SourceFacturation,
 } from "./composition.ts";
+import {
+  annoncerEssai,
+  horodatageFinEssai,
+  planifierEssai,
+  type AnnonceEssai,
+  type PlanEssai,
+} from "./essai.ts";
 import { lirePlansActifs, type OrganizationPlan } from "./plans.ts";
 import { PRESTATAIRE_STRIPE, SourceFacturationSupabase } from "./source-supabase.ts";
 import {
@@ -226,7 +234,58 @@ export class StripeBillingProvider implements BillingProvider {
     // `versResumePublic` retire l'identifiant de tarif du prestataire :
     // ce qui part au navigateur est ce qu'il doit AFFICHER, pas ce qui
     // sert à encaisser.
-    return versResumePublic(await this.#composer(supabase, intent));
+    //
+    // LE CALENDRIER VOYAGE AVEC LE MONTANT, et c'est le point de tout
+    // ce paragraphe : « un mois gratuit, puis 79,90 € HT par mois,
+    // votre carte est débitée le 6 octobre » se dit d'un seul tenant,
+    // depuis un seul calcul. Une date affichée par un écran et une date
+    // envoyée au prestataire par un autre chemin finiraient par
+    // diverger, et le client ne le verrait qu'au relevé.
+    const composition = await this.#composer(supabase, intent);
+    return versResumePublic(composition, this.#annoncerEssai(intent, composition));
+  }
+
+  /**
+   * LE CALENDRIER DE CETTE SOUSCRIPTION.
+   *
+   * ══════════════════════════════════════════════════════════════
+   * POURQUOI L'ESSAI EST LE DÉFAUT, ET POURQUOI C'EST SÛR ICI
+   * ══════════════════════════════════════════════════════════════
+   *
+   * `intent.avecEssai` non renseigné vaut VRAI : c'est la lecture
+   * retenue de la décision du dirigeant — « tout nouveau client entre
+   * par l'essai ». Un appelant qui ne dit rien (une intégration tierce,
+   * la route de résumé) obtient donc le parcours nominal, pas un
+   * prélèvement immédiat qu'il n'a pas demandé.
+   *
+   * ET L'ÉLIGIBILITÉ N'A PAS À ÊTRE REVÉRIFIÉE ICI, parce que la caisse
+   * s'en est déjà chargée : `#caisseFermeePour` refuse toute entreprise
+   * qui porte une ligne d'abonnement, en cours OU résiliée. Quand on
+   * arrive jusqu'ici, l'entreprise n'en a aucune — c'est un premier
+   * abonnement, donc l'essai lui est dû. Le jour où le réabonnement
+   * s'ouvrira, c'est CE commentaire qu'il faudra relire : l'essai ne
+   * devra pas repartir avec lui.
+   */
+  #planEssai(intent: CheckoutIntent, cycle: CycleFacturation): PlanEssai {
+    return planifierEssai({
+      // Le jour de PARIS, pas celui d'UTC : à 23 h 30 en France l'UTC
+      // est déjà le lendemain l'été, et l'écran annoncerait un
+      // prélèvement le 7 à quelqu'un qui souscrit le 6.
+      souscritLe: jourDeReference(),
+      avecEssai: intent.avecEssai ?? true,
+      cycle,
+    });
+  }
+
+  #annoncerEssai(intent: CheckoutIntent, composition: Composition): AnnonceEssai | null {
+    // Une souscription refusée n'a pas de calendrier : annoncer une
+    // date de prélèvement sous un motif de refus laisserait croire que
+    // quelque chose partira quand même.
+    if (!composition.jouable) return null;
+    return annoncerEssai(this.#planEssai(intent, composition.billingCycle), {
+      totalHtCents: composition.totalHtCents,
+      totalTtcCents: composition.taxe.totalTtcCents,
+    });
   }
 
   /**
@@ -248,6 +307,38 @@ export class StripeBillingProvider implements BillingProvider {
         code: "dejaAbonne",
         motif:
           "Cette entreprise a déjà un abonnement en cours. Un changement d'offre se fait sur l'abonnement existant, pas par une nouvelle souscription : ouvrir une seconde souscription créerait un second dossier de paiement chez le prestataire, et un remboursement partirait du mauvais. Écrivez-nous, nous le faisons avec vous.",
+      };
+    }
+
+    // ---- 1 bis. UN ABONNEMENT RÉSILIÉ FERME LA CAISSE AUSSI -------
+    //
+    // CE CONTRÔLE EST NOUVEAU, ET IL RENVERSE LE COMPORTEMENT
+    // PRÉCÉDENT — « un abonnement résilié ne ferme pas la caisse : on
+    // peut se réabonner ». Voici pourquoi, et ce qui le rouvrira.
+    //
+    // La souscription ne s'enregistre pas ici : elle s'enregistre par
+    // `saas_start_subscription()`, côté machine, quand l'encaissement
+    // est confirmé. Or cette fonction refuse net toute entreprise qui
+    // porte DÉJÀ une ligne dans `organization_subscriptions` —
+    // « Cette entreprise a déjà un abonnement. » — et la ligne
+    // résiliée en est une : `admin_cancel_subscription` la met à
+    // « cancelled », elle ne la supprime pas.
+    //
+    // Laisser passer, c'est donc PRENDRE L'ARGENT puis échouer à
+    // enregistrer l'abonnement : un encaissement sans facture et sans
+    // droit, c'est-à-dire exactement ce que tout ce chantier refuse. Le
+    // client aurait payé et n'aurait rien.
+    //
+    // On refuse en amont, pendant qu'il est encore temps de ne rien
+    // prélever, et on dit quoi faire. CE VERROU DOIT SAUTER le jour où
+    // le réabonnement aura son chemin — reprise de la ligne existante
+    // plutôt que création — et ce jour-là ce sera une décision, pas un
+    // oubli.
+    if (abonnement !== null) {
+      return {
+        code: "abonnementResilie",
+        motif:
+          "Cette entreprise a déjà été abonnée par le passé. Un réabonnement ne se fait pas comme une première souscription — il reprend le dossier existant, et nous ne pouvons pas encore le faire depuis cet écran sans risquer d'encaisser sans pouvoir rouvrir vos droits. Écrivez-nous : nous le remettons en route avec vous, et rien n'a été prélevé.",
       };
     }
 
@@ -331,7 +422,15 @@ export class StripeBillingProvider implements BillingProvider {
     // hasard : deux clics sur « Payer » portent la même intention et
     // doivent rendre la même session. Une clé aléatoire créerait deux
     // sessions, donc deux abonnements possibles pour un seul client.
-    const clefIdempotence = clefPourIntention(intent.organizationId, composition);
+    //
+    // ET LE CALENDRIER EN FAIT PARTIE. « Avec essai » et « je paie tout
+    // de suite » sont deux intentions différentes : sans le calendrier
+    // dans la clé, le client qui renonce à l'essai après l'avoir
+    // regardé se verrait rendre la session d'essai déjà créée — un mois
+    // gratuit accordé à quelqu'un qui venait d'y renoncer, et pas un
+    // centime encaissé aujourd'hui.
+    const plan = this.#planEssai(intent, composition.billingCycle);
+    const clefIdempotence = clefPourIntention(intent.organizationId, composition, plan);
 
     const metadonnees: Record<string, string> = {
       // LE NOM EST PRÉFIXÉ, ET LES DEUX CÔTÉS EMPLOIENT LE MÊME.
@@ -362,7 +461,23 @@ export class StripeBillingProvider implements BillingProvider {
       totalTtcCents: String(composition.taxe.totalTtcCents),
       regimeTva: composition.taxe.regime,
       siegesFacturables: String(composition.siegesFacturables),
+      // LE CALENDRIER VOYAGE AVEC L'ENCAISSEMENT, et il est destiné à
+      // UNE lectrice précise : la fonction Edge qui appellera
+      // `saas_start_subscription(…, p_with_trial => …)` quand
+      // l'événement signé arrivera. Sans ces clés, elle devrait deviner
+      // si le client entre par l'essai — et une base qui devine finit
+      // par offrir un mois à qui a payé, ou par facturer qui ne devait
+      // rien.
+      //
+      // Les noms sont ceux du compte rendu, et ils ne changent pas sans
+      // que l'autre moitié du chantier le sache : le tunnel et le
+      // webhook ont déjà employé deux noms différents une fois, et
+      // chaque encaissement tombait alors en « entreprise inconnue ».
+      avecEssai: plan.avecEssai ? "true" : "false",
+      premierPrelevementLe: plan.premierPrelevementLe,
+      jourAnniversaire: String(plan.jourAnniversaire),
     };
+    if (plan.finEssaiLe !== null) metadonnees.finEssaiLe = plan.finEssaiLe;
     if (composition.modulesInclusSansFrais.length > 0) {
       metadonnees.modulesInclus = composition.modulesInclusSansFrais.join(",");
     }
@@ -401,6 +516,17 @@ export class StripeBillingProvider implements BillingProvider {
         composition.taxe.providerTaxRateId === null
           ? []
           : [composition.taxe.providerTaxRateId],
+      // L'ESSAI, TEL QUE L'ÉCRAN VIENT DE L'ANNONCER — la même date,
+      // issue du même calcul. C'est le prestataire qui tiendra
+      // l'échéance : il enregistre la carte aujourd'hui et ne la débite
+      // que ce jour-là.
+      essai:
+        plan.finEssaiLe === null
+          ? null
+          : {
+              finLeIso: plan.finEssaiLe,
+              finLeHorodatage: horodatageFinEssai(plan.finEssaiLe),
+            },
     });
 
     if (session.url === null) {
@@ -438,12 +564,23 @@ export class StripeBillingProvider implements BillingProvider {
  * session doit naître. Si en revanche il reclique sur le même bouton, la
  * clé est identique et le prestataire rend la session déjà créée.
  */
-export function clefPourIntention(organizationId: string, composition: Composition): string {
+export function clefPourIntention(
+  organizationId: string,
+  composition: Composition,
+  /**
+   * LE CALENDRIER FAIT PARTIE DE L'INTENTION, et le paramètre est
+   * OBLIGATOIRE pour cette raison. Le rendre facultatif laisserait un
+   * appelant l'oublier, et l'oubli ne se verrait pas : la session
+   * d'essai déjà créée serait rendue à qui vient d'y renoncer.
+   */
+  plan: PlanEssai,
+): string {
   if (!composition.jouable) return `${organizationId}:refus`;
   const empreinte = composition.lignes
     .map((ligne) => `${ligne.providerPriceId}x${ligne.quantite}`)
     .join("|");
-  return `oasis:${organizationId}:${composition.planKey}:${composition.billingCycle}:${composition.totalHtCents}:${empreinte}`;
+  const calendrier = plan.finEssaiLe === null ? "sansEssai" : `essai:${plan.finEssaiLe}`;
+  return `oasis:${organizationId}:${composition.planKey}:${composition.billingCycle}:${composition.totalHtCents}:${empreinte}:${calendrier}`;
 }
 
 /**

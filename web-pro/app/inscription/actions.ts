@@ -7,10 +7,15 @@ import { getActiveOrganization } from "@/lib/auth/organization";
 import { updateCompanyProfile } from "@/lib/company/actions";
 import { flash } from "@/lib/ui/flash";
 import { BUSINESS_TYPES, type BusinessType } from "@/lib/auth/permissions";
-import { getBillingProvider, type CheckoutOutcome } from "@/lib/billing/provider";
+import {
+  getBillingProvider,
+  type CheckoutOutcome,
+  type ResumeSouscription,
+} from "@/lib/billing/provider";
 import { jourDeReference } from "@/lib/billing/composition";
 import { lirePlansActifs } from "@/lib/billing/plans";
 import { lireIntention, peutSouscrire } from "@/app/api/stripe/intention";
+import { programmerValidationTva } from "@/lib/tva/file";
 import {
   annoncesParOffre,
   lireDerniereAcceptation,
@@ -239,6 +244,31 @@ export async function enregistrerSociete(formData: FormData): Promise<void> {
   // enregistré des champs que la fiche société ne relit pas.
   await updateCompanyProfile(formData);
 
+  /**
+   * LA VÉRIFICATION DU NUMÉRO DE TVA PART ICI, ET L'INSCRIPTION NE
+   * L'ATTEND PAS.
+   *
+   * Le service européen VIES tombe régulièrement, État membre par État
+   * membre. Une inscription qui exigerait sa réponse serait fermée à
+   * tout un pays chaque fois que son registre est indisponible — et la
+   * personne devant l'écran n'y comprendrait rien.
+   *
+   * On se contente donc de METTRE L'ENTREPRISE DANS LA FILE. Ce qui
+   * attend la réponse, c'est l'émission de la facture, et c'était déjà
+   * le comportement de la base depuis 0081.
+   *
+   * IL FAUT L'APPELER À CHAQUE ENREGISTREMENT, pas seulement à la
+   * création : c'est `saas_vies_enqueue()` qui détecte qu'un numéro a
+   * changé et qui efface alors la validation de l'ancien. Sans cet
+   * appel, corriger son numéro laisserait la vérification du précédent
+   * valoir pour le nouveau.
+   *
+   * ELLE NE LANCE PAS, par construction (`lib/tva/file.ts`) : une panne
+   * de la base à cet instant ne doit pas coûter une inscription.
+   */
+  const supabaseTva = await createClient();
+  await programmerValidationTva(supabaseTva, organisation.organizationId);
+
   await signalerCeQuOnNaPasPuVerifier(formData);
 
   redirect("/inscription?etape=offre");
@@ -297,10 +327,114 @@ export type DemandePaiement = {
   engagementCoche: boolean;
   /** La version du texte d'engagement AFFICHÉE au moment de cocher. */
   versionEngagementAffichee: string | null;
+  /**
+   * LE CLIENT ENTRE-T-IL PAR L'ESSAI D'UN MOIS ?
+   *
+   * Un booléen, pas une date ni un montant : le serveur calcule la date
+   * de fin et décide si l'essai est seulement possible. Ce que le
+   * navigateur envoie, c'est un CHEMIN.
+   */
+  avecEssai: boolean;
 };
 
 function refus(reason: string): CheckoutOutcome {
   return { kind: "unavailable", reason };
+}
+
+// ==================================================================
+// L'ÉTAPE « RÉSUMÉ » — CE QUI SERA PRÉLEVÉ, ET QUAND
+// ==================================================================
+
+/**
+ * §15 « Choisir → Résumé → Paiement → Confirmation ». L'étape RÉSUMÉ,
+ * qui n'engage rien.
+ *
+ * ══════════════════════════════════════════════════════════════════
+ * POURQUOI UNE SERVER ACTION, ALORS QU'UNE ROUTE EXISTAIT DÉJÀ
+ * ══════════════════════════════════════════════════════════════════
+ *
+ * L'écran demandait son résumé à `POST /api/stripe/resume`. Cette route
+ * lit l'intention avec `lireIntention()`, qui n'accepte que TROIS clés
+ * — offre, rythme, modules — et écarte tout le reste. C'est une bonne
+ * porte, et elle le restera : c'est elle qui garantit qu'aucun montant
+ * ne franchit la frontière.
+ *
+ * Mais elle ne sait pas dire « avec essai » ou « sans essai ». Le
+ * résumé aurait donc annoncé une date de prélèvement calculée sur le
+ * chemin par défaut, pendant que le bouton d'à côté en aurait envoyé
+ * une autre au prestataire. Un écran qui annonce une date et en prélève
+ * une autre est exactement ce que ce chantier existe pour empêcher.
+ *
+ * Cette action-ci pose donc LA MÊME question que le paiement, avec la
+ * MÊME réponse, calculée par le MÊME code — c'est le raisonnement déjà
+ * suivi quand la route de paiement a été supprimée au profit d'une
+ * action. La route de résumé, elle, n'est PAS supprimée : elle
+ * n'appartient pas à ce chantier, elle reste juste sur le chemin par
+ * défaut. Le compte rendu demande à l'intégration de trancher son sort.
+ *
+ * ══════════════════════════════════════════════════════════════════
+ * LES MÊMES DEUX VERROUS QUE LA ROUTE
+ * ══════════════════════════════════════════════════════════════════
+ *
+ * Le résumé montre l'effectif facturable et la remise accordée : ce
+ * sont des informations de direction, pas des informations d'écran. On
+ * les réserve à ceux qui peuvent souscrire, comme le fait la route.
+ */
+export async function resumerSouscription(demande: {
+  planKey: string;
+  billingCycle: string;
+  moduleKeys: string[];
+  avecEssai: boolean;
+}): Promise<ResumeSouscription> {
+  const organisation = await getActiveOrganization();
+  if (organisation === null) {
+    return {
+      jouable: false,
+      code: "sessionExpiree",
+      motif: "Votre session a expiré. Reconnectez-vous pour continuer.",
+    };
+  }
+
+  if (!peutSouscrire(organisation.role)) {
+    return {
+      jouable: false,
+      code: "roleInsuffisant",
+      motif:
+        "Seul le propriétaire ou un administrateur de l'entreprise peut consulter le détail d'une souscription.",
+    };
+  }
+
+  // LE MÊME LECTEUR QUE LA ROUTE ET QUE LE PAIEMENT. Une troisième
+  // lecture écrite ici aurait fini par accepter ce que les deux autres
+  // refusent.
+  const lecture = lireIntention({
+    planKey: demande.planKey,
+    billingCycle: demande.billingCycle,
+    moduleKeys: demande.moduleKeys,
+  });
+  if (!lecture.ok) {
+    return { jouable: false, code: "intentionInvalide", motif: lecture.motif };
+  }
+
+  const provider = getBillingProvider();
+  if (provider.previewCheckout === undefined) {
+    return {
+      jouable: false,
+      code: "encaissementIndisponible",
+      motif:
+        provider.unavailableReason
+        ?? "Le détail d'une souscription n'est pas disponible pour le moment.",
+    };
+  }
+
+  return provider.previewCheckout({
+    // L'ENTREPRISE VIENT DE LA SESSION, jamais de la requête.
+    organizationId: organisation.organizationId,
+    planKey: lecture.intention.planKey,
+    billingCycle: lecture.intention.billingCycle,
+    moduleKeys: lecture.intention.moduleKeys,
+    avecEssai: demande.avecEssai,
+  });
 }
 
 export async function ouvrirLePaiement(demande: DemandePaiement): Promise<CheckoutOutcome> {
@@ -341,7 +475,6 @@ export async function ouvrirLePaiement(demande: DemandePaiement): Promise<Checko
   ]);
 
   const prixPublics = new Map(offres.map((offre) => [offre.key, offre.monthlyPriceCents]));
-  const annonce = annoncesParOffre(offresEngageantes, prixPublics).get(intention.planKey) ?? null;
 
   const provider = getBillingProvider();
 
@@ -364,8 +497,31 @@ export async function ouvrirLePaiement(demande: DemandePaiement): Promise<Checko
     planKey: intention.planKey,
     billingCycle: intention.billingCycle,
     moduleKeys: intention.moduleKeys,
+    avecEssai: demande.avecEssai,
   });
   if (!resume.jouable) return refus(resume.motif);
+
+  // ---- 4 bis. L'ANNONCE D'ENGAGEMENT, DATÉE PAR LE SERVEUR ---------
+  //
+  // ELLE EST CONSTRUITE APRÈS LE RÉSUMÉ, ET C'EST LE POINT.
+  //
+  // L'engagement ne commence pas le jour de la souscription quand il y
+  // a un essai : il commence au PREMIER PRÉLÈVEMENT. C'est la règle du
+  // socle, et la base la rend non contournable — le déclencheur
+  // `subscription_discounts_trial_guard` refuse toute remise engageante
+  // qui démarrerait un autre jour. La raison est chiffrée : poser la
+  // remise à la souscription ferait payer ONZE mois à 49,90 € au lieu
+  // de douze, et le douzième basculerait au tarif public en silence.
+  //
+  // La date vient donc du RÉSUMÉ — c'est-à-dire du même calcul que
+  // celui qui partira au prestataire — et non d'un second calcul fait
+  // ici. Deux calendriers, ce sont deux dates, et c'est la mauvaise
+  // qu'on ferait cocher.
+  const debutEngagementLe = resume.essai?.plan.premierPrelevementLe ?? leJour;
+  const annonce =
+    annoncesParOffre(offresEngageantes, prixPublics, { debutLe: debutEngagementLe }).get(
+      intention.planKey,
+    ) ?? null;
 
   // ---- 5. LE GESTE D'ACCEPTATION -----------------------------------
   const acceptation = verifierAcceptation({
@@ -416,6 +572,9 @@ export async function ouvrirLePaiement(demande: DemandePaiement): Promise<Checko
       planKey: intention.planKey,
       billingCycle: intention.billingCycle,
       moduleKeys: intention.moduleKeys,
+      // LE MÊME CHEMIN QUE CELUI QUI VIENT D'ÊTRE CHIFFRÉ. Le résumé a
+      // annoncé une date de prélèvement ; c'est celle-là qui part.
+      avecEssai: demande.avecEssai,
     });
   } catch (erreur) {
     console.error(

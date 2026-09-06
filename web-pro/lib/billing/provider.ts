@@ -59,6 +59,17 @@ export type { BillingProviderId, SubscriptionStatus } from "./abonnement.ts";
 export type { OrganizationSubscription } from "./abonnement.ts";
 export type { OrganizationPlan } from "./plans.ts";
 export type { CycleFacturation, LigneResume, ResumeSouscription } from "./composition.ts";
+/**
+ * DES TYPES SEULEMENT, ET PAS LES FONCTIONS D'À CÔTÉ.
+ *
+ * `essai.ts` est PUR : il se charge sans base ni réseau. Ce fichier-ci
+ * ne l'est pas — il importe `@/lib/supabase/server`, qui tire
+ * `next/headers`. Réexporter ses fonctions ferait passer un écran
+ * client par ce chemin-là pour un simple calcul de date, et la page
+ * cesserait de compiler pour une raison sans rapport. Les fonctions
+ * s'importent depuis `@/lib/billing/essai`, directement.
+ */
+export type { AnnonceEssai, PlanEssai } from "./essai.ts";
 
 import type { BillingProviderId, OrganizationSubscription } from "./abonnement.ts";
 import type { OrganizationPlan } from "./plans.ts";
@@ -77,6 +88,20 @@ export type CheckoutIntent = {
   planKey: string;
   billingCycle?: CycleFacturation;
   moduleKeys?: string[];
+  /**
+   * LE CLIENT ENTRE-T-IL PAR L'ESSAI ?
+   *
+   * Absent = OUI, et c'est la lecture retenue de la décision du
+   * dirigeant : tout nouveau client entre par l'essai d'un mois, carte
+   * enregistrée et non débitée. Celui qui y RENONCE le dit
+   * explicitement — `false` — et paie le jour même.
+   *
+   * CE CHAMP NE PORTE AUCUN MONTANT, comme ses voisins. Il dit un
+   * chemin, pas un prix : c'est le serveur qui décide si l'essai est
+   * seulement possible (il ne l'est qu'au premier abonnement de
+   * l'entreprise), et c'est lui qui calcule la date de fin.
+   */
+  avecEssai?: boolean;
 };
 
 /**

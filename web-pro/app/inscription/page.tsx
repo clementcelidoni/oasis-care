@@ -4,10 +4,18 @@ import { getActiveOrganization } from "@/lib/auth/organization";
 import { getBillingProvider } from "@/lib/billing/provider";
 import { lireAbonnement } from "@/lib/billing/abonnement";
 import { jourDeReference } from "@/lib/billing/composition";
+import { essaiDisponible, formaterJourFr, planifierEssai } from "@/lib/billing/essai";
 import { BUSINESS_TYPES, BUSINESS_TYPE_LABELS, type BusinessType } from "@/lib/auth/permissions";
 import { PageHeader } from "@/components/ui";
+import { BandeauTva } from "@/lib/tva/BandeauTva";
+import { lireEtatValidationTva } from "@/lib/tva/file";
 import { lireCatalogue } from "./catalogue.ts";
-import { manquePourFacturer, PAYS_PROPOSES, type IdentiteSaisie } from "./identite.ts";
+import {
+  manquePourFacturer,
+  PAYS_PROPOSES,
+  zoneFiscale,
+  type IdentiteSaisie,
+} from "./identite.ts";
 import { enregistrerSociete } from "./actions.ts";
 import {
   annoncesParOffre,
@@ -325,7 +333,21 @@ async function EtapeOffre({
   // 31 » disparaîtrait une soirée trop tôt.
   const leJour = jourDeReference();
 
-  const [catalogue, abonnement, texteEngagement, offresEngageantes] = await Promise.all([
+  /**
+   * OÙ EN EST LA VÉRIFICATION DU NUMÉRO DE TVA.
+   *
+   * Elle s'affiche ICI et pas à l'étape précédente, pour une raison de
+   * moment : à l'étape « société », la personne vient tout juste de
+   * saisir son numéro et la réponse du registre européen n'a pas eu le
+   * temps d'arriver — le bandeau dirait « en cours » à tout le monde et
+   * n'apprendrait rien. À l'étape « offre », il répond à la question
+   * qu'on se pose vraiment avant de payer : est-ce que ma facture va
+   * pouvoir être émise ?
+   *
+   * La zone vient de `zoneFiscale()`, seule source sur les vingt-sept ;
+   * `lib/tva` n'en tient pas de copie.
+   */
+  const [catalogue, abonnement, texteEngagement, offresEngageantes, etatTva] = await Promise.all([
     lireCatalogue({
       metier: metier ?? undefined,
       libelleMetier: metier === null ? undefined : BUSINESS_TYPE_LABELS[metier],
@@ -334,7 +356,53 @@ async function EtapeOffre({
     lireAbonnement(supabase, organisationId),
     lireTexteEngagement(supabase),
     lireOffresEngageantes(supabase, leJour),
+    // Lue avec les autres et non après : une requête de plus en série
+    // ferait attendre l'écran sans rien apprendre de plus.
+    lireEtatValidationTva(supabase, {
+      organizationId: organisationId,
+      zone: zoneFiscale(identite.country),
+      numero: identite.vatNumber,
+    }),
   ]);
+
+  /**
+   * L'ESSAI EST RÉSERVÉ AU PREMIER ABONNEMENT DE L'ENTREPRISE.
+   *
+   * C'est la règle de la base : `saas_start_subscription()` refuse
+   * toute entreprise portant déjà une ligne d'abonnement, RÉSILIÉE
+   * COMPRISE. Offrir un second mois gratuit à qui revient serait, en
+   * plus, un mois offert par résiliation.
+   */
+  const essaiPossible = essaiDisponible(abonnement);
+
+  /**
+   * DEUX CALENDRIERS, CALCULÉS AU SERVEUR, ET C'EST VOULU.
+   *
+   * La date de fin d'engagement dépend du chemin choisi : avec essai,
+   * l'engagement démarre au premier prélèvement, un mois plus tard ;
+   * sans essai, il démarre aujourd'hui. Le client bascule d'un chemin à
+   * l'autre à l'écran, et l'écran doit afficher la bonne date SANS la
+   * calculer lui-même — un « ajouter un mois » écrit dans le navigateur
+   * dirait le 3 mars pour un 31 janvier.
+   *
+   * On envoie donc les deux annonces déjà faites, et le navigateur
+   * choisit celle qui correspond à la case cochée. Il ne calcule rien.
+   *
+   * Le RYTHME ne change pas ces dates : le premier prélèvement tombe au
+   * même jour au mois et à l'année. On planifie donc au mois, et
+   * `resumerSouscription` recalcule le vrai calendrier complet avec le
+   * cycle réellement demandé.
+   */
+  const departAvecEssai = planifierEssai({
+    souscritLe: leJour,
+    avecEssai: true,
+    cycle: "monthly",
+  }).premierPrelevementLe;
+  const departSansEssai = planifierEssai({
+    souscritLe: leJour,
+    avecEssai: false,
+    cycle: "monthly",
+  }).premierPrelevementLe;
 
   /**
    * Le prix d'APRÈS l'engagement vient du tarif public de l'offre
@@ -342,12 +410,17 @@ async function EtapeOffre({
    * seconde requête aurait pu en donner un autre ; on réemploie donc
    * le catalogue déjà lu, ce qui rend la contradiction impossible.
    */
-  const engagements = [
-    ...annoncesParOffre(
-      offresEngageantes,
-      new Map(catalogue.offres.map((a) => [a.offre.key, a.offre.monthlyPriceCents])),
-    ).values(),
-  ];
+  const prixPublics = new Map(
+    catalogue.offres.map((a) => [a.offre.key, a.offre.monthlyPriceCents]),
+  );
+  const engagements = {
+    avecEssai: [
+      ...annoncesParOffre(offresEngageantes, prixPublics, { debutLe: departAvecEssai }).values(),
+    ],
+    sansEssai: [
+      ...annoncesParOffre(offresEngageantes, prixPublics, { debutLe: departSansEssai }).values(),
+    ],
+  };
 
   if (catalogue.offres.length === 0) {
     return (
@@ -360,6 +433,12 @@ async function EtapeOffre({
 
   return (
     <>
+      {/* Ce que le registre européen a répondu, ou n'a pas encore
+          répondu. Quatre situations, quatre phrases : « en cours »,
+          « vérifié le … », « pas reconnu », « registre indisponible ».
+          Le composant s'efface de lui-même quand il n'a rien à dire. */}
+      <BandeauTva etat={etatTva} className="mb-6" />
+
       {catalogue.aucunPrix && (
         <p className="mb-6 rounded-[var(--radius-control)] border border-line bg-surface-sunken px-4 py-3 text-[var(--text-body)] text-ink-soft">
           Les tarifs ne sont pas encore publiés : aucun montant n&apos;est enregistré pour ces
@@ -379,6 +458,11 @@ async function EtapeOffre({
         lienIdentite="/inscription?etape=societe"
         engagements={engagements}
         texteEngagement={texteEngagement}
+        essaiPossible={essaiPossible}
+        datesPremierPrelevement={{
+          avecEssai: formaterJourFr(departAvecEssai),
+          sansEssai: formaterJourFr(departSansEssai),
+        }}
       />
     </>
   );

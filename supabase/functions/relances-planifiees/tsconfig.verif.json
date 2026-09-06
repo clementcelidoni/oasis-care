@@ -1,0 +1,40 @@
+// Oasis Care — Les relances. LA VÉRIFICATION DE TYPES DE LA MACHINE.
+//
+//   npx --prefix web-pro tsc -p supabase/functions/relances-planifiees/tsconfig.verif.json
+//
+// POURQUOI UN FICHIER À PART, et surtout pas un `tsconfig.json`. Ce
+// dossier est du code Deno vivant à l'intérieur d'un dépôt Node : un
+// `tsconfig.json` ici serait découvert tout seul par les outils de
+// `web-pro` (build Next.js, ESLint), qui essaieraient alors de compiler
+// du code Deno avec leurs propres réglages. Le nom distinct évite cette
+// collision : rien ne le trouve par hasard, on l'invoque.
+//
+// `files` ne liste que les fichiers de CE dossier. Ceux de
+// `envoi-email` arrivent par les imports et sont vérifiés avec, ce qui
+// est exactement le but : c'est le raccord entre les deux fonctions
+// qu'on veut voir casser ici plutôt qu'en production.
+{
+  "compilerOptions": {
+    "target": "es2022",
+    "module": "esnext",
+    "moduleResolution": "bundler",
+    "lib": ["es2023", "dom"],
+    "strict": true,
+    // Deno importe ses voisins avec l'extension `.ts` écrite en toutes
+    // lettres. C'est sa règle, pas une négligence.
+    "allowImportingTsExtensions": true,
+    "noUnusedLocals": true,
+    "noUnusedParameters": true,
+    "noEmit": true,
+    "skipLibCheck": true,
+    "typeRoots": ["../../../web-pro/node_modules/@types"],
+    "types": ["node"]
+  },
+  "files": [
+    "verification.d.ts",
+    "file.ts",
+    "traitement.ts",
+    "index.ts",
+    "traitement.test.ts"
+  ]
+}

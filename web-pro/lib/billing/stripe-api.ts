@@ -167,6 +167,38 @@ export type DemandeSessionPaiement = {
    * de TVA ne seraient jamais collectés.
    */
   tauxTaxe: string[];
+  /**
+   * L'ESSAI GRATUIT, OU SON ABSENCE.
+   *
+   * ══════════════════════════════════════════════════════════════
+   * POURQUOI UN INSTANT ET NON UN NOMBRE DE JOURS
+   * ══════════════════════════════════════════════════════════════
+   *
+   * Le prestataire accepte les deux : `trial_period_days` (un nombre)
+   * ou `trial_end` (un horodatage). On emploie le SECOND, et c'est une
+   * décision.
+   *
+   * « Un mois » n'est pas « trente jours ». Un essai ouvert le
+   * 31 janvier finit le 28 février — vingt-huit jours — et l'écran
+   * l'annonce ainsi. Envoyer « 30 jours » ferait débiter le 2 mars une
+   * carte dont le titulaire a lu « 28 février » : la date affichée et
+   * la date prélevée doivent être LE MÊME jour, calculé une seule fois.
+   *
+   * `null` veut dire « pas d'essai », donc premier prélèvement à la
+   * souscription. Ce n'est pas un défaut d'absence : c'est un des deux
+   * chemins, et l'appelant l'a choisi explicitement.
+   */
+  essai: EssaiSession | null;
+};
+
+/**
+ * CE QU'IL FAUT AU PRESTATAIRE POUR TENIR UN ESSAI SANS DÉBITER.
+ */
+export type EssaiSession = {
+  /** L'instant exact de fin d'essai, en secondes. */
+  finLeHorodatage: number;
+  /** Le même jour, en ISO — pour les métadonnées et les journaux. */
+  finLeIso: string;
 };
 
 export type SessionPaiement = {
@@ -321,7 +353,44 @@ export class ClientStripeHttp implements ApiStripe {
       // un humain de relier un paiement à une entreprise sans requête.
       client_reference_id: demande.metadonnees.oasis_organization_id ?? null,
       integration_identifier: ETIQUETTE_INTEGRATION,
+      // LA CARTE EST OBLIGATOIRE, ESSAI COMPRIS, ET ON LE DIT PLUTÔT
+      // QUE DE S'EN REMETTRE AU DÉFAUT.
+      //
+      // La documentation du prestataire est explicite : « par défaut,
+      // les sessions Checkout collectent un moyen de paiement à
+      // utiliser à la fin de la période d'essai », et
+      // `payment_method_collection = 'if_required'` est ce qui
+      // DÉSACTIVE cette collecte. Le défaut nous convient donc — mais
+      // c'est la décision du dirigeant (« essai gratuit un mois avec
+      // carte OBLIGATOIREMENT »), et une décision ne se confie pas à un
+      // défaut : un défaut peut changer, et il changerait en silence.
+      //
+      // Un essai sans carte se termine par un client qui disparaît le
+      // trentième jour ; c'est aussi la raison pour laquelle
+      // `saas_start_subscription()` refuse une souscription dont la
+      // carte n'est pas enregistrée.
+      payment_method_collection: "always",
     };
+
+    // L'ESSAI, POSÉ SUR L'ABONNEMENT.
+    //
+    // `trial_end` porte la date exacte de fin — celle-là même que
+    // l'écran a annoncée et que la base recalculera. Voir
+    // `DemandeSessionPaiement.essai` pour la raison de ce choix.
+    //
+    // ET LE GARDE-FOU : `missing_payment_method = 'cancel'`. Il ne
+    // devrait jamais servir, puisque la carte est exigée à l'entrée —
+    // mais un moyen de paiement peut être retiré, expirer ou être
+    // refusé pendant le mois d'essai. Sans cette consigne, l'abonnement
+    // basculerait en impayé et le droit resterait ouvert sans
+    // contrepartie. « Annuler » plutôt que « suspendre » : un
+    // abonnement suspendu peut le rester indéfiniment, sans facture et
+    // sans fin, et personne ne va voir.
+    if (demande.essai !== null) {
+      const abonnement = corps.subscription_data as Record<string, unknown>;
+      abonnement.trial_end = demande.essai.finLeHorodatage;
+      abonnement.trial_settings = { end_behavior: { missing_payment_method: "cancel" } };
+    }
 
     // LA TAXE SE POSE SUR L'ABONNEMENT, PAS SUR LES LIGNES DE LA
     // SESSION, ET LA DIFFÉRENCE EST TOUT L'ENJEU.

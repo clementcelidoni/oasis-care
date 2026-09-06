@@ -169,11 +169,23 @@ export async function lireOffresEngageantes(
 export function annoncesParOffre(
   offresEngageantes: OffreEngageante[],
   prixPublicParOffre: Map<string, number | null>,
+  /**
+   * LE JOUR OÙ L'ENGAGEMENT COMMENCERAIT — c'est-à-dire le jour du
+   * PREMIER PRÉLÈVEMENT, essai compris. Obligatoire pour la même
+   * raison que dans `annoncerEngagement` : une valeur par défaut
+   * annoncerait une fin d'engagement un mois trop tôt dans le cas
+   * nominal, et personne ne s'en apercevrait avant le douzième mois.
+   */
+  calendrier: { debutLe: string },
 ): Map<string, AnnonceEngagement> {
   const annonces = new Map<string, AnnonceEngagement>();
   for (const offre of offresEngageantes) {
     if (annonces.has(offre.planKey)) continue;
-    const annonce = annoncerEngagement(offre, prixPublicParOffre.get(offre.planKey) ?? null);
+    const annonce = annoncerEngagement(
+      offre,
+      prixPublicParOffre.get(offre.planKey) ?? null,
+      calendrier,
+    );
     if (annonce !== null) annonces.set(offre.planKey, annonce);
   }
   return annonces;

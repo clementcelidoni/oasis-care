@@ -57,6 +57,10 @@
  */
 
 import { formaterHt, formaterHtParPeriode } from "./grille.ts";
+// CHEMIN RELATIF, EXTENSION EXPLICITE : l'alias `@/…` n'est pas résolu
+// par Node, et ce fichier doit rester chargeable par `node --test`.
+// Le fichier visé est pur lui aussi.
+import { finEngagement, formaterJourFr } from "../../lib/billing/essai.ts";
 
 // ------------------------------------------------------------------
 // Ce que la base porte
@@ -115,6 +119,21 @@ export type AnnonceEngagement = {
   /** « au 13e mois » — dit QUAND le prix change, pas seulement qu'il change. */
   quandLePrixChange: string;
 
+  /**
+   * LE JOUR OÙ L'ENGAGEMENT COMMENCE, en ISO.
+   *
+   * Ce n'est PAS forcément aujourd'hui : quand l'entreprise entre par
+   * l'essai, l'engagement démarre au premier prélèvement. C'est la
+   * règle du socle, et la base la rend non contournable — le
+   * déclencheur `subscription_discounts_trial_guard` refuse toute
+   * remise engageante qui démarrerait un autre jour.
+   */
+  debutEngagementLe: string;
+  /** LE JOUR OÙ IL SE TERMINE, en ISO. Calculé, jamais approximé. */
+  finEngagementLe: string;
+  /** « du 6 octobre 2026 au 6 octobre 2027 » — les deux dates, lisibles. */
+  periodeEngagement: string;
+
   /** La phrase courte de la carte, avant tout choix. */
   resume: string;
   /** La phrase de la case à cocher. Elle porte les trois chiffres. */
@@ -148,6 +167,27 @@ function moisOrdinal(dureeMois: number): string {
 export function annoncerEngagement(
   offre: OffreEngageante,
   prixPublicMensuelHtCents: number | null,
+  /**
+   * LE CALENDRIER DE L'ENGAGEMENT, ET IL EST OBLIGATOIRE.
+   *
+   * ══════════════════════════════════════════════════════════════
+   * POURQUOI CE PARAMÈTRE N'A PAS DE VALEUR PAR DÉFAUT
+   * ══════════════════════════════════════════════════════════════
+   *
+   * « Par défaut, l'engagement commence aujourd'hui » serait faux dès
+   * qu'il y a un essai — c'est-à-dire dans le cas nominal — et
+   * l'erreur serait invisible : l'écran afficherait une date de fin
+   * d'engagement un mois trop tôt, le client la lirait, la cocherait,
+   * et la base en poserait une autre. Un appelant doit donc DIRE quel
+   * jour l'engagement commence, et cette obligation est le seul
+   * moyen d'être sûr qu'il y a pensé.
+   *
+   * `debutLe` se lit sur le plan d'essai : c'est
+   * `plan.premierPrelevementLe`, ni plus ni moins. L'essai ne compte
+   * pas dans l'engagement — on n'enferme pas quelqu'un sur une période
+   * où il ne paie rien et peut partir.
+   */
+  calendrier: { debutLe: string },
 ): AnnonceEngagement | null {
   if (prixPublicMensuelHtCents === null) return null;
 
@@ -160,6 +200,16 @@ export function annoncerEngagement(
 
   const quandLePrixChange = `au ${moisOrdinal(offre.dureeMois)} mois`;
 
+  // LES DEUX DATES, CALCULÉES PAR LA MÊME RÈGLE QUE LA BASE. 0081 pose
+  // `commitment_ends_on := starts_on + interval 'N months'` : c'est
+  // l'arithmétique de mois de Postgres, qui retombe sur le dernier jour
+  // du mois quand le jour d'origine n'y existe pas. `finEngagement` la
+  // rejoue à l'identique.
+  const debutEngagementLe = calendrier.debutLe;
+  const finEngagementLe = finEngagement(debutEngagementLe, offre.dureeMois);
+  const periodeEngagement =
+    `du ${formaterJourFr(debutEngagementLe)} au ${formaterJourFr(finEngagementLe)}`;
+
   return {
     code: offre.code,
     label: offre.label,
@@ -171,13 +221,23 @@ export function annoncerEngagement(
     prixApres,
     quandLePrixChange,
 
+    debutEngagementLe,
+    finEngagementLe,
+    periodeEngagement,
+
     resume:
       `${offre.label} : ${prixPendant} pendant ${offre.dureeMois} mois, ` +
-      `puis ${prixApres} ${quandLePrixChange}. Engagement de ${offre.dureeMois} mois.`,
+      `puis ${prixApres} ${quandLePrixChange}. Engagement de ${offre.dureeMois} mois, ` +
+      `${periodeEngagement}.`,
 
+    // LA DATE DE FIN FIGURE DANS LA PHRASE ACCEPTÉE, et pas seulement à
+    // côté. « Douze mois » se compte de tête et se compte mal ; « jusqu'au
+    // 6 octobre 2027 » se relit. C'est cette phrase-là que le client
+    // coche, et c'est elle qu'on lui rappellera le jour où il voudra
+    // partir.
     phraseAcceptation:
-      `Je m'engage pour ${offre.dureeMois} mois à ${prixPendant}, ` +
-      `puis ${prixApres} ${quandLePrixChange}. ` +
+      `Je m'engage pour ${offre.dureeMois} mois, ${periodeEngagement}, ` +
+      `à ${prixPendant}, puis ${prixApres} ${quandLePrixChange}. ` +
       `Je comprends que mon abonnement ne peut pas être résilié avant ce terme.`,
 
     prixPendantHtCents: offre.prixPendantHtCents,
@@ -559,12 +619,15 @@ export function engagementEnCours(
  * seul moyen de se tromper.
  */
 export function formaterJour(iso: string): string {
-  return new Date(`${iso}T00:00:00Z`).toLocaleDateString("fr-FR", {
-    timeZone: "UTC",
-    day: "numeric",
-    month: "long",
-    year: "numeric",
-  });
+  // UNE SEULE IMPLÉMENTATION, RÉEXPORTÉE SOUS SON ANCIEN NOM.
+  //
+  // La même mise en forme est nécessaire à `essai.ts` pour annoncer la
+  // date de prélèvement. En écrire une seconde là-bas, c'était accepter
+  // qu'un écran dise « 6 octobre » et l'autre « 5 octobre » le jour où
+  // l'un des deux oublierait le fuseau UTC. L'ancien nom reste : il est
+  // employé par l'écran d'abonnement, qui n'appartient pas à ce
+  // chantier.
+  return formaterJourFr(iso);
 }
 
 /**
