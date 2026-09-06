@@ -41,6 +41,19 @@ export const PERMISSIONS = [
   "nursery.stock.manage",
   "invoice.create",
   "organization.manageUsers",
+  // §7 BIOLAB SUR LE WEB. Les trois clés sont semées dans
+  // `role_permissions` par la migration 0087, et le découpage suit les
+  // COMMANDES SQL, pas une liste de tables : les vingt et une politiques
+  // BioLab sont en `for all`, donc quiconque peut écrire pourrait aussi
+  // supprimer — et effacer un lot efface la généalogie qui pend à son
+  // `parent_batch_id`. D'où la troisième.
+  //
+  //   biolab.read   — consulter le laboratoire.
+  //   biolab.write  — saisir le quotidien à la paillasse.
+  //   biolab.manage — supprimer, et commander la reprise du §3 de 0087.
+  "biolab.read",
+  "biolab.write",
+  "biolab.manage",
 ] as const;
 
 export type Permission = (typeof PERMISSIONS)[number];
@@ -85,10 +98,23 @@ export const BUSINESS_TYPE_LABELS: Record<BusinessType, string> = {
 
 /**
  * Mirrors `role_permissions` and the owner/admin shortcut in
- * `has_permission()`. Kept in sync by
- * `lib/auth/__tests__/permissions.test.ts`, which fails if the two ever
- * drift — a client-side list that silently disagrees with the database
- * shows people menus that lead to a permission error.
+ * `has_permission()`.
+ *
+ * TENU EN PHASE PAR `lib/auth/permissions.test.ts`, QUI EXISTE
+ * DÉSORMAIS. Le commentaire d'origine annonçait un
+ * `lib/auth/__tests__/permissions.test.ts` — ce fichier n'a jamais été
+ * écrit, et la promesse était donc fausse pendant tout ce temps. Le
+ * test relit les `insert into public.role_permissions` de
+ * `supabase/migrations/` et échoue si une seule case diffère, dans un
+ * sens ou dans l'autre.
+ *
+ * POURQUOI CE TEST COMPTE AUTANT. `lib/auth/organization.ts` construit
+ * `permissions` avec `permissionsForRole()`, c'est-à-dire à partir de
+ * la table ci-dessous, JAMAIS depuis `role_permissions` en base. Les
+ * deux peuvent donc diverger en silence, et les deux dérives sont
+ * muettes : une permission semée en base mais absente d'ici donne un
+ * droit que rien n'affiche ; une permission listée ici mais non semée
+ * ouvre un écran sur des données que la base refuse.
  */
 const ROLE_PERMISSIONS: Record<Exclude<Role, "owner" | "admin" | "custom">, Permission[]> = {
   manager: [
@@ -96,6 +122,8 @@ const ROLE_PERMISSIONS: Record<Exclude<Role, "owner" | "admin" | "custom">, Perm
     "quotes.read", "quotes.create", "quotes.edit", "quotes.approve",
     "projects.read", "projects.manage",
     "digitalTwin.edit", "nursery.stock.manage", "invoice.create",
+    // Le responsable répond de la production végétale : les trois.
+    "biolab.read", "biolab.write", "biolab.manage",
   ],
   sales: [
     "clients.read", "clients.write",
@@ -108,11 +136,17 @@ const ROLE_PERMISSIONS: Record<Exclude<Role, "owner" | "admin" | "custom">, Perm
   ],
   teamLeader: ["projects.read", "projects.manage"],
   fieldWorker: ["projects.read"],
-  nurseryManager: ["nursery.stock.manage", "projects.read", "clients.read"],
-  nurseryWorker: ["nursery.stock.manage"],
+  nurseryManager: [
+    "nursery.stock.manage", "projects.read", "clients.read",
+    "biolab.read", "biolab.write", "biolab.manage",
+  ],
+  // La personne à la paillasse saisit une inspection, une photo, un
+  // comptage. Elle ne SUPPRIME pas : effacer un lot efface la
+  // généalogie de ses sous-lots avec lui.
+  nurseryWorker: ["nursery.stock.manage", "biolab.read", "biolab.write"],
   orderPicker: ["nursery.stock.manage"],
   accounting: ["clients.read", "quotes.read", "invoice.create", "projects.read"],
-  readOnly: ["clients.read", "quotes.read", "projects.read"],
+  readOnly: ["clients.read", "quotes.read", "projects.read", "biolab.read"],
 };
 
 export function permissionsForRole(role: Role, customPermissions: string[] = []): Permission[] {

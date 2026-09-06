@@ -140,6 +140,52 @@ export const NAVIGATION: NavGroup[] = [
     ],
   },
   {
+    // §7 BIOLAB SUR LE WEB. Le module figurait dans
+    // `TOGGLEABLE_MODULES` depuis longtemps — l'écran Paramètres ›
+    // Modules proposait donc d'éteindre un menu qui n'existait pas —
+    // et les seize pages construites n'étaient atteignables par aucun
+    // lien. Ce groupe referme l'écart.
+    //
+    // LA PERMISSION EST `biolab.read` POUR TOUTES LES ENTRÉES, et c'est
+    // l'application de l'encadré du haut, pas un raccourci : les vingt
+    // et une tables du laboratoire s'ouvrent toutes avec cette même
+    // clé — la migration 0087 pose une politique restrictive de lecture
+    // par table, toutes sur `biolab.read`. Une entrée ne demande donc
+    // jamais `biolab.write` ni `biolab.manage` : le web SUPERVISE, il
+    // n'écrit rien, et exiger le droit d'écrire pour avoir celui de
+    // lire cacherait l'écran au rôle « lecture seule », qui a
+    // précisément le droit de le voir.
+    //
+    // PAS DE FILTRE PAR TYPE D'ENTREPRISE, contrairement à la
+    // Pépinière. BioLab est vendu en option (+20 €/mois sur l'offre
+    // Pro, inclus dans Business) et rien n'interdit à un paysagiste de
+    // le prendre : le cacher sur la foi du type d'entreprise ferait
+    // disparaître un module payé. Le tri se fait par le débrayage §43,
+    // qui est justement fait pour cela — un clic dans Paramètres ›
+    // Modules et le groupe s'en va.
+    //
+    // CE QUI MANQUE ENCORE ICI, ET QUI N'EST PAS DU RESSORT DU MENU :
+    // le contrôle par ABONNEMENT. Aucune des politiques de la base ne
+    // consulte un abonnement aujourd'hui, et ce filtre-ci n'a jamais
+    // rien protégé. La vérification d'écran vit dans
+    // `perimetreBioLab()` (lib/biolab/cultures.ts) et son pendant en
+    // base est nommé au §1.4 de la migration 0087.
+    label: "BioLab",
+    items: [
+      { label: "Tableau de bord", href: "/biolab", icon: "nursery", permission: "biolab.read", module: "biolab", milestone: REFONTE },
+      { label: "Lots de culture", href: "/biolab/lots", icon: "lots", permission: "biolab.read", module: "biolab", milestone: REFONTE },
+      { label: "Acclimatation", href: "/biolab/acclimatation", icon: "production", permission: "biolab.read", module: "biolab", milestone: REFONTE },
+      { label: "Recettes de milieu", href: "/biolab/recettes", icon: "stock", permission: "biolab.read", module: "biolab", milestone: REFONTE },
+      { label: "Protocoles", href: "/biolab/protocoles", icon: "document", permission: "biolab.read", module: "biolab", milestone: REFONTE },
+      { label: "Contaminations", href: "/biolab/contaminations", icon: "help", permission: "biolab.read", module: "biolab", milestone: REFONTE },
+      { label: "Statistiques", href: "/biolab/statistiques", icon: "analytics", permission: "biolab.read", module: "biolab", milestone: REFONTE },
+      { label: "Salles et racks", href: "/biolab/lieux", icon: "locations", permission: "biolab.read", module: "biolab", milestone: REFONTE },
+      { label: "Équipements", href: "/biolab/equipements", icon: "equipment", permission: "biolab.read", module: "biolab", milestone: REFONTE },
+      { label: "Tâches", href: "/biolab/taches", icon: "planning", permission: "biolab.read", module: "biolab", milestone: REFONTE },
+      { label: "Traçabilité", href: "/biolab/tracabilite", icon: "projects", permission: "biolab.read", module: "biolab", milestone: REFONTE },
+    ],
+  },
+  {
     label: "Gestion",
     items: [
       { label: "Factures", href: "/factures", icon: "invoice", permission: "invoice.create", module: "invoicing", milestone: 10 },
