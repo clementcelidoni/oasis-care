@@ -179,20 +179,33 @@ test("une ligne pour un agent qu'on n'a pas demandé est ignorée, pas ajoutée"
     "org-A",
     AGENTS_CONSTRUITS,
     async () => [
-      // `market` et non `fleet` depuis §11Y : le Matériel est devenu
-      // l'un des dix agents construits, et une ligne pour lui serait
-      // désormais parfaitement légitime. Il fallait un agent que la
-      // base refuse VRAIMENT — l'un des quatre déclarés sans données
-      // (`agents/sansDonnees.ts`), que 0082 laisse dehors exprès.
-      { agent: "market", enabled: true, autonomy_level: 4 },
+      // ══════════════════════════════════════════════════════════════
+      // §11Z — L'EXEMPLE A ENCORE CHANGÉ, ET LE NOUVEAU EST LE BON POUR
+      // DE BON
+      // ══════════════════════════════════════════════════════════════
+      //
+      // Ce test a d'abord employé `fleet`, devenu légitime en §11Y,
+      // puis `market`, devenu légitime en §11Z. À chaque fois pour la
+      // même raison : on choisissait un agent « que la base refuse »,
+      // et le chantier suivant le construisait.
+      //
+      // `classification` ne tombera pas : c'est le seul des quatorze
+      // que la base ACCEPTE — sa dépense doit être plafonnable — et qui
+      // n'entrera JAMAIS dans `AGENTS_CONSTRUITS`, parce qu'il ne
+      // répond à personne (`agents/nonRepondants.ts`). Une ligne de
+      // réglage d'autonomie pour lui est donc possible en base et n'a
+      // aucun sens dans le produit : c'est exactement le cas que cette
+      // fonction doit ignorer plutôt que d'inventer une quatorzième
+      // entrée dans la carte.
+      { agent: "classification", enabled: true, autonomy_level: 4 },
       { agent: "inconnu-du-produit", enabled: true, autonomy_level: 4 },
     ],
   );
 
   assert.equal(
-    (carte as Record<string, unknown>).market,
+    (carte as Record<string, unknown>).classification,
     undefined,
-    "un agent que personne ne construit n'entre pas dans le produit par la base",
+    "un agent qui ne répond à personne n'entre pas dans la carte d'autonomie par la base",
   );
   assert.equal(Object.keys(carte).length, AGENTS_CONSTRUITS.length);
 });

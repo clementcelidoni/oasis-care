@@ -40,46 +40,77 @@ import type { CleAgentModele, Permission } from "../types.ts";
  *   • `runtime/tools.ts` — le catalogue d'outils, pour la même raison.
  *
  * ══════════════════════════════════════════════════════════════════
- * LES DIX, ET POURQUOI PAS LES QUATORZE
+ * §11Z — LES QUATORZE, EN TROIS CATÉGORIES ET NON PLUS DEUX
  * ══════════════════════════════════════════════════════════════════
  *
  * La spec p. 5 nomme quatorze agents ; `AGENTS_MODELE`
  * (`lib/ai/model/types.ts`) leur donne à tous un niveau de modèle, ce
- * qui est juste — un niveau se décide avant l'agent. CONSTRUIRE les
- * quatorze ne l'est pas.
+ * qui est juste — un niveau se décide avant l'agent.
  *
- * Quatre d'entre eux n'ont aucune donnée derrière eux dans ce produit :
- * `sales`, `market`, `risk`, `classification`. Ils ne sont pas oubliés,
- * ils sont DÉCLARÉS INDISPONIBLES, avec leur motif et ce qu'il faudrait
- * livrer d'abord — voir `agents/sansDonnees.ts`, qui suit exactement la
- * manière de `OUTILS_SPEC_SANS_SERVICE` (tools.ts). Un agent sans
- * données est une façade, et une façade est pire que rien : elle rend
- * une phrase polie que personne ne peut contredire.
+ * §11Y en avait construit dix et déclaré quatre « sans données ». Le
+ * dirigeant a tranché contre cet avis et demandé les quatre derniers.
+ * Ils sont livrés, mais PAS DE LA MÊME MANIÈRE, et la différence n'est
+ * pas un détail de rangement : elle est la raison pour laquelle deux
+ * catégories ne suffisaient plus.
+ *
+ *   • TREIZE SONT DES RÉPONDEURS. `sales`, `market` et `risk`
+ *     rejoignent les dix : un fichier, une mission, des limites, une
+ *     fonction SQL derrière (0088), une place dans l'aiguillage. Ils
+ *     sont dans `AGENTS_CONSTRUITS`.
+ *
+ *   • UN N'EST PAS UN RÉPONDEUR, ET NE DOIT PAS LE DEVENIR.
+ *     `classification` est l'étape de pré-traitement (spec p. 31) :
+ *     elle tourne AVANT la conversation, désigne l'agent à qui la
+ *     question s'adresse, et s'efface. Lui donner une mission, des
+ *     mots-clés et des droits en ferait un quatorzième répondeur sur
+ *     les treize autres — exactement ce que son propre fichier
+ *     s'interdit. Elle est donc dans `AGENTS_NON_REPONDANTS`
+ *     (`agents/nonRepondants.ts`), pas ici.
+ *
+ *   • ZÉRO EST « SANS DONNÉES ». `AGENTS_SANS_DONNEES` existe toujours
+ *     et est VIDE : le mécanisme reste écrit pour le prochain agent que
+ *     la spec nommerait sans matière derrière, mais aucun des quatorze
+ *     n'est aujourd'hui dans ce cas.
+ *
+ * LA RÈGLE QUI TIENT LES TROIS : chacun des quatorze est dans EXACTEMENT
+ * UNE des trois listes, et `agents/index.test.ts` le vérifie. C'est ce
+ * qui empêche qu'un agent existe à moitié — accepté par la base et
+ * introuvable dans le code, ou l'inverse.
  */
 
 /**
- * LES DIX AGENTS QUI ONT UN FICHIER, DANS L'ORDRE DE LA SPEC p. 5.
+ * LES TREIZE AGENTS RÉPONDEURS QUI ONT UN FICHIER, DANS L'ORDRE DE LA
+ * SPEC p. 5.
  *
- * C'est la SEULE liste. Le type, la garde `estAgentConstruit`, la
- * lecture des réglages (`runtime/supabase.ts`), le schéma de la route
- * (`/api/oasis-ai/demander`) et la contrainte SQL (0082,
- * `ai_is_supported_agent`) en découlent tous.
+ * C'est la SEULE liste des répondeurs. Le type, la garde
+ * `estAgentConstruit`, la lecture des réglages (`runtime/supabase.ts`),
+ * le schéma de la route (`/api/oasis-ai/demander`) et la moitié
+ * « répondeurs » de la contrainte SQL (0088, `ai_is_supported_agent`)
+ * en découlent tous.
  *
- * Y figurer ne veut pas dire « fini » : six de ces dix sont encore des
+ * Y figurer ne veut pas dire « fini » : plusieurs sont encore des
  * gabarits, et le disent eux-mêmes par `aCompleter`. Y figurer veut
  * dire « il y a de la matière derrière, et la base accepte son nom ».
+ *
+ * LE QUATORZIÈME — `classification` — N'Y EST PAS, ET C'EST VOULU. Voir
+ * `agents/nonRepondants.ts` : il consomme des jetons sans jamais
+ * répondre, donc la base doit connaître son nom pour que sa dépense
+ * soit plafonnable, sans que le code lui donne une mission.
  */
 export const AGENTS_CONSTRUITS = [
   "executive",
   "finance",
   "billing",
   "quotePricing",
+  "sales",
   "operations",
   "planning",
   "procurement",
   "nursery",
   "fleet",
   "customer",
+  "market",
+  "risk",
 ] as const satisfies readonly CleAgentModele[];
 
 export type AgentConstruit = (typeof AGENTS_CONSTRUITS)[number];
@@ -113,6 +144,15 @@ export const CLE_BASE = {
   nursery: "nursery",
   fleet: "fleet",
   customer: "customer",
+  // §11Z — LES TROIS DE 0088 ONT, ELLES AUSSI, UNE SEULE GRAPHIE.
+  // Vérifié dans la migration et non supposé : 0088 écrit 'sales',
+  // 'market' et 'risk' exactement comme le TypeScript. La table reste
+  // explicite pour la même raison qu'en §11Y — une règle « camel →
+  // tiret bas » marcherait par accident sur douze des treize et
+  // cacherait `quotePricing`, le seul qui compte.
+  sales: "sales",
+  market: "market",
+  risk: "risk",
   // `as const satisfies` et non `: Record<AgentConstruit, string>` :
   // `satisfies` vérifie que les dix clés y sont TOUTES (un agent oublié
   // ne compile pas), et `as const` garde la valeur littérale plutôt que

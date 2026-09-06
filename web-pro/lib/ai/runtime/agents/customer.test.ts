@@ -279,12 +279,39 @@ test("les deux fonctions d'écriture que la base offre restent hors du catalogue
 // 5. LE MOT QUI L'ATTEINDRA
 // ==================================================================
 
-test("le mot proposé n'est revendiqué par aucun des neuf autres agents", () => {
-  // Vérifié maintenant plutôt qu'à la fusion, sur la liste exportée que
-  // l'intégration recopiera telle quelle. La comparaison est
-  // ASYMÉTRIQUE : l'aiguillage cherche une sous-chaîne, donc un mot
-  // contenu dans celui d'un autre est un conflit qu'aucune égalité ne
-  // révélerait.
+test("aucun mot d'un autre agent n'est contenu dans « client »", () => {
+  // ══════════════════════════════════════════════════════════════════
+  // §11Z, INTÉGRATION — CE TEST INTERDISAIT TOUT RECOUVREMENT. IL
+  // N'INTERDIT PLUS QUE CELUI QUI COÛTE, ET LE RESSERRAGE EST MOTIVÉ
+  // ══════════════════════════════════════════════════════════════════
+  //
+  // Il exigeait qu'aucun mot d'un autre agent ne recouvre « client »
+  // NI DANS UN SENS NI DANS L'AUTRE. C'était juste tant que personne
+  // n'avait de locution contenant « client » ; ce ne l'est plus, et le
+  // premier échec l'a montré : « origine de mes clients »
+  // (Historique interne) contient « client ».
+  //
+  // OR CE RECOUVREMENT-LÀ EST EXACTEMENT CE QUE L'ORDRE A ÉTÉ CONÇU
+  // POUR PERMETTRE. L'aiguillage compare des sous-chaînes et rend le
+  // PREMIER agent qui correspond : un recouvrement n'est un défaut que
+  // si le mot le plus COURT est essayé le PREMIER, auquel cas il avale
+  // les questions du plus long. Ici c'est l'inverse — l'Historique
+  // interne est essayé AVANT les Clients, précisément pour que
+  // « d'où viennent mes clients » lui parvienne au lieu de tomber chez
+  // les Clients, qui s'interdisent toute phrase de portefeuille et
+  // déclineraient après avoir fait payer un appel de modèle.
+  //
+  // Interdire ce sens-là reviendrait à interdire le mécanisme. Ce qui
+  // reste interdit, et qui est la vraie garde de cet agent, c'est
+  // l'AUTRE sens : un mot plus court que « client » et contenu dans
+  // lui, chez un agent essayé plus tôt, lui volerait ses questions sans
+  // que rien ne le dise.
+  //
+  // La règle générale — celle qui tient les treize agents ensemble et
+  // qui connaît les rangs — vit dans `anomaliesDAiguillage`
+  // (`agents/classification.ts`) et tourne dans le test de
+  // l'aiguilleur. Ici on garde la moitié qui ne demande pas de
+  // connaître l'ORDRE, et donc pas d'importer une route depuis `lib`.
   for (const cle of AGENTS_CONSTRUITS) {
     if (cle === "customer") continue;
     for (const autre of DEFINITIONS[cle].motsCles ?? []) {
@@ -292,8 +319,9 @@ test("le mot proposé n'est revendiqué par aucun des neuf autres agents", () =>
         const a = normaliser(autre);
         const b = normaliser(mien);
         assert.ok(
-          !a.includes(b) && !b.includes(a),
-          `« ${mien} » (Clients) et « ${autre} » (${cle}) se recouvrent`,
+          !b.includes(a),
+          `« ${autre} » (${cle}) est contenu dans « ${mien} » (Clients) : si ${cle} est ` +
+            "essayé avant, il attrape les questions des Clients et rien ne le signale",
         );
       }
     }

@@ -362,6 +362,17 @@ const OUTILS_ECRITS_NON_BRANCHES: readonly { nom: string; pourquoi: string }[] =
     nom: "recordStockMovement",
     pourquoi: "Même raison que `createNurseryLot` : écriture, plomberie prête, décision non prise.",
   },
+  // §11Z, INTÉGRATION — L'EXEMPTION DE `getSalesFlow` A ÉTÉ RETIRÉE,
+  // ET CELLES DE `getInternalHistory` ET `getRiskSnapshot` N'ONT JAMAIS
+  // EU À ÊTRE ÉCRITES.
+  //
+  // Les trois outils de §11Z sont désormais AU REGISTRE
+  // (`tools.ts`, par import), ce qui est la contrepartie que
+  // l'exemption attendait. Une exemption qui survit à l'intégration
+  // désarme durablement le seul test qui attrape un outil déclaré,
+  // éprouvé, et invisible du modèle — la panne la plus silencieuse de
+  // ce dispositif, puisque le symptôme est « Oasis dit qu'il ne peut
+  // pas répondre » sur une question qu'il sait traiter.
 ]);
 
 test("aucune déclaration d'outil n'est écrite dans `outils/` sans être branchée", async () => {

@@ -46,18 +46,32 @@ import type { MotifPanne } from "../runtime/types.ts";
  *      compris dans la ventilation de la consommation.
  *
  * ══════════════════════════════════════════════════════════════════
- * POURQUOI DIX AGENTS SEULEMENT ONT UNE CLÉ SQL
+ * §11Z — LES QUATORZE ONT DÉSORMAIS UNE CLÉ SQL, ET LE QUATORZIÈME
+ * EST LE PLUS INTÉRESSANT DES QUATORZE
  * ══════════════════════════════════════════════════════════════════
  *
- * `ai_is_supported_agent` (0072, élargie par 0082) accepte dix noms
- * dans `ai_model_overrides` — et refuse les quatre derniers : `sales`,
- * `market`, `risk`, `classification` n'ont aucune donnée derrière eux
- * et sont DÉCLARÉS indisponibles, avec leur motif, dans
- * `runtime/agents/sansDonnees.ts`.
+ * `ai_is_supported_agent` (0072, élargie par 0082 puis par 0088)
+ * accepte les quatorze noms de la spec p. 5 dans `ai_model_overrides`.
+ * §11Y en refusait quatre, au motif — juste à l'époque — qu'on ne doit
+ * pas pouvoir fixer un plafond de coût pour un agent qui n'existe pas.
  *
- * Ce refus n'est pas une lacune à combler : une surcharge de modèle
- * pour un agent qui n'existe pas serait une dérogation payée,
- * enregistrée, journalisée — et sans effet, faute d'appelant.
+ * Trois de ces quatre existent maintenant : `sales`, `market` et
+ * `risk` ont un fichier, une mission et une fonction SQL (0088). Le
+ * quatrième, `classification`, n'existe TOUJOURS PAS comme répondeur —
+ * et son nom est quand même entré en base, pour une raison qui vaut
+ * d'être comprise puisqu'elle est l'inverse de l'ancienne :
+ *
+ *   IL DÉPENSAIT DÉJÀ. Le routeur lui attribue le niveau le moins cher
+ *   depuis la Phase 11V, et `runtime/preprocessing.ts` consomme sous ce
+ *   nom à chaque classement en lots. La contrainte le refusait pendant
+ *   ce temps : sa dépense était facturée et NI plafonnable NI
+ *   épinglable. Ce que 0088 lui donne n'est donc pas une capacité de
+ *   plus, c'est un contrôle de plus sur une dépense qui existait.
+ *
+ * Le raisonnement de §11Y n'est pas démenti, il est complété : on ne
+ * règle pas le modèle d'un agent qui n'existe pas, MAIS on doit
+ * pouvoir plafonner tout ce qui dépense. Voir
+ * `runtime/agents/nonRepondants.ts`.
  *
  * Ce n'est plus une contrainte d'écran — le client n'écrit plus rien —
  * mais elle reste la clé du ROUTAGE : `routage.ts` s'en sert pour
@@ -68,11 +82,12 @@ import type { MotifPanne } from "../runtime/types.ts";
  */
 
 // ------------------------------------------------------------------
-// Les dix agents que la base accepte de surcharger
+// Les quatorze agents que la base accepte de surcharger
 // ------------------------------------------------------------------
 
 /**
- * Les agents de `ai_is_supported_agent` (0072 + 0082), en graphie SQL.
+ * Les agents de `ai_is_supported_agent` (0072 + 0082 + 0088), en
+ * graphie SQL.
  *
  * Recopiés ici parce que le TypeScript ne peut pas lire une contrainte
  * `check` ; un test relit LA DERNIÈRE migration qui redéfinit la
@@ -85,12 +100,18 @@ export const AGENTS_SQL = [
   "finance",
   "billing",
   "quote_pricing",
+  "sales",
   "operations",
   "planning",
   "procurement",
   "nursery",
   "fleet",
   "customer",
+  "market",
+  "risk",
+  // Le seul de la liste qui ne répond à personne. Il est ici parce
+  // qu'il dépense, et pour aucune autre raison. Voir l'en-tête.
+  "classification",
 ] as const;
 
 export type CleAgentSql = (typeof AGENTS_SQL)[number];
@@ -98,13 +119,15 @@ export type CleAgentSql = (typeof AGENTS_SQL)[number];
 /**
  * La clé SQL d'un agent du catalogue, ou `null` s'il n'en a pas.
  *
- * `null` n'est pas un cas d'erreur : c'est le cas des quatre agents
- * déclarés sans données. Il veut dire « celui-ci ne se surcharge pas en
- * base », et `appliquerSurcharges` en tire un passage sans effet.
+ * §11Z — PLUS AUCUN DES QUATORZE NE REND `null` AUJOURD'HUI, et le
+ * `default` reste néanmoins écrit : il est ce qui rendra la fonction
+ * juste, et non fausse, le jour où la spec nommera un quinzième agent
+ * avant que la base ne l'accepte. Ce cas s'est produit deux fois en
+ * deux chantiers.
  *
  * Le `switch` reste écrit à la main plutôt que calculé : `quotePricing`
  * est le seul couple dont les deux graphies diffèrent, et une règle
- * générale « camel → tiret bas » marcherait par accident sur les neuf
+ * générale « camel → tiret bas » marcherait par accident sur les treize
  * autres tout en cachant ce cas particulier — celui qui, justement, a
  * déjà coûté.
  */
@@ -130,6 +153,15 @@ export function cleSqlDeLAgent(cle: CleAgentModele): CleAgentSql | null {
       return "fleet";
     case "customer":
       return "customer";
+    // §11Z. Une seule graphie de chaque côté, vérifiée dans 0088.
+    case "sales":
+      return "sales";
+    case "market":
+      return "market";
+    case "risk":
+      return "risk";
+    case "classification":
+      return "classification";
     default:
       return null;
   }
@@ -167,16 +199,25 @@ export const LIBELLES_AGENT: Readonly<Record<CleAgentModele, string>> = Object.f
   finance: "Finance",
   billing: "Facturation",
   quotePricing: "Devis & prix",
-  sales: "Commerce",
+  // §11Z. « Ventes », le nom que l'agent se donne dans son fichier ;
+  // « Commerce » n'existait que dans la déclaration d'indisponibilité
+  // de §11Y, retirée depuis. Un test tient cette table contre
+  // `AGENT_LABELS`, qui tient elle-même contre la définition.
+  sales: "Ventes",
   operations: "Chantiers",
   planning: "Planning",
   procurement: "Achats",
   nursery: "Pépinière",
   fleet: "Matériel",
   customer: "Clients",
-  market: "Marché",
+  // « Historique interne » et non « Marché ». Ce n'est pas une
+  // préférence de style : cet agent a été construit POUR REFUSER les
+  // questions de marché, faute de la moindre donnée extérieure dans ce
+  // produit. Un écran qui l'annonce sous le nom « Marché » promet ce
+  // que le premier clic va démentir.
+  market: "Historique interne",
   risk: "Risques",
-  classification: "Classement",
+  classification: "Classement et aiguillage",
 });
 
 /**

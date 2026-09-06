@@ -71,10 +71,17 @@ function contexte(surcharge: Partial<AgentContext> = {}): AgentContext {
 }
 
 // ==================================================================
-// 1. Les dix agents, et pas un onzième
+// 1. Les treize répondeurs, et pas un quatorzième
 // ==================================================================
 
-test("les dix agents construits sont ceux que 0072 + 0082 acceptent", () => {
+test("les treize agents construits sont ceux que 0072 + 0082 + 0088 acceptent", () => {
+  // §11Z — TREIZE ET NON QUATORZE, ET L'ÉCART EST LE SUJET. La base en
+  // accepte quatorze depuis 0088 ; le quatorzième, `classification`, n'est
+  // pas un répondeur — il dépense sans jamais répondre, et il est
+  // déclaré dans `agents/nonRepondants.ts`. La liste ci-dessous est donc
+  // volontairement plus courte que celle de la migration, et
+  // `agents/index.test.ts` vérifie que la différence est exactement
+  // celle-là — ni plus, ni moins.
   assert.deepEqual(
     [...AGENTS_CONSTRUITS],
     [
@@ -82,12 +89,15 @@ test("les dix agents construits sont ceux que 0072 + 0082 acceptent", () => {
       "finance",
       "billing",
       "quotePricing",
+      "sales",
       "operations",
       "planning",
       "procurement",
       "nursery",
       "fleet",
       "customer",
+      "market",
+      "risk",
     ],
   );
   for (const agent of AGENTS_CONSTRUITS) {
@@ -103,55 +113,82 @@ test("la graphie de la base est celle des migrations, pas celle de la spec", () 
   // La CLÉ est la graphie de la spec, la VALEUR celle de la base. Le
   // seul couple qui diffère est celui du chiffrage, et c'est
   // exactement le piège que cette table existe pour désamorcer : les
-  // six agents ajoutés en 0082 s'écrivent pareil des deux côtés, ce
-  // qui est une chance et non une règle.
+  // six agents ajoutés en 0082 et les trois de 0088 s'écrivent pareil
+  // des deux côtés, ce qui est une chance et non une règle.
   const attendu: Record<AgentConstruit, string> = {
     executive: "executive",
     finance: "finance",
     billing: "billing",
     quotePricing: "quote_pricing",
+    sales: "sales",
     operations: "operations",
     planning: "planning",
     procurement: "procurement",
     nursery: "nursery",
     fleet: "fleet",
     customer: "customer",
+    market: "market",
+    risk: "risk",
   };
   assert.deepEqual(CLE_BASE, attendu);
 
-  // LES DEUX MIGRATIONS SONT RELUES ENSEMBLE. 0072 a posé les quatre
-  // premières valeurs, 0082 les six autres : chercher dans l'une ou
-  // dans l'autre seulement laisserait passer la moitié du contrat.
+  // LES TROIS MIGRATIONS SONT RELUES ENSEMBLE. 0072 a posé les quatre
+  // premières valeurs, 0082 les six suivantes, 0088 les trois
+  // dernières : chercher dans l'une seulement laisserait passer les
+  // deux tiers du contrat.
   const migrations =
     readFileSync(join(racineDepot, "supabase", "migrations", "0072_phase11v_socle.sql"), "utf8") +
-    readFileSync(join(racineDepot, "supabase", "migrations", "0082_agents_ia.sql"), "utf8");
+    readFileSync(join(racineDepot, "supabase", "migrations", "0082_agents_ia.sql"), "utf8") +
+    readFileSync(join(racineDepot, "supabase", "migrations", "0088_agents_derniers.sql"), "utf8");
   for (const cle of Object.values(CLE_BASE)) {
-    assert.ok(migrations.includes(`'${cle}'`), `« ${cle} » doit exister dans 0072 ou 0082`);
+    assert.ok(
+      migrations.includes(`'${cle}'`),
+      `« ${cle} » doit exister dans 0072, 0082 ou 0088`,
+    );
   }
 });
 
-test("estAgentConstruit refuse les quatre agents déclarés sans données", () => {
+test("estAgentConstruit accepte les trois répondeurs de 0088 et refuse le quatorzième", () => {
   assert.equal(estAgentConstruit("finance"), true);
   assert.equal(estAgentConstruit("nursery"), true);
-  // Ceux-là ne sont pas oubliés : ils sont DÉCLARÉS indisponibles, avec
-  // leur motif, dans `agents/sansDonnees.ts`. Les accepter ici
-  // permettrait de leur fixer un plafond de coût et de leur choisir un
-  // modèle — un réglage qui a l'air actif pour un agent inexistant.
-  for (const absent of ["sales", "market", "risk", "classification"]) {
-    assert.equal(estAgentConstruit(absent), false, `« ${absent} » n'a aucune donnée derrière lui`);
+
+  // §11Z — LE DIRIGEANT A TRANCHÉ, ET CES TROIS-LÀ RÉPONDENT MAINTENANT.
+  for (const construit of ["sales", "market", "risk"]) {
+    assert.equal(
+      estAgentConstruit(construit),
+      true,
+      `« ${construit} » a un fichier, une mission et une fonction SQL depuis 0088`,
+    );
   }
+
+  // ET LE QUATORZIÈME RESTE DEHORS, CE QUI EST LA VRAIE GARDE DE CE
+  // TEST. `classification` est accepté par la base depuis 0088 — pour
+  // que sa dépense soit plafonnable — mais il n'est pas un répondeur.
+  // L'accepter ici lui donnerait une mission, des limites
+  // conversationnelles et une place dans l'aiguillage : il deviendrait
+  // le quatorzième répondeur, en concurrence avec les treize autres, et
+  // le seul symptôme serait une réponse un peu creuse.
+  assert.equal(
+    estAgentConstruit("classification"),
+    false,
+    "« classification » dépense sans répondre : voir agents/nonRepondants.ts",
+  );
   assert.equal(estAgentConstruit(null), false);
 });
 
-test("les quatre agents déclarés sans données le disent, et disent quoi livrer d'abord", () => {
-  assert.deepEqual(
-    AGENTS_SANS_DONNEES.map((e) => e.cle),
-    ["sales", "market", "risk", "classification"],
-  );
+test("plus aucun agent n'est déclaré sans données, et le mécanisme reste armé", () => {
+  // §11Z — LA LISTE EST VIDE, ET C'EST LE RÉSULTAT DE CE CHANTIER. Les
+  // quatre entrées de §11Y ont été retirées parce que les quatre agents
+  // existent : une déclaration d'indisponibilité pour un agent qui
+  // répond serait un mensonge, et le plus difficile à découvrir de tous
+  // puisqu'il ne casse rien.
+  assert.deepEqual(AGENTS_SANS_DONNEES.map((e) => e.cle), []);
+
+  // L'ASSERTION QUI SUIT NE VÉRIFIE RIEN AUJOURD'HUI, ET ON LA GARDE.
+  // Elle attrapera la première contradiction du jour où quelqu'un
+  // déclarera un agent indisponible tout en le construisant — ce qui
+  // est arrivé en §11Z, et a coûté une catégorie entière à démêler.
   for (const entree of AGENTS_SANS_DONNEES) {
-    // Un « pas encore » sans motif ni condition de levée est un refus
-    // définitif déguisé en délai. C'est la manière de
-    // `OUTILS_SPEC_SANS_SERVICE`, et elle vaut aussi pour les agents.
     assert.ok(entree.motif.length > 80, `« ${entree.cle} » n'explique pas pourquoi`);
     assert.ok(entree.aLivrerDabord.length > 0, `« ${entree.cle} » ne dit pas ce qui manque`);
     assert.equal(

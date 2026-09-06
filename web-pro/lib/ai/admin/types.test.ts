@@ -5,6 +5,10 @@ import { fileURLToPath } from "node:url";
 import { dirname, join } from "node:path";
 
 import { AGENTS_MODELE } from "../model/types.ts";
+// La liste des agents déclarés sans matière, LUE plutôt que recopiée :
+// une seconde liste de noms ici serait la seconde vérité, et c'est
+// toujours la seconde qui ment.
+import { AGENTS_SANS_DONNEES } from "../runtime/agents/sansDonnees.ts";
 import { AGENT_LABELS, AGENTS as AGENTS_METIER } from "../types.ts";
 import { MOTIFS_PANNE } from "../runtime/types.ts";
 import { COLONNES_EDITEUR, COLONNES_USAGE } from "./consommation.ts";
@@ -78,7 +82,7 @@ test("les agents surchargeables sont exactement ceux qu'accepte la DERNIÈRE mig
   let derniere: { fichier: string; declares: string[] } | null = null;
   for (const fichier of fichiers) {
     const sql = readFileSync(join(dossier, fichier), "utf8");
-    const corps = /create or replace function public\.ai_is_supported_agent[\s\S]*?select p_agent in \(([^)]*)\)/.exec(
+    const corps = /create or replace function public\.ai_is_supported_agent[\s\S]*?select p_agent in \(([\s\S]*?)\);/.exec(
       sql,
     );
     if (corps === null) continue;
@@ -92,14 +96,36 @@ test("les agents surchargeables sont exactement ceux qu'accepte la DERNIÈRE mig
     `AGENTS_SQL et \`ai_is_supported_agent\` (${derniere.fichier}) ne désignent plus les mêmes agents.`,
   );
 
-  // ET LES QUATRE FAÇADES RESTENT DEHORS. Sans cette assertion, ajouter
-  // « market » des DEUX côtés ferait passer le test ci-dessus en
-  // silence, et l'éditeur pourrait surcharger le modèle d'un agent qui
-  // n'existe pas. Les motifs sont dans `runtime/agents/sansDonnees.ts`.
-  for (const facade of ["sales", "market", "risk", "classification"]) {
+  // ══════════════════════════════════════════════════════════════════
+  // §11Z — LA LISTE DES FAÇADES N'EST PLUS ÉCRITE ICI, ELLE EST LUE
+  // ══════════════════════════════════════════════════════════════════
+  //
+  // Cette assertion nommait quatre agents en dur : « sales », « market »,
+  // « risk », « classification ». Elle était juste tant qu'ils étaient
+  // effectivement des façades, et elle est devenue une CONTRADICTION
+  // LITTÉRALE le jour où 0088 les a acceptés — le test exigeait quatre
+  // lignes plus haut que `AGENTS_SQL` égale la migration, et quatre
+  // lignes plus bas que ces quatre-là n'y soient pas. Aucune valeur de
+  // `AGENTS_SQL` ne pouvait satisfaire les deux.
+  //
+  // La règle qu'on voulait tenir, elle, n'a pas changé : ON NE SURCHARGE
+  // PAS LE MODÈLE D'UN AGENT DÉCLARÉ SANS MATIÈRE. Ce qui était faux,
+  // c'est de recopier ici QUI sont ces agents, au lieu de le demander à
+  // la liste qui en décide. La liste est vide aujourd'hui — les quatre
+  // sont construits, ou déclarés non répondants — donc l'assertion ne
+  // vérifie rien, et elle se réarmera d'elle-même au premier agent
+  // qu'on déclarera indisponible.
+  //
+  // À NE PAS CONFONDRE AVEC `classification`, QUI EST ACCEPTÉ EXPRÈS.
+  // Il ne répond à personne, mais il DÉPENSE — le routeur le facture au
+  // niveau le moins cher à chaque question. La contrainte le refusait
+  // pendant ce temps : sa dépense n'était ni plafonnable ni épinglable.
+  // C'est précisément la raison pour laquelle il est en base, et elle
+  // est écrite dans `runtime/agents/nonRepondants.ts`.
+  for (const entree of AGENTS_SANS_DONNEES) {
     assert.ok(
-      !derniere.declares.includes(facade),
-      `« ${facade} » est déclaré sans données : la base ne doit pas l'accepter.`,
+      !derniere.declares.includes(entree.cle),
+      `« ${entree.cle} » est déclaré sans données : la base ne doit pas l'accepter.`,
     );
   }
 });
@@ -109,8 +135,14 @@ test("chaque agent surchargeable a une traduction aller-retour", () => {
     assert.equal(cleSqlDeLAgent(cleCatalogueDeLaCleSql(agent)), agent);
     assert.ok(estCleAgentSql(agent));
   }
-  // Et les quatre déclarés sans données n'en ont pas — c'est le cas voulu,
-  // pas une erreur : on ne surcharge pas le modèle d'un agent inexistant.
+  // §11Z — LES QUATORZE ONT UNE CLÉ SQL, ET LE COMPTE DOIT LE DIRE.
+  // Cette ligne vérifiait que les agents surchargeables étaient
+  // exactement ceux qui ont une clé, en laissant les façades à `null`.
+  // Elle tient encore telle quelle, simplement le compte vaut
+  // maintenant quatorze des deux côtés. Ce qu'elle attrape reste le
+  // même : une clé ajoutée dans `AGENTS_SQL` sans la branche
+  // correspondante dans `cleSqlDeLAgent`, qui ferait ignorer en silence
+  // une surcharge posée par l'éditeur.
   const surchargeables = AGENTS_MODELE.filter((cle) => cleSqlDeLAgent(cle) !== null);
   assert.equal(surchargeables.length, AGENTS_SQL.length);
 });

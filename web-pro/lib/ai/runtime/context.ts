@@ -1,6 +1,10 @@
 import { createHash } from "node:crypto";
 import { OasisAIToolRegistry, registreOutils, type OutilOasis } from "./tools.ts";
 import type { CleAgentModele, IdentiteAppel, Permission } from "./types.ts";
+// §11Z — la liste FERMÉE des droits du produit. Elle sert à ne retenir
+// qu'une permission réelle quand on en lit une dans un message venu de
+// la base : un texte d'erreur est une donnée, pas une déclaration.
+import { PERMISSIONS } from "../../auth/permissions.ts";
 
 /**
  * §11V — ÉTAPE 7 : `AgentContextBuilder` (spec p. 20-22).
@@ -188,9 +192,20 @@ const PERIODE = (cible: CibleContexte) => ({
  * avant d'en ajouter une est « l'agent peut-il répondre sans ? », pas
  * « est-ce que ça pourrait servir ? ».
  *
- * Les dix agents que la spec p. 5 nomme sans que ce produit les
- * construise n'ont PAS de plan. Ce n'est pas un oubli : un plan pour un
- * agent inexistant est un plan que personne n'a relu.
+ * §11Z — TOUT AGENT JOIGNABLE A UN PLAN, ET C'EST UN TEST, PAS UN
+ * USAGE. `coherence.test.ts` l'exige, pour une raison qui ne saute pas
+ * aux yeux : un agent SANS plan n'est jamais déclaré « contexte vide »,
+ * parce que `vide` vaut `requisTotal > 0 && requisLu === 0` et que
+ * `requisTotal` est nul. Il part donc au modèle avec `donnees: {}`, sans
+ * qu'aucun avertissement ne soit injecté — `consigneContexte` ne
+ * signale que les sources en ÉCHEC, et un plan vide n'en produit
+ * aucune. L'agent ne se tait pas : il répond de lui-même, avec aplomb,
+ * sur rien. C'est la panne la plus rassurante du dispositif, et la
+ * seule qui ne fasse aucun bruit.
+ *
+ * Le seul des quatorze qui n'a pas de plan est `classification`, et
+ * c'est juste : il ne répond à personne, donc il n'a rien à lire. Voir
+ * `runtime/agents/nonRepondants.ts`.
  */
 const PLANS: Partial<Record<CleAgentModele, readonly EtapePlan[]>> = {
   // p. 20 : « revenues, invoices, payments, expenses, targets ». Pas de
@@ -346,6 +361,38 @@ const PLANS: Partial<Record<CleAgentModele, readonly EtapePlan[]>> = {
       arguments: (cible) => (cible.customerId ? { p_customer_id: cible.customerId } : null),
     },
   ],
+
+  // ══════════════════════════════════════════════════════════════════
+  // §11Z — LES TROIS PLANS DES AGENTS OUTILLÉS PAR 0088
+  // ══════════════════════════════════════════════════════════════════
+  //
+  // Une source requise chacun, et une seule. Les trois fonctions de
+  // 0088 sont des relevés complets — elles rendent en un appel tout ce
+  // que leur agent a le droit de dire, y compris les MOTIFS de ce
+  // qu'elles refusent de calculer. Une seconde source serait une donnée
+  // de plus qui sort de l'entreprise à chaque question, pour un agent
+  // qui n'en a pas besoin.
+  //
+  // `requis: true` dans les trois cas, et c'est le point important : ce
+  // sont ces agents-là qui doivent le plus sûrement se TAIRE quand leur
+  // source manque. Un agent Historique interne qui atteindrait le
+  // modèle sans données répondrait sur le marché — c'est très
+  // exactement le chemin par lequel il inventerait un prix.
+
+  // La fenêtre de DÉCISION se choisit, comme celle de la Finance : la
+  // question « combien de devis ai-je signés cette année » n'a pas le
+  // même dénominateur que « depuis toujours ».
+  sales: [{ outil: "getSalesFlow", requis: true, arguments: PERIODE }],
+
+  // Aucun paramètre : `ai_internal_history` regarde tout l'historique,
+  // ce qui est le sujet même de cet agent. Une fenêtre l'amputerait
+  // sans qu'il puisse le dire.
+  market: [{ outil: "getInternalHistory", requis: true, arguments: () => ({}) }],
+
+  // Aucun paramètre non plus : un risque se lit sur l'état d'AUJOURD'HUI
+  // — ce qui est échu maintenant, qui est concentré maintenant — pas sur
+  // une tranche de calendrier.
+  risk: [{ outil: "getRiskSnapshot", requis: true, arguments: () => ({}) }],
 };
 
 /** Les agents pour lesquels un contexte peut être construit aujourd'hui. */
@@ -612,6 +659,39 @@ export class AgentContextBuilder {
       const resultat = await this.#lire({ rpc: outil.rpc, arguments: argumentsComplets });
 
       if (!resultat.ok) {
+        // ══════════════════════════════════════════════════════════
+        // §11Z — UN DROIT NOMMÉ PAR LA BASE EST UN DROIT MANQUANT,
+        // MÊME S'IL N'A PAS ÉTÉ VU PAR LE FILTRE CI-DESSUS
+        // ══════════════════════════════════════════════════════════
+        //
+        // Le filtre de permission ne connaît qu'UN droit par outil
+        // (`outil.permission`), alors que plusieurs fonctions SQL posent
+        // DEUX ou TROIS gardes `ai_guard`. Un compte qui a le droit
+        // déclaré mais pas les autres franchit donc le filtre, et la
+        // fonction lève.
+        //
+        // Sans ce qui suit, l'échec était enregistré comme une panne
+        // quelconque : `manquantes` restait vide, `permissionsManquantes`
+        // aussi, et le runner rendait son message le plus générique —
+        // « Oasis n'a obtenu aucune des données nécessaires à cette
+        // analyse ». L'utilisateur cherchait une panne alors qu'il lui
+        // manquait un droit, et CE DROIT N'ÉTAIT NOMMÉ NULLE PART.
+        //
+        // `ai_guard` nomme pourtant la permission dans son message
+        // (0069 : « Droit manquant pour cette action (%). »). On la
+        // récupère donc, et on ne la retient QUE si c'est une permission
+        // réelle du produit : un message d'erreur est du texte venu de
+        // la base, et on ne fabrique pas un droit à partir d'une chaîne
+        // qui y ressemble.
+        //
+        // La déclaration `permission` de l'outil reste la bonne défense,
+        // celle qui évite l'appel ; ceci est le filet qui empêche que sa
+        // justesse soit la seule chose entre l'utilisateur et un message
+        // qui ne dit rien.
+        const nomme = /Droit manquant pour cette action \(([^)]+)\)/.exec(resultat.message ?? "");
+        if (nomme !== null && (PERMISSIONS as readonly string[]).includes(nomme[1])) {
+          manquantes.add(nomme[1] as Permission);
+        }
         sources.push({ outil: outil.nom, rpc: outil.rpc, ok: false, motif: resultat.message });
         continue;
       }

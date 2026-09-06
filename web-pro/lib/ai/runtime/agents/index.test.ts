@@ -8,13 +8,17 @@ import { dirname, join } from "node:path";
 import {
   AGENTS_A_COMPLETER,
   AGENTS_CONSTRUITS,
+  AGENTS_NON_REPONDANTS,
   AGENTS_SANS_DONNEES,
   CLE_BASE,
   DEFINITIONS,
   estAgentConstruit,
+  estAgentNonRepondant,
   estAgentSansDonnees,
 } from "./index.ts";
 import { AGENTS_MODELE, normaliserCleAgent } from "../../model/types.ts";
+import { registreOutils } from "../tools.ts";
+import { AGENTS_AVEC_PLAN } from "../context.ts";
 
 /**
  * §11Y — CE QUE LE DÉCOUPAGE PAR FICHIER DOIT GARANTIR.
@@ -149,7 +153,7 @@ test("le routeur de modèles connaît les dix clés, dans les deux graphies", ()
   }
 });
 
-test("la dernière migration qui définit ai_is_supported_agent accepte exactement les dix", () => {
+test("la dernière migration accepte exactement les treize répondeurs et le non-répondeur", () => {
   // On balaie les migrations et on garde la DERNIÈRE définition, dans
   // l'ordre des numéros : lire 0072 en dur certifierait une liste
   // périmée depuis 0082.
@@ -158,7 +162,7 @@ test("la dernière migration qui définit ai_is_supported_agent accepte exacteme
   let fichier = "";
   for (const nom of readdirSync(dossier).filter((n) => n.endsWith(".sql")).sort()) {
     const corps =
-      /create or replace function public\.ai_is_supported_agent[\s\S]*?select p_agent in \(([^)]*)\)/.exec(
+      /create or replace function public\.ai_is_supported_agent[\s\S]*?select p_agent in \(([\s\S]*?)\);/.exec(
         readFileSync(join(dossier, nom), "utf8"),
       );
     if (corps === null) continue;
@@ -167,15 +171,39 @@ test("la dernière migration qui définit ai_is_supported_agent accepte exacteme
   }
 
   assert.ok(declares, "aucune migration ne définit `ai_is_supported_agent`");
+
+  // ══════════════════════════════════════════════════════════════════
+  // §11Z — CE QUE LA BASE ACCEPTE N'EST PLUS « LES AGENTS CONSTRUITS »
+  // ══════════════════════════════════════════════════════════════════
+  //
+  // L'égalité portait sur `AGENTS_CONSTRUITS` seul, et 0088 l'a rendue
+  // fausse en y ajoutant `classification` — qui ne peut PAS être un
+  // agent construit (il n'a ni mission, ni limites, ni droits, et son
+  // fichier s'interdit d'en avoir) tout en devant être accepté par la
+  // base, puisqu'il DÉPENSE et qu'on doit pouvoir plafonner sa dépense.
+  //
+  // La liste juste est donc l'union des deux catégories qui existent en
+  // base : les répondeurs ET les consommateurs non répondants. On garde
+  // une ÉGALITÉ et non une inclusion — une inclusion laisserait passer
+  // un nom accepté par la base et inconnu du code, ce qui est
+  // exactement la moitié du contrat que ce test existe pour tenir.
+  const attendus = new Set([
+    ...AGENTS_CONSTRUITS.map((cle) => CLE_BASE[cle]),
+    ...AGENTS_NON_REPONDANTS.map((e) => e.cle),
+  ]);
   assert.deepEqual(
     new Set(declares),
-    new Set(AGENTS_CONSTRUITS.map((cle) => CLE_BASE[cle])),
-    `${fichier} et AGENTS_CONSTRUITS ne désignent plus les mêmes agents`,
+    attendus,
+    `${fichier} et le code ne désignent plus les mêmes agents`,
   );
 
-  // ET LA MIGRATION LAISSE LES FAÇADES DEHORS. Sans cette assertion, on
-  // pourrait les ajouter des deux côtés « pendant qu'on y est », et
-  // leur fixer un plafond de coût pour un agent qui n'existe pas.
+  // ET LA MIGRATION LAISSE LES AGENTS SANS DONNÉES DEHORS. Cette
+  // assertion ne vérifie rien tant que la liste est vide, et on la
+  // garde pour cela même : c'est celle qui aurait attrapé §11Z le
+  // premier jour, quand `classification` était déclaré indisponible
+  // dans le code et accepté par la migration. La contradiction a coûté
+  // une catégorie entière à démêler ; elle ne doit pas se reproduire en
+  // silence.
   for (const entree of AGENTS_SANS_DONNEES) {
     assert.ok(
       !declares.includes(entree.cle),
@@ -188,16 +216,101 @@ test("la dernière migration qui définit ai_is_supported_agent accepte exacteme
 // 3. LES DEUX LISTES NE SE CONTREDISENT PAS
 // ==================================================================
 
-test("un agent est construit OU déclaré sans données, jamais les deux, jamais aucun", () => {
+test("chacun des quatorze est dans exactement une des trois catégories", () => {
+  // ══════════════════════════════════════════════════════════════════
+  // §11Z — DEUX CATÉGORIES SONT DEVENUES TROIS, ET CE N'EST PAS UN
+  // ASSOUPLISSEMENT
+  // ══════════════════════════════════════════════════════════════════
+  //
+  // L'invariant était « construit XOR sans données ». Il tenait tant
+  // qu'un agent était soit un répondeur, soit rien. `classification`
+  // n'est ni l'un ni l'autre : il consomme des jetons à chaque question
+  // sans jamais répondre. Il ne pouvait donc satisfaire aucune des deux
+  // listes, et l'invariant était devenu INSATISFIABLE — aucune
+  // intégration ne pouvait rendre la suite verte.
+  //
+  // La règle reste aussi stricte : EXACTEMENT UNE case, jamais zéro,
+  // jamais deux. Ce qui change est le nombre de cases, pas la rigueur
+  // du compte. Un agent dans zéro case est un agent qui existe à
+  // moitié ; dans deux, c'est l'écran consulté qui décide de ce qu'il
+  // est.
   for (const cle of AGENTS_MODELE) {
-    const construit = estAgentConstruit(cle);
-    const sansDonnees = estAgentSansDonnees(cle);
-    assert.notEqual(
-      construit,
-      sansDonnees,
-      `« ${cle} » est ${construit ? "dans les deux listes" : "dans aucune des deux"} : ` +
-        "les quatorze agents de la spec p. 5 doivent tous être quelque part, et une seule fois",
+    const cases = [
+      estAgentConstruit(cle) ? "construit" : null,
+      estAgentNonRepondant(cle) ? "non répondant" : null,
+      estAgentSansDonnees(cle) ? "sans données" : null,
+    ].filter((x) => x !== null);
+    assert.equal(
+      cases.length,
+      1,
+      cases.length === 0
+        ? `« ${cle} » n'est dans aucune des trois catégories : les quatorze agents de la spec ` +
+            "p. 5 doivent tous être quelque part"
+        : `« ${cle} » est à la fois ${cases.join(" et ")} : l'écran consulté déciderait de ce ` +
+            "qu'il est",
     );
+  }
+});
+
+test("un agent non répondant n'a ni mots-clés, ni plan, ni outil", () => {
+  // ══════════════════════════════════════════════════════════════════
+  // LA TROISIÈME CATÉGORIE EST UNE INTERDICTION, PAS UN LAISSEZ-PASSER
+  // ══════════════════════════════════════════════════════════════════
+  //
+  // Sans ce test, la catégorie serait une porte de sortie : il
+  // suffirait d'y ranger un agent pour échapper à tout ce que les
+  // douze autres doivent tenir. Elle doit au contraire coûter PLUS
+  // cher, parce que le seul symptôme d'un non-répondeur qui se met à
+  // répondre est une réponse un peu creuse — rien ne casse, rien
+  // n'alerte, et l'utilisateur croit avoir consulté un spécialiste.
+  //
+  // Les trois interdits correspondent aux trois façons dont un agent
+  // peut se mettre à répondre : être aiguillé (mots-clés), recevoir des
+  // données (plan de contexte), agir (outil au registre).
+  for (const entree of AGENTS_NON_REPONDANTS) {
+    assert.ok(
+      (AGENTS_MODELE as readonly string[]).includes(entree.cle),
+      `« ${entree.cle} » n'est pas un agent de la spec`,
+    );
+    assert.ok(entree.libelle.length > 0, `« ${entree.cle} » n'a pas de nom français`);
+    assert.ok(
+      entree.pourquoiEnBase.length > 80,
+      `« ${entree.cle} » ne dit pas pourquoi la base accepte son nom alors qu'il ne répond pas`,
+    );
+    assert.ok(
+      entree.depenseDans.length > 0,
+      `« ${entree.cle} » ne dit pas où il dépense : une dépense qu'on ne situe pas ne se ` +
+        "réduit pas",
+    );
+
+    // 1. AUCUNE DÉFINITION, DONC AUCUN MOT-CLÉ. Il n'est pas dans
+    //    `DEFINITIONS`, donc `reglesActives()` ne le rend jamais.
+    assert.equal(
+      estAgentConstruit(entree.cle),
+      false,
+      `« ${entree.cle} » a une définition d'agent : il est devenu joignable`,
+    );
+
+    // 2. AUCUN PLAN DE CONTEXTE. Un plan ferait sortir des données de
+    //    l'entreprise à chaque appel, pour un agent qui n'a rien à en
+    //    faire — et le coût serait payé sans qu'aucune réponse ne soit
+    //    rendue.
+    assert.ok(
+      !(AGENTS_AVEC_PLAN as readonly string[]).includes(entree.cle),
+      `« ${entree.cle} » a un plan de contexte : on lirait des sources pour un agent qui ne ` +
+        "répond à personne",
+    );
+
+    // 3. AUCUN OUTIL AU REGISTRE. C'est la garde la plus concrète :
+    //    un outil sous son nom le rendrait capable de lire une table
+    //    métier, donc de produire un chiffre.
+    for (const outil of registreOutils().tous()) {
+      assert.notEqual(
+        outil.agent,
+        entree.cle,
+        `« ${outil.nom} » est déclaré sous « ${entree.cle} », qui ne répond à personne`,
+      );
+    }
   }
 });
 

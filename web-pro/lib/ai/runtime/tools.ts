@@ -20,6 +20,11 @@ import { OUTIL_OPERATIONS_SNAPSHOT } from "./outils/operations.ts";
 import { OUTIL_PLANNING_SUMMARY } from "./outils/planning.ts";
 import { OUTIL_FLEET_SNAPSHOT, OUTIL_FLEET_EQUIPMENT } from "./outils/fleet.ts";
 import { OUTIL_CUSTOMER_VALUE } from "./outils/customer.ts";
+// §11Z — les trois outils des derniers répondeurs. Leurs fonctions SQL
+// sont posées par 0088, éprouvées par `supabase/tests/agents_derniers.sql`.
+import { OUTIL_SALES_FLOW } from "./outils/sales.ts";
+import { OUTIL_INTERNAL_HISTORY } from "./outils/market.ts";
+import { OUTIL_RISK_SNAPSHOT } from "./outils/risk.ts";
 
 /**
  * §11V — ÉTAPE 8 : `OasisAIToolRegistry` (spec p. 10-11).
@@ -614,6 +619,25 @@ const OUTILS_LECTURE: readonly OutilOasis[] = [
   OUTIL_FLEET_SNAPSHOT,
   OUTIL_FLEET_EQUIPMENT,
   OUTIL_CUSTOMER_VALUE,
+
+  // ---------- VENTES · HISTORIQUE INTERNE · RISQUES ----------
+  //
+  // §11Z, mêmes règles et même raison : écrits chez leur agent, versés
+  // ici par un import. Ce qui les distingue des cinq précédents est ce
+  // qu'ils NE rendent pas, et c'est écrit dans leur description parce
+  // que le modèle la lit AVANT de décider d'appeler l'outil :
+  //
+  //   • `getSalesFlow` ne rend aucun montant qu'il calcule lui-même, et
+  //     ne regarde que les devis DÉCIDÉS — les devis encore ouverts
+  //     appartiennent au briefing de direction, qui les calcule déjà.
+  //   • `getInternalHistory` ne connaît RIEN d'extérieur à
+  //     l'entreprise. C'est le seul outil du registre dont la moitié de
+  //     la description sert à dire ce qui n'existe pas.
+  //   • `getRiskSnapshot` étiquette chacun de ses blocs « mesure », et
+  //     lit chez la Facturation ce qu'elle compte déjà.
+  OUTIL_SALES_FLOW,
+  OUTIL_INTERNAL_HISTORY,
+  OUTIL_RISK_SNAPSHOT,
 ];
 
 // ==================================================================

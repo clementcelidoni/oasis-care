@@ -20,37 +20,49 @@ import type { Permission } from "@/lib/auth/permissions";
  */
 
 // ------------------------------------------------------------------
-// Les dix agents construits. Pas un de plus.
+// Les treize agents RÉPONDEURS. Pas un de plus.
 // ------------------------------------------------------------------
-// `ai_is_supported_agent` (0072, élargie par 0082) refuse les autres
-// noms en base. Cette liste est donc un miroir, pas une décision — et
-// c'est `lib/ai/admin/types.test.ts` qui la tient contre la migration.
+// Cette liste est un miroir de `AGENTS_CONSTRUITS`
+// (`runtime/agents/types.ts`), pas une décision : un test compare les
+// deux, et un autre les compare à `ai_is_supported_agent` dans la
+// dernière migration.
 //
-// LES QUATRE QUI N'Y SONT PAS — `sales`, `market`, `risk`,
-// `classification` — ne sont pas oubliés : ils sont DÉCLARÉS
-// indisponibles, avec leur motif et ce qu'il faudrait livrer d'abord,
-// dans `lib/ai/runtime/agents/sansDonnees.ts`. L'écran de réglages les
-// affiche à part, en lecture seule. Un dirigeant qui a lu la spec
-// cherchera « Marché » ; lui montrer le silence est pire que lui
-// montrer « pas encore, et voici pourquoi ».
+// §11Z — TROIS DE PLUS, ET UN QUATORZIÈME QUI N'Y SERA JAMAIS. Le
+// dirigeant a tranché contre l'avis de §11Y et demandé les quatre
+// derniers agents de la spec. Trois d'entre eux — `sales` (Ventes),
+// `market` (Historique interne) et `risk` (Risques) — sont désormais
+// des répondeurs à part entière : un fichier, une mission, des limites,
+// une fonction SQL derrière (0088). Ils entrent donc ici.
 //
-// SIX DE CES DIX SONT ENCORE DES GABARITS. Y figurer ne veut pas dire
-// « fini » : cela veut dire « il y a de la matière derrière, et la base
-// accepte son nom ». L'écran le distingue par `underConstruction`, lu
-// depuis `AGENTS_A_COMPLETER` — jamais recopié ici, parce qu'une
-// seconde liste est une seconde vérité.
+// LE QUATORZIÈME, `classification`, N'ENTRE PAS, ET CE N'EST PAS UN
+// OUBLI. Ce n'est pas un agent qui répond : c'est l'étape de
+// pré-traitement qui décide À QUI la question s'adresse, et qui
+// s'efface ensuite. Lui donner une ligne sur cet écran laisserait
+// croire qu'on peut lui poser une question. La base connaît quand même
+// son nom depuis 0088 — pour que sa dépense soit plafonnable — et il
+// est déclaré dans `runtime/agents/nonRepondants.ts`, qui explique
+// pourquoi les deux choses ne se contredisent pas.
+//
+// PLUSIEURS DE CES TREIZE SONT ENCORE DES GABARITS. Y figurer ne veut
+// pas dire « fini » : cela veut dire « il y a de la matière derrière,
+// et la base accepte son nom ». L'écran le distingue par
+// `underConstruction`, lu depuis `AGENTS_A_COMPLETER` — jamais recopié
+// ici, parce qu'une seconde liste est une seconde vérité.
 
 export const AGENTS = [
   "executive",
   "finance",
   "billing",
   "quote_pricing",
+  "sales",
   "operations",
   "planning",
   "procurement",
   "nursery",
   "fleet",
   "customer",
+  "market",
+  "risk",
 ] as const;
 export type AgentKey = (typeof AGENTS)[number];
 
@@ -75,6 +87,15 @@ export const AGENT_LABELS: Record<AgentKey, string> = {
   nursery: "Pépinière",
   fleet: "Matériel",
   customer: "Clients",
+  // §11Z. « Ventes » et non « Commerce », « Historique interne » et non
+  // « Marché » : ces deux noms sont ceux que les agents se donnent dans
+  // leur propre fichier, et un test les compare mot pour mot. Le second
+  // est le plus important des deux — un écran qui afficherait « Marché »
+  // promettrait exactement ce que cet agent a été construit pour
+  // refuser, et le refus arriverait après la promesse.
+  sales: "Ventes",
+  market: "Historique interne",
+  risk: "Risques",
 };
 
 /** Ce que l'agent surveille, en une phrase. Affiché sur son panneau. */
@@ -106,6 +127,25 @@ export const AGENT_MISSIONS: Record<AgentKey, string> = {
     "Échéances qui tombent, machines immobilisées, affectations en cours et entretiens réellement enregistrés. Ne chiffre aucun coût d'usage : ce produit ne le mesure pas.",
   customer:
     "Histoire d'un client : ses devis, ses chantiers, ses factures, ce qu'il a réellement payé et ce qu'il doit encore. Ni satisfaction ni risque de départ : ce produit ne les mesure pas.",
+  // §11Z — LES TROIS DERNIERS. Recopiés MOT POUR MOT depuis le champ
+  // `mission` de leur fichier (`runtime/agents/{sales,market,risk}.ts`),
+  // et un test échoue au premier caractère d'écart. Les trois portent
+  // leur clause de refus dans la mission elle-même, pour la raison
+  // écrite plus haut : `mission` sert de `handoffDescription`, donc une
+  // mission qui promet ce que l'agent ne sait pas faire fait payer une
+  // délégation complète pour recevoir un renvoi.
+  sales:
+    "Ce que deviennent les devis une fois DÉCIDÉS : délai de réponse, transformation, motifs " +
+    "de refus, pipeline d'opportunités et relances commerciales. Aucun montant, aucune " +
+    "prévision, et rien sur les devis encore ouverts.",
+  market:
+    "L'entreprise comparée à SON PROPRE PASSÉ : d'où viennent ses clients, comment ses prix de " +
+    "vente bougent article par article, ce qu'elle devise contre ce qu'elle facture. Aucune " +
+    "donnée extérieure : ni prix du marché, ni part de marché, ni concurrent.",
+  risk:
+    "Concentration du chiffre d'affaires facturé, encours échu, comportement de paiement, tenue " +
+    "des délais. Il distingue à chaque phrase ce qu'il MESURE de ce qu'il DÉDUIT, et refuse de " +
+    "conclure sous son seuil d'observations.",
 };
 
 /**
@@ -130,6 +170,13 @@ export const AGENT_REQUIRED_PERMISSIONS: Record<AgentKey, Permission[]> = {
   nursery: ["nursery.stock.manage", "projects.read"],
   fleet: ["projects.read"],
   customer: ["clients.read", "projects.read"],
+  // §11Z. Les gardes `ai_guard` de 0088, dans l'ordre où chaque
+  // fonction les pose — et TOUTES LÈVENT : un flux commercial, un
+  // historique ou un relevé de risque amputé se lirait comme un flux
+  // vide, ce qui est une réponse fausse et non une réponse incomplète.
+  sales: ["projects.read", "quotes.read"],
+  market: ["clients.read", "quotes.read"],
+  risk: ["projects.read", "invoice.create", "quotes.read"],
 };
 
 // ------------------------------------------------------------------

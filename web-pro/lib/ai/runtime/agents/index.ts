@@ -10,9 +10,13 @@ import { AGENT_ACHATS } from "./procurement.ts";
 import { AGENT_PEPINIERE } from "./nursery.ts";
 import { AGENT_MATERIEL } from "./fleet.ts";
 import { AGENT_CLIENTS } from "./customer.ts";
+// §11Z — LES TROIS RÉPONDEURS DE 0088.
+import { AGENT_VENTES } from "./sales.ts";
+import { AGENT_HISTORIQUE_INTERNE } from "./market.ts";
+import { AGENT_RISQUES } from "./risk.ts";
 
 /**
- * §11Y — LA COMPOSITION DES DIX AGENTS.
+ * §11Y / §11Z — LA COMPOSITION DES TREIZE AGENTS RÉPONDEURS.
  *
  * ══════════════════════════════════════════════════════════════════
  * CE FICHIER NE BOUGE PLUS, ET C'EST TOUT SON INTÉRÊT
@@ -68,18 +72,30 @@ import { AGENT_CLIENTS } from "./customer.ts";
  * `./agents/index.ts` — chemin complet, sans ambiguïté possible.
  */
 
-/** Les dix, dans l'ordre de la spec p. 5. */
+/**
+ * Les treize répondeurs, dans l'ordre de la spec p. 5.
+ *
+ * LE QUATORZIÈME N'EST PAS ICI, ET IL NE FAUT PAS L'Y METTRE.
+ * `classification` n'est pas un `DefinitionAgent` : il n'a ni mission,
+ * ni limites conversationnelles, ni droits attendus, et lui en donner
+ * le rendrait joignable — donc concurrent des treize. Il est déclaré
+ * dans `nonRepondants.ts`, avec la raison pour laquelle la base
+ * connaît quand même son nom.
+ */
 const TOUS: readonly DefinitionAgent[] = Object.freeze([
   AGENT_DIRECTION,
   AGENT_FINANCE,
   AGENT_FACTURATION,
   AGENT_DEVIS_ET_PRIX,
+  AGENT_VENTES,
   AGENT_CHANTIERS,
   AGENT_PLANNING,
   AGENT_ACHATS,
   AGENT_PEPINIERE,
   AGENT_MATERIEL,
   AGENT_CLIENTS,
+  AGENT_HISTORIQUE_INTERNE,
+  AGENT_RISQUES,
 ]);
 
 function composer(): Readonly<Record<AgentConstruit, DefinitionAgent>> {
@@ -108,7 +124,7 @@ function composer(): Readonly<Record<AgentConstruit, DefinitionAgent>> {
 }
 
 /**
- * LES DIX DÉFINITIONS.
+ * LES TREIZE DÉFINITIONS.
  *
  * `droitsAttendus` n'est pas « les droits de l'agent » : un agent n'en
  * a aucun (il agit avec ceux de l'utilisateur). C'est ce que ses
@@ -177,3 +193,15 @@ export {
   estAgentSansDonnees,
   type AgentSansDonnees,
 } from "./sansDonnees.ts";
+
+// §11Z — LA TROISIÈME CATÉGORIE. Un agent que la base accepte, qui
+// dépense des jetons, et qui ne répond à personne. Voir
+// `nonRepondants.ts` pour la démonstration de sa nécessité : sans
+// elle, `classification` ne pouvait satisfaire aucune des deux
+// listes existantes, et la suite de tests restait rouge quoi qu'on en
+// fasse.
+export {
+  AGENTS_NON_REPONDANTS,
+  estAgentNonRepondant,
+  type AgentNonRepondant,
+} from "./nonRepondants.ts";

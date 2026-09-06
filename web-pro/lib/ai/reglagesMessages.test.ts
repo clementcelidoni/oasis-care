@@ -69,16 +69,37 @@ test("les cinq contraintes de la base sont toutes couvertes", () => {
   }
 });
 
-test("les six agents ajoutés par 0082 sont ceux qui peuvent déclencher ce message", () => {
+test("les neuf agents ajoutés après 0072 sont ceux qui peuvent déclencher ce message", () => {
   // Un rappel exécutable de ce que la branche protège : 0072 acceptait
-  // quatre agents, l'écran en affiche dix. Si cette liste tombe à
+  // quatre agents, l'écran en affiche treize. Si cette liste tombe à
   // quatre, la branche n'a plus de raison d'être et doit partir avec
   // elle ; si elle grandit, une migration doit suivre.
+  //
+  // §11Z — TROIS DE PLUS, ET LEUR MIGRATION EXISTE. `sales`, `market`
+  // et `risk` sont acceptés par 0088 : un réglage d'autonomie posé sur
+  // eux ne se fera plus refuser par la contrainte. Tant que 0088 n'est
+  // pas appliquée sur une base donnée, en revanche, c'est exactement ce
+  // message de décalage qui doit sortir — d'où leur présence ici.
+  //
+  // `classification` N'Y EST PAS, et ce n'est pas un oubli : la base
+  // accepte son nom depuis 0088, mais il n'apparaît sur aucun écran de
+  // réglage puisqu'il ne répond à personne. Voir
+  // `runtime/agents/nonRepondants.ts`.
   const DE_0072 = ["executive", "finance", "billing", "quote_pricing"];
   const ajoutes = AGENTS.filter((a) => !DE_0072.includes(a));
   assert.deepEqual(
     [...ajoutes],
-    ["operations", "planning", "procurement", "nursery", "fleet", "customer"],
+    [
+      "sales",
+      "operations",
+      "planning",
+      "procurement",
+      "nursery",
+      "fleet",
+      "customer",
+      "market",
+      "risk",
+    ],
     "la liste des agents affichés a changé sans que le message de décalage suive",
   );
 });

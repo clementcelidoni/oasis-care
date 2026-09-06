@@ -108,7 +108,7 @@ test("tout agent qui a un plan est un agent que la base accepte", () => {
   let acceptes: string[] = [];
   for (const nom of readdirSync(dossier).filter((n) => n.endsWith(".sql")).sort()) {
     const corps =
-      /create or replace function public\.ai_is_supported_agent[\s\S]*?select p_agent in \(([^)]*)\)/.exec(
+      /create or replace function public\.ai_is_supported_agent[\s\S]*?select p_agent in \(([\s\S]*?)\);/.exec(
         lire(join(dossier, nom)),
       );
     if (corps === null) continue;
