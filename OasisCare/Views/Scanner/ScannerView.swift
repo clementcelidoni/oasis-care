@@ -28,6 +28,11 @@ struct ScannerView: View {
     @State private var isQRScannerPresented = false
     @State private var isScanningNFC = false
     @State private var nfcScanResult: SmartTagScanResult?
+    /// § 15 — ce que le serveur répond quand la puce désigne quelque
+    /// chose que cet appareil n'a pas : un jardin client, un lot de
+    /// pépinière, du matériel. Aucun de ces trois n'existe dans
+    /// SwiftData, et le scan NFC s'arrêtait donc sur un échec.
+    @State private var nfcEtiquetteDistante: EtiquetteResolue?
     @State private var nfcErrorMessage: String?
     @State private var isQRNFCLockedSheetPresented = false
     @ObservedObject private var entitlementService = EntitlementService.shared
@@ -36,10 +41,14 @@ struct ScannerView: View {
     var body: some View {
         NavigationStack {
             VStack(spacing: 0) {
-                // Spec §49: QR/NFC scanning is local-only (SmartTagService
-                // resolves purely from on-device data), so unlike
-                // `content` this row is never gated behind authState — a
-                // guest can still use it without an account.
+                // Spec §49 : cette rangée n'est pas verrouillée derrière
+                // `authState`, contrairement à `content`. C'était vrai
+                // parce que la résolution était purement locale ; ça le
+                // reste pour une raison plus forte depuis le § 15 : sans
+                // compte, le résolveur répond en ANONYME, et il rend la
+                // fiche botanique d'une étiquette publiée. Un invité qui
+                // scanne une plante dans un jardin ouvert obtient donc
+                // une vraie réponse, et rien d'autre.
                 //
                 // Phase 12 does add a separate, commercial gate: QR/NFC
                 // is a Premium entitlement in §12A's launch matrix, so
@@ -112,6 +121,9 @@ struct ScannerView: View {
                     SmartTagScanResultSheet(result: result)
                 }
             }
+            .sheet(item: $nfcEtiquetteDistante) { etiquette in
+                EtiquetteDistanteSheet(etiquette: etiquette)
+            }
         }
     }
 
@@ -166,15 +178,32 @@ struct ScannerView: View {
         defer { isScanningNFC = false }
         do {
             let url = try await NFCService.shared.read(alertMessage: "Approchez l'iPhone de l'étiquette NFC")
-            guard let token = SmartTagConfig.token(from: url),
-                  let tag = SmartTagService.existingTag(forToken: token, in: modelContext),
-                  let result = SmartTagService.scanResult(for: tag) else {
-                nfcErrorMessage = "Ce tag NFC n'est associé à aucun élément sur cet appareil."
+            guard let token = SmartTagConfig.token(from: url) else {
+                // La puce ne porte pas une adresse Oasis : aucun appel
+                // réseau, et un message qui dit la vérité.
+                nfcErrorMessage = "Ce tag NFC n'a pas été programmé par Oasis Care."
                 return
             }
-            SmartTagService.markScanned(tag)
-            Haptics.success()
-            nfcScanResult = result
+
+            // MÊME CHEMIN QUE LE SCAN QR, et c'est le but : le local
+            // d'abord, le serveur en repli. Une puce et un QR portent le
+            // même jeton (§ 14, une seule table, une colonne « type ») ;
+            // les résoudre différemment aurait fini par les faire
+            // diverger.
+            switch await SmartTagService.resoudre(jeton: token, in: modelContext) {
+            case .locale(let resultat):
+                nfcErrorMessage = nil
+                Haptics.success()
+                nfcScanResult = resultat
+            case .distante(let etiquette):
+                nfcErrorMessage = nil
+                Haptics.success()
+                nfcEtiquetteDistante = etiquette
+            case .refusee(let phrase):
+                nfcErrorMessage = phrase
+            case .injoignable:
+                nfcErrorMessage = SmartTagService.phraseInjoignable
+            }
         } catch NFCServiceError.cancelled {
             // User backed out — no error to show.
         } catch let error as NFCServiceError {

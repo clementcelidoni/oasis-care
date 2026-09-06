@@ -56,6 +56,11 @@ const PERMISSIONS_FR: Record<Permission, string> = {
   "nursery.stock.manage": "gérer le stock de la pépinière",
   "invoice.create": "créer des factures",
   "organization.manageUsers": "gérer les membres de l'entreprise",
+  "biolab.read": "consulter le laboratoire",
+  "biolab.write": "saisir au laboratoire",
+  "biolab.manage": "gérer le laboratoire",
+  "etiquettes.read": "consulter les étiquettes",
+  "etiquettes.manage": "poser et imprimer les étiquettes",
 };
 
 /** Une permission, en français. Le code brut si elle n'est pas connue. */

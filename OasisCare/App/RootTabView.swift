@@ -8,6 +8,13 @@ struct RootTabView: View {
     @ObservedObject private var toastCenter = ToastCenter.shared
 
     @State private var deepLinkedPlant: Plant?
+    /// § 15 — une étiquette ouverte par lien ne mène plus seulement à
+    /// une plante. Elle peut désigner un lot de culture ou un rack
+    /// (présents en local), ou bien un objet que cet appareil n'a pas —
+    /// et dans ce dernier cas c'est le serveur qui décrit ce qu'il y a
+    /// à voir. Chacun sa feuille, et surtout : plus aucun cas muet.
+    @State private var deepLinkedScan: SmartTagScanResult?
+    @State private var deepLinkedEtiquette: EtiquetteResolue?
 
     var body: some View {
         ZStack {
@@ -54,10 +61,26 @@ struct RootTabView: View {
                 deepLinkedPlant = findPlant(id: newID)
                 deepLinkRouter.pendingPlantID = nil
             }
+            .onChange(of: deepLinkRouter.pendingScan?.id) { _, _ in
+                guard let scan = deepLinkRouter.pendingScan else { return }
+                deepLinkedScan = scan
+                deepLinkRouter.pendingScan = nil
+            }
+            .onChange(of: deepLinkRouter.pendingEtiquette?.id) { _, _ in
+                guard let etiquette = deepLinkRouter.pendingEtiquette else { return }
+                deepLinkedEtiquette = etiquette
+                deepLinkRouter.pendingEtiquette = nil
+            }
             .sheet(item: $deepLinkedPlant) { plant in
                 NavigationStack {
                     PlantDetailView(plant: plant)
                 }
+            }
+            .sheet(item: $deepLinkedScan) { scan in
+                SmartTagScanResultSheet(result: scan)
+            }
+            .sheet(item: $deepLinkedEtiquette) { etiquette in
+                EtiquetteDistanteSheet(etiquette: etiquette)
             }
 
             if let toast = toastCenter.current {
@@ -88,6 +111,15 @@ struct RootTabView: View {
         } else if let id = deepLinkRouter.pendingPlantID {
             deepLinkedPlant = findPlant(id: id)
             deepLinkRouter.pendingPlantID = nil
+        } else if let scan = deepLinkRouter.pendingScan {
+            // Même raison que pour la plante : un lancement à froid par
+            // lien pose la valeur AVANT que cette vue n'observe quoi que
+            // ce soit, et aucun `.onChange` ne la verrait passer.
+            deepLinkedScan = scan
+            deepLinkRouter.pendingScan = nil
+        } else if let etiquette = deepLinkRouter.pendingEtiquette {
+            deepLinkedEtiquette = etiquette
+            deepLinkRouter.pendingEtiquette = nil
         }
     }
 
