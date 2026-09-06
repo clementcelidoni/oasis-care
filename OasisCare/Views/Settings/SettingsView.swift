@@ -65,6 +65,17 @@ struct SettingsView: View {
 
             if case .authenticated = authState.status {
                 cloudSection
+
+                // Placé juste après « Cloud », et pas plus bas : les deux
+                // répondent à la même question — ce qui part de ce
+                // téléphone, et où. Réservé aux comptes connectés, un
+                // invité n'ayant aucun espace de travail.
+                Section {
+                    NavigationLink("Contexte de travail") {
+                        WorkspaceContextView()
+                    }
+                    .accessibilityIdentifier("workspaceContextLink")
+                }
             }
 
             Section {

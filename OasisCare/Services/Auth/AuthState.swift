@@ -30,8 +30,28 @@ final class AuthState: ObservableObject {
         guard listenerTask == nil else { return }
         listenerTask = Task {
             for await (_, session) in await AuthService.authStateChanges {
+                let previousUserID = self.session?.user.id
                 self.session = session
                 self.status = session == nil ? .guest : .authenticated
+
+                // Le contexte de travail appartient au compte, jamais à
+                // l'appareil. Dès que le compte change — y compris une
+                // connexion directe sous un autre compte, sans
+                // déconnexion préalable — la liste d'espaces gardée en
+                // mémoire n'est plus la sienne. La laisser en place
+                // ferait afficher les espaces du compte précédent le
+                // temps de la relecture : une fuite d'un monde vers
+                // l'autre, exactement ce que ce mécanisme existe pour
+                // empêcher.
+                //
+                // Mémoire seulement : la préférence sur disque porte le
+                // compte qui l'a posée et sera revalidée. L'effacer ici
+                // ferait perdre son choix à l'utilisateur à CHAQUE
+                // lancement, puisque le premier événement du flux est la
+                // restauration de la session.
+                if session?.user.id != previousUserID {
+                    WorkspaceContextService.shared.forgetLoadedAccount()
+                }
             }
         }
     }
@@ -44,6 +64,11 @@ final class AuthState: ObservableObject {
     /// lost here, not just hidden.
     func signOutClearingLocalData(context: ModelContext) async {
         try? await AuthService.signOut()
+        // Mémoire ET disque, à la différence du changement de compte
+        // ci-dessus : un appareil déconnecté ne garde rien du compte
+        // précédent, pas même le contexte dans lequel il travaillait.
+        // Même règle que les jardins et les végétaux juste en dessous.
+        WorkspaceContextService.shared.clear()
         Self.clearLocalData(context: context)
     }
 

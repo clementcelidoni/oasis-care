@@ -239,19 +239,26 @@ final class SyncEngine: ObservableObject {
     ///
     /// On demande donc explicitement le personnel, avec un tri qui rend
     /// le résultat reproductible même si un jour il y en avait deux.
+    ///
+    /// LA REQUÊTE A DÉMÉNAGÉ, PAS LA RÈGLE. Elle vit désormais dans
+    /// `WorkspaceContextService`, qui est le seul endroit de
+    /// l'application à savoir à quels espaces le compte appartient — et
+    /// donc le seul endroit où le vider à la déconnexion. Le résultat
+    /// est le MÊME : `writeWorkspaceID` rend l'espace personnel, choisi
+    /// par le même critère (`is_personal`, plus ancien d'abord). Ce
+    /// n'est pas un déplacement gratuit : tant que la requête vivait
+    /// ici, changer de contexte de travail aurait voulu dire modifier
+    /// les 42 envois ci-dessous. Il n'y en a plus qu'un à changer, le
+    /// jour où l'estampille par enregistrement le permettra — voir le
+    /// commentaire en tête de `WorkspaceContextService`, qui dit
+    /// exactement ce qui manque.
+    ///
+    /// Les deux issues restent distinctes, comme avant : une lecture
+    /// impossible LÈVE (la synchronisation s'arrête plutôt que
+    /// d'envoyer sans savoir où), un compte sans espace personnel rend
+    /// `noWorkspace`.
     private func fetchWorkspaceID() async throws -> UUID {
-        struct WorkspaceRow: Decodable {
-            var id: UUID
-        }
-        let rows: [WorkspaceRow] = try await AuthService.client
-            .from("workspaces")
-            .select("id")
-            .eq("is_personal", value: true)
-            .order("created_at", ascending: true)
-            .limit(1)
-            .execute()
-            .value
-        guard let id = rows.first?.id else {
+        guard let id = try await WorkspaceContextService.shared.resolveWriteWorkspaceID() else {
             throw SyncEngineError.noWorkspace
         }
         return id
