@@ -1,19 +1,132 @@
 import Foundation
 import Supabase
 
+/// Ce que la vérification d'un code apprend sur le compte, réduit à ce
+/// dont l'écran a besoin.
+///
+/// On ne fait PAS remonter le `User` du SDK jusqu'à la vue : la vue n'a
+/// qu'une question à poser — « faut-il proposer un mot de passe ? » — et
+/// lui tendre l'objet entier l'inviterait à lire des champs qui ne la
+/// regardent pas. C'est aussi ce qui rend la décision testable sans le
+/// SDK (voir `IdentiteCompte`).
+struct ResultatVerificationCode: Equatable, Sendable {
+
+    /// Les fournisseurs d'identité du compte : `email`, `apple`,
+    /// `google`, dans n'importe quelle combinaison — un même compte peut
+    /// porter les trois.
+    var fournisseurs: [String]
+
+    /// Vrai seulement si le compte a une identité « e-mail ». Un compte
+    /// purement Apple ou Google ne se voit JAMAIS réclamer un mot de
+    /// passe : il n'en a pas besoin, et la porte n'existe pas.
+    var peutPoserUnMotDePasse: Bool {
+        IdentiteCompte.peutPoserUnMotDePasse(fournisseurs: fournisseurs)
+    }
+}
+
 /// Single entry point for every Supabase Auth call — views never talk to
 /// SupabaseClient directly (mirrors CareScheduleEngine's "one path in" shape
 /// from earlier phases).
 enum AuthService {
     static let client = SupabaseClient(supabaseURL: SupabaseConfig.url, supabaseKey: SupabaseConfig.publishableKey)
 
+    // ══════════════════════════════════════════════════════════════
+    // LE PARCOURS PAR ADRESSE : CODE, PUIS MOT DE PASSE
+    // ══════════════════════════════════════════════════════════════
+    //
+    // Trois appels, dans cet ordre, et c'est tout le mécanisme :
+    //
+    //   sendEmailCode  → verifyEmailCode  → setPassword
+    //   (le courriel)    (l'adresse est     (les fois suivantes,
+    //                     par là même         signInWithPassword
+    //                     CONFIRMÉE)          suffit)
+    //
+    // La même séquence sert à trois choses que l'on croirait
+    // différentes : créer un compte, poser un premier mot de passe, et
+    // en changer parce qu'on l'a oublié. Un seul mécanisme à écrire, un
+    // seul à éprouver.
+
+    /// Demande l'envoi du code à six-huit chiffres.
+    ///
+    /// `shouldCreateUser` n'est pas passé, donc il vaut `true` : sur le
+    /// téléphone, S'INSCRIRE ET SE CONNECTER SONT LE MÊME GESTE, et
+    /// c'est voulu. Une adresse inconnue crée donc un compte.
+    ///
+    /// CONSÉQUENCE À CONNAÎTRE, ET C'EST LE PIÈGE QUI A DÉJÀ COÛTÉ UNE
+    /// SEMAINE : le gabarit de courriel employé par Supabase N'EST PAS
+    /// LE MÊME selon que l'adresse existe déjà (« Magic Link ») ou non
+    /// (« Confirm signup »). Le premier a été soigné et porte bien
+    /// `{{ .Token }}` ; le second est resté celui d'origine, en anglais,
+    /// avec un lien et AUCUN code. Un compte neuf reçoit donc
+    /// aujourd'hui un courriel dans lequel il n'y a rien à recopier.
+    /// C'est un réglage du tableau de bord, pas du code d'application —
+    /// il est écrit dans la notice, et il doit être fait avant la mise
+    /// en service.
+    ///
+    /// Aucun `redirectTo` : le lien de retour n'a pas de sens ici.
+    /// L'application ne sait ouvrir que `com.oasisrarecare.app://…` pour
+    /// les étiquettes, et aucune reprise de session par URL n'existe.
+    /// Le code est le seul chemin, et c'est le chemin qui marche
+    /// partout.
     static func sendEmailCode(to email: String) async throws {
         try await client.auth.signInWithOTP(email: email)
     }
 
-    static func verifyEmailCode(email: String, code: String) async throws {
-        try await client.auth.verifyOTP(email: email, token: code, type: .email)
+    /// Vérifie le code. En cas de succès, la session est établie ET
+    /// l'adresse est confirmée par la même occasion — c'est tout
+    /// l'intérêt du parcours.
+    ///
+    /// `type: .email` couvre les DEUX cas : le code d'un compte existant
+    /// et celui d'une confirmation d'inscription. Il n'y a donc pas à
+    /// deviner, avant l'appel, si le compte existait — ce qui tombe
+    /// bien, puisque le deviner serait précisément ce qu'on s'interdit.
+    ///
+    /// Ce que la réponse rapporte : `identities`, la seule source fiable
+    /// pour savoir si ce compte a une identité e-mail. On la lit ici,
+    /// une fois, et on n'en garde que la liste des fournisseurs.
+    static func verifyEmailCode(email: String, code: String) async throws -> ResultatVerificationCode {
+        let reponse = try await client.auth.verifyOTP(email: email, token: code, type: .email)
+        let fournisseurs = reponse.user.identities?.map(\.provider) ?? []
+        return ResultatVerificationCode(fournisseurs: fournisseurs)
     }
+
+    /// La connexion ordinaire, celle de tous les jours : adresse et mot
+    /// de passe, aucun courriel.
+    ///
+    /// Le serveur ne distingue jamais « compte inexistant », « mauvais
+    /// mot de passe » et « ce compte n'entre que par Google » : les
+    /// trois rendent `invalid_credentials`. La non-divulgation n'est
+    /// donc pas une précaution de notre part, elle est garantie par le
+    /// serveur — et l'écran n'a rien à faire pour la préserver, sinon
+    /// s'abstenir d'afficher trois messages différents.
+    static func signInWithPassword(email: String, password: String) async throws {
+        _ = try await client.auth.signIn(email: email, password: password)
+    }
+
+    /// Pose ou remplace le mot de passe du compte actuellement connecté.
+    ///
+    /// À N'APPELER QUE JUSTE APRÈS `verifyEmailCode`, sur une session
+    /// fraîche : le projet n'exige ni ré-authentification ni mot de
+    /// passe actuel (`security_update_password_require_reauthentication`
+    /// et `..._require_current_password` sont à faux), la séquence passe
+    /// donc d'un seul trait. Si l'un des deux réglages était activé un
+    /// jour, cet appel réclamerait un `nonce` et échouerait ici — c'est
+    /// écrit dans la notice.
+    ///
+    /// Le mot de passe ne fait que traverser : il n'est ni journalisé,
+    /// ni conservé, ni renvoyé.
+    static func setPassword(_ password: String) async throws {
+        _ = try await client.auth.update(user: UserAttributes(password: password))
+    }
+
+    // ══════════════════════════════════════════════════════════════
+    // LES DEUX AUTRES PORTES, INCHANGÉES
+    // ══════════════════════════════════════════════════════════════
+    //
+    // Sign in with Apple reste exactement ce qu'il était : ce n'est pas
+    // un confort, c'est une exigence de l'App Store dès lors qu'une
+    // autre connexion existe. Y toucher pour « harmoniser » ferait
+    // refuser la prochaine version.
 
     static func signInWithApple(idToken: String, nonce: String) async throws {
         try await client.auth.signInWithIdToken(
