@@ -52,6 +52,25 @@ targets:
         CFBundleURLTypes:
           - CFBundleURLSchemes:
               - com.oasisrarecare.app
+        # §15 — LE DOMAINE DES ÉTIQUETTES, DÉCLARÉ POUR QUE LA PROMESSE
+        # SOIT VRAIE.
+        #
+        # SmartTagConfig annonce trois sources : un réglage enregistré,
+        # cette clé, puis un défaut. Les deux premières étaient INERTES —
+        # la clé n'était déclarée nulle part, et l'en-tête du fichier
+        # promettait pourtant « une bascule de domaine ne demande pas
+        # une nouvelle version sur l'App Store ». Seule la constante
+        # s'appliquait : l'adresse était, en pratique, codée en dur.
+        #
+        # La valeur ci-dessous est la MÊME que le défaut du code. Ce
+        # n'est pas une redondance inutile : c'est le seul endroit où un
+        # binaire de recette peut la changer sans toucher au code, et
+        # c'est ce qui rend le levier réel plutôt que théorique.
+        #
+        # ELLE DOIT RESTER ALIGNÉE AVEC OASIS_ETIQUETTES_BASE_URL côté
+        # serveur. Le web imprime les planches, le téléphone écrit les
+        # puces NFC : deux moitiés du même produit, une seule adresse.
+        OASIS_ETIQUETTES_DOMAINE: oasisrarecare.com
     entitlements:
       path: Generated/OasisCare.entitlements
       properties:
