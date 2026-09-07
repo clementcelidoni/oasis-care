@@ -95,6 +95,33 @@ enum MessageErreurAuth {
             aiguilles.contains { indice.contains($0) }
         }
 
+        // ── La vérification anti-robot, EN PREMIER ─────────────────
+        //
+        // ELLE PASSE AVANT TOUT LE RESTE, ET C'EST LA POSITION QUI FAIT
+        // LE TRAVAIL. Le serveur écrit ce refus ainsi : « captcha
+        // protection: request disallowed (invalid-input-response) ».
+        // Cette phrase contient le mot « invalid ». Placée plus bas,
+        // elle risquerait de tomber un jour dans la branche des
+        // identifiants refusés, et l'écran dirait « adresse ou mot de
+        // passe incorrect » à quelqu'un dont le mot de passe est
+        // parfaitement juste. Il le retaperait, se ferait refuser
+        // encore, et appellerait le support en étant certain que son
+        // compte est cassé. C'est l'échec le plus coûteux de tout ce
+        // chantier, et il est silencieux.
+        //
+        // TROIS CAUSES MÈNENT ICI, ET UNE SEULE PHRASE LES COUVRE :
+        //   • le widget n'a rien rendu — réseau coupé, bloqueur de
+        //     publicité, réseau d'entreprise qui filtre Cloudflare ;
+        //   • le jeton a déjà servi (`timeout-or-duplicate`) — il ne
+        //     vaut qu'un appel ;
+        //   • la clé de site et la clé secrète ne sont pas appariées,
+        //     par exemple une clé d'essai partie en production.
+        // Les distinguer demanderait de deviner, et les trois appellent
+        // le même geste : réessayer, puis changer de réseau.
+        if contient(["captcha_failed", "captcha protection", "request disallowed"]) {
+            return "La vérification de sécurité n'a pas abouti. Réessayez. Si cela recommence, votre réseau bloque peut-être cette vérification : passer en 4G, ou désactiver un bloqueur de publicité, suffit le plus souvent."
+        }
+
         // ── Trop de courriels, ou trop vite ────────────────────────
         if contient(["over_email_send_rate_limit", "you can only request this after", "email rate limit exceeded"]) {
             return "Un code vient déjà d'être envoyé à cette adresse. Attendez une minute avant d'en demander un autre."

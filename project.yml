@@ -71,6 +71,55 @@ targets:
         # serveur. Le web imprime les planches, le téléphone écrit les
         # puces NFC : deux moitiés du même produit, une seule adresse.
         OASIS_ETIQUETTES_DOMAINE: oasisrarecare.com
+        # ══════════════════════════════════════════════════════════
+        # LA VÉRIFICATION ANTI-ROBOT — LA CLÉ DE SITE, ET RIEN QUE
+        # LA CLÉ DE SITE.
+        # ══════════════════════════════════════════════════════════
+        #
+        # L'ORDRE EST IMPOSÉ ET NE SE NÉGOCIE PAS. Le réglage du
+        # captcha chez Supabase est GLOBAL : dès qu'il est actif, tout
+        # client qui n'envoie pas de jeton est refusé, y compris
+        # l'application déjà installée sur les téléphones.
+        #   a. les trois portes envoient le jeton ;
+        #   b. une version iPhone part sur TestFlight ET EST INSTALLÉE ;
+        #   c. ALORS SEULEMENT le réglage est activé chez Supabase.
+        # Inverser (b) et (c) verrouille dehors tout le parc, sans
+        # message d'erreur compréhensible. La marche à suivre pour le
+        # dirigeant, étape par étape et avec le retour en arrière en
+        # trente secondes, est dans docs/captcha-mise-en-service.md.
+        #
+        # LA CLÉ CI-DESSOUS EST VIDE, ET C'EST UN ÉTAT VALIDE, PAS UN
+        # OUBLI. Sans elle, `TurnstileConfig` ne monte aucune vue web
+        # et les appels partent sans jeton — c'est-à-dire exactement le
+        # comportement d'aujourd'hui. L'application reste donc
+        # livrable, installable et utilisable tant que le réglage
+        # Supabase est éteint.
+        #
+        # ELLE DOIT ÊTRE REMPLIE AVANT LA VERSION TESTFLIGHT DE
+        # L'ÉTAPE (b), sinon l'étape (c) enferme le parc dehors. C'est
+        # la clé de SITE, celle de Cloudflare Turnstile : elle est
+        # PUBLIQUE, elle vit dans le client, elle est visible de tous,
+        # c'est son métier. La clé SECRÈTE, elle, ne vient JAMAIS ici :
+        # elle se pose à la main dans le tableau de bord Supabase.
+        #
+        # LE DOMAINE DE LA CLÉ DE SITE DOIT INCLURE oasisrarecare.com,
+        # celui déclaré ci-dessous. Cloudflare compare l'hôte de la page
+        # qui porte le widget à la liste attachée à la clé ; un domaine
+        # absent produit une erreur 110200 et aucun jeton, jamais.
+        #
+        # UNE CLÉ D'ESSAI NE DOIT JAMAIS PARTIR D'ICI. Appariée à la clé
+        # secrète de production, elle refuse tout le monde. Un test
+        # relit ce fichier et échoue si l'une d'elles y figure : les
+        # essais à la main se font par argument de lancement
+        # (-turnstile.cledesite 1x00000000000000000000AA), pas ici.
+        OASIS_TURNSTILE_SITE_KEY: ""
+        # L'origine annoncée à Cloudflare pour la page du widget, qui
+        # est fabriquée en mémoire plutôt qu'hébergée. Elle doit rester
+        # alignée avec le domaine autorisé sur la clé de site — même
+        # contrainte d'alignement que OASIS_ETIQUETTES_DOMAINE
+        # ci-dessus, et même conséquence si on l'oublie : rien ne se
+        # voit à l'écran, tout se voit à la porte d'entrée.
+        OASIS_TURNSTILE_ORIGINE: https://oasisrarecare.com
     entitlements:
       path: Generated/OasisCare.entitlements
       properties:

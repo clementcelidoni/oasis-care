@@ -62,6 +62,38 @@ import UIKit
 ///     l'application seule.
 ///
 /// ══════════════════════════════════════════════════════════════════
+/// LA VÉRIFICATION ANTI-ROBOT, AJOUTÉE SANS TOUCHER AU PARCOURS
+/// ══════════════════════════════════════════════════════════════════
+///
+/// Les trois étapes ci-dessus sont inchangées : rien n'a été ajouté que
+/// l'utilisateur doive faire. Ce qui a été ajouté, c'est UN PIXEL —
+/// `VueTurnstile`, posée hors de l'aiguillage des étapes — et deux
+/// lignes dans les deux gestes qui appellent une route protégée.
+///
+/// DEUX GESTES SUR QUATRE, ET PAS UN DE PLUS :
+///   • « Se connecter » → `POST /token`, protégé → jeton exigé ;
+///   • « Recevoir un code » et « Renvoyer le code » → `POST /otp`,
+///     protégé → jeton exigé, NEUF à chaque fois ;
+///   • « Continuer » (vérifier le code) → `POST /verify`, hors
+///     protection → aucun jeton, et surtout pas « pour faire pareil » :
+///     il serait dépensé pour rien ;
+///   • « Enregistrer le mot de passe » → `PUT /user`, hors protection.
+///
+/// LE PIXEL EST POSÉ EN DEHORS DES ÉTAPES, ET C'EST LE POINT DÉLICAT :
+/// « Renvoyer le code » vit à l'étape 2, alors que la première demande
+/// de code vit à l'étape 1. Une vue web posée dans l'étape 1 serait
+/// démontée en arrivant à l'étape 2, et le renvoi partirait sans jeton.
+///
+/// QUAND LE WIDGET NE RÉPOND PAS — réseau coupé, bloqueur, réseau
+/// d'entreprise qui filtre Cloudflare —, l'appel PART QUAND MÊME, sans
+/// jeton. L'écran ne ferme jamais la porte de lui-même : tant que le
+/// réglage Supabase est éteint, l'appel réussit comme avant ; une fois
+/// activé, le serveur le refuse et `MessageErreurAuth` explique en
+/// français ce qui s'est passé et quoi faire. Le contraire — un bouton
+/// qui refuse d'agir parce qu'un pixel n'a pas répondu — enfermerait
+/// dehors des gens que le serveur, lui, aurait laissés entrer.
+///
+/// ══════════════════════════════════════════════════════════════════
 /// LE SECRET NE VA NULLE PART
 /// ══════════════════════════════════════════════════════════════════
 ///
@@ -95,6 +127,12 @@ struct EmailSignInView: View {
     @State private var renvoiPossibleA: Date = .distantPast
     @FocusState private var champActif: Champ?
 
+    /// Le portier anti-robot. Il appartient à l'écran et vit aussi
+    /// longtemps que lui : la page du widget reste donc chargée d'une
+    /// étape à l'autre, et le jeton du renvoi de code arrive aussi vite
+    /// que celui du premier envoi.
+    @StateObject private var portier = PortierTurnstile()
+
     var body: some View {
         NavigationStack {
             ScrollView {
@@ -116,10 +154,34 @@ struct EmailSignInView: View {
                             .frame(maxWidth: .infinity, alignment: .leading)
                             .accessibilityIdentifier("authErrorMessage")
                     }
+
+                    // LE PIXEL. Il est ici, en dehors du `switch`, parce
+                    // que deux étapes différentes déclenchent un appel
+                    // protégé et qu'une vue web démontée entre les deux
+                    // ne rendrait plus rien.
+                    //
+                    // Il n'occupe qu'un point tant que Cloudflare se
+                    // débrouille seul — c'est le cas de la très grande
+                    // majorité des connexions — et il grandit en une
+                    // case à cocher le jour où une énigme est exigée.
+                    // Sans clé de site posée, il ne monte même pas.
+                    VueTurnstile(portier: portier)
                 }
                 .padding()
             }
             .scrollDismissesKeyboard(.interactively)
+            // Une demande de jeton en cours doit rendre la main quand la
+            // feuille se ferme, sinon la tâche qui l'attend ne se
+            // termine jamais.
+            .onDisappear { portier.abandonner() }
+            // QUAND UNE ÉNIGME SURGIT, ON RANGE LE CLAVIER. Sur un petit
+            // téléphone, le clavier mange la moitié de l'écran : la case
+            // à cocher apparaîtrait dessous, invisible, et la personne
+            // n'aurait devant elle qu'un bouton qui tourne. C'est
+            // exactement l'appel au support qu'on cherche à éviter.
+            .onChange(of: portier.enigmeAffichee) { _, affichee in
+                if affichee { champActif = nil }
+            }
             .navigationTitle(titre)
             .navigationBarTitleDisplayMode(.inline)
             .toolbar {
@@ -334,10 +396,22 @@ struct EmailSignInView: View {
         message = nil
         enCours = true
         defer { enCours = false }
+        // UN JETON NEUF, POUR CET APPEL ET POUR LUI SEUL.
+        //
+        // Un mot de passe mal tapé ne change pas d'étape : la personne
+        // corrige et rappelle cette même fonction. Réutiliser le jeton
+        // de la tentative précédente ferait refuser la seconde par le
+        // serveur, avec un message qui accuserait le mot de passe. On
+        // en redemande donc un à chaque passage.
+        //
+        // `jetonNeuf()` ne lève pas et rend toujours la main : au pire
+        // elle rend `nil`, et l'appel part sans jeton.
+        let jeton = await portier.jetonNeuf().jetonAJoindre
         do {
             try await AuthService.signInWithPassword(
                 email: AdresseCourriel.normalisee(adresse),
-                password: motDePasse
+                password: motDePasse,
+                jetonCaptcha: jeton
             )
             // Vidé tout de suite : la feuille met un instant à se
             // fermer, et le secret n'a aucune raison de rester dans
@@ -353,8 +427,18 @@ struct EmailSignInView: View {
         message = nil
         enCours = true
         defer { enCours = false }
+        // Le premier envoi et le renvoi passent tous deux par ici, et
+        // c'est le même appel protégé : chacun a donc son jeton neuf.
+        // Le décompte de soixante secondes du bouton « Renvoyer »
+        // laisse largement le temps d'en fabriquer un — mais il faut le
+        // DEMANDER, pas l'espérer : un jeton de plus de cinq minutes est
+        // périmé.
+        let jeton = await portier.jetonNeuf().jetonAJoindre
         do {
-            try await AuthService.sendEmailCode(to: AdresseCourriel.normalisee(adresse))
+            try await AuthService.sendEmailCode(
+                to: AdresseCourriel.normalisee(adresse),
+                jetonCaptcha: jeton
+            )
             code = ""
             etape = .code
             champActif = .code
@@ -368,6 +452,10 @@ struct EmailSignInView: View {
         message = nil
         enCours = true
         defer { enCours = false }
+        // AUCUN JETON ICI, ET IL NE FAUT PAS EN AJOUTER. `POST /verify`
+        // n'est pas protégé par le captcha ; un jeton posé là serait
+        // dépensé sans servir, et manquerait au renvoi de code que la
+        // personne demandera peut-être juste après.
         do {
             let resultat = try await AuthService.verifyEmailCode(
                 email: AdresseCourriel.normalisee(adresse),

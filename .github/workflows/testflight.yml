@@ -2,6 +2,14 @@ name: TestFlight Release
 
 on:
   workflow_dispatch:
+    inputs:
+      sans_captcha:
+        description: >-
+          Publier SANS clé de site anti-robot. À ne cocher que tant que le
+          réglage CAPTCHA de Supabase est éteint : une fois ce réglage
+          activé, une version sans clé enferme dehors tous les téléphones.
+        type: boolean
+        default: false
 
 jobs:
   release:
@@ -10,6 +18,43 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+
+      # ══════════════════════════════════════════════════════════════
+      # LE GARDE-FOU QUI ÉVITE D'ENFERMER TOUT LE PARC DEHORS
+      # ══════════════════════════════════════════════════════════════
+      #
+      # `OASIS_TURNSTILE_SITE_KEY` est livrée VIDE dans project.yml, et
+      # c'est un état valide : sans elle, l'application n'envoie aucun
+      # jeton anti-robot et se comporte exactement comme avant.
+      #
+      # LE PIÈGE EST QUE CET ÉTAT EST AUSSI CELUI QU'ON OBTIENT EN NE
+      # FAISANT RIEN. Une version compilée sans clé passe les tests,
+      # passe la revue, s'installe sur les téléphones, et fonctionne
+      # parfaitement — jusqu'à la seconde où le réglage CAPTCHA est
+      # activé chez Supabase. Là, tout le parc est dehors, sans message
+      # d'erreur compréhensible et sans rien à faire depuis le
+      # téléphone.
+      #
+      # Un test unitaire ne peut pas interdire la clé vide : elle est
+      # légitime aujourd'hui. Le contrôle vit donc ici, à l'endroit
+      # exact où une version part vers de vrais téléphones, et il se
+      # lève seulement si on le lui demande explicitement.
+      - name: La clé anti-robot est-elle posée ?
+        run: |
+          CLE=$(sed -n 's/^[[:space:]]*OASIS_TURNSTILE_SITE_KEY:[[:space:]]*//p' project.yml | tr -d "\"' " | tr -d '[:space:]')
+          if [ -n "$CLE" ]; then
+            echo "Clé de site anti-robot présente (${#CLE} caractères)."
+            exit 0
+          fi
+          if [ "${{ inputs.sans_captcha }}" = "true" ]; then
+            echo "::warning::Version publiée SANS clé anti-robot, à la demande. Le réglage CAPTCHA de Supabase doit rester ÉTEINT tant que cette version est celle du parc."
+            exit 0
+          fi
+          echo "::error::OASIS_TURNSTILE_SITE_KEY est vide dans project.yml."
+          echo "Sans clé, cette version n'enverra AUCUN jeton anti-robot."
+          echo "Le jour où le réglage CAPTCHA sera activé chez Supabase, tous les téléphones porteurs de cette version seront refusés à la connexion."
+          echo "Posez la clé de SITE Cloudflare Turnstile dans project.yml, ou relancez ce workflow en cochant « sans_captcha »."
+          exit 1
 
       - name: Install XcodeGen
         run: brew install xcodegen

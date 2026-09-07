@@ -68,8 +68,19 @@ enum AuthService {
     /// les étiquettes, et aucune reprise de session par URL n'existe.
     /// Le code est le seul chemin, et c'est le chemin qui marche
     /// partout.
-    static func sendEmailCode(to email: String) async throws {
-        try await client.auth.signInWithOTP(email: email)
+    ///
+    /// LE JETON ANTI-ROBOT EST EXIGÉ ICI. Cet appel part sur
+    /// `POST /otp`, l'une des routes que GoTrue enveloppe de sa
+    /// vérification de captcha dès que le réglage est activé. C'est même
+    /// la route la plus concernée des deux : c'est elle qui fait PARTIR
+    /// UN COURRIEL, et donc elle qu'une machine emploierait pour arroser
+    /// des inconnus depuis notre domaine.
+    ///
+    /// `nil` reste accepté, et c'est la clé de la mise en service :
+    /// tant que le réglage est éteint, le serveur ne regarde même pas ce
+    /// paramètre.
+    static func sendEmailCode(to email: String, jetonCaptcha: String? = nil) async throws {
+        try await client.auth.signInWithOTP(email: email, captchaToken: jetonCaptcha)
     }
 
     /// Vérifie le code. En cas de succès, la session est établie ET
@@ -84,6 +95,14 @@ enum AuthService {
     /// Ce que la réponse rapporte : `identities`, la seule source fiable
     /// pour savoir si ce compte a une identité e-mail. On la lit ici,
     /// une fois, et on n'en garde que la liste des fournisseurs.
+    ///
+    /// AUCUN JETON ANTI-ROBOT ICI, ET C'EST DÉLIBÉRÉ — ne pas
+    /// « harmoniser ». L'interface Swift accepte bien un
+    /// `captchaToken:` sur cet appel, mais il part sur `POST /verify`,
+    /// qui n'est PAS enveloppé par la vérification de captcha de GoTrue.
+    /// Un jeton posé là serait dépensé pour rien : comme il ne vaut
+    /// qu'un seul appel, il serait volé au prochain appel qui, lui, en a
+    /// réellement besoin — typiquement le renvoi de code juste après.
     static func verifyEmailCode(email: String, code: String) async throws -> ResultatVerificationCode {
         let reponse = try await client.auth.verifyOTP(email: email, token: code, type: .email)
         let fournisseurs = reponse.user.identities?.map(\.provider) ?? []
@@ -99,8 +118,20 @@ enum AuthService {
     /// donc pas une précaution de notre part, elle est garantie par le
     /// serveur — et l'écran n'a rien à faire pour la préserver, sinon
     /// s'abstenir d'afficher trois messages différents.
-    static func signInWithPassword(email: String, password: String) async throws {
-        _ = try await client.auth.signIn(email: email, password: password)
+    ///
+    /// LE JETON ANTI-ROBOT EST EXIGÉ ICI. Cet appel part sur
+    /// `POST /token?grant_type=password`, que GoTrue enveloppe de sa
+    /// vérification de captcha — et il n'entre dans aucune des
+    /// exemptions du serveur (les grants `pkce`, `refresh_token` et
+    /// `id_token`, eux, en sont exemptés).
+    ///
+    /// C'est aussi la route par laquelle on devine qui est client en
+    /// chronométrant : une adresse connue met environ deux fois plus de
+    /// temps à répondre. L'écart est chez Supabase et ne se corrige pas
+    /// d'ici — le captcha coupe le volume, et sans volume l'écart ne se
+    /// moissonne plus.
+    static func signInWithPassword(email: String, password: String, jetonCaptcha: String? = nil) async throws {
+        _ = try await client.auth.signIn(email: email, password: password, captchaToken: jetonCaptcha)
     }
 
     /// Pose ou remplace le mot de passe du compte actuellement connecté.
@@ -115,6 +146,10 @@ enum AuthService {
     ///
     /// Le mot de passe ne fait que traverser : il n'est ni journalisé,
     /// ni conservé, ni renvoyé.
+    ///
+    /// AUCUN JETON ANTI-ROBOT ICI, et l'interface n'en propose même
+    /// pas : cet appel part sur `PUT /user`, hors de la vérification de
+    /// captcha de GoTrue.
     static func setPassword(_ password: String) async throws {
         _ = try await client.auth.update(user: UserAttributes(password: password))
     }
@@ -127,6 +162,21 @@ enum AuthService {
     // un confort, c'est une exigence de l'App Store dès lors qu'une
     // autre connexion existe. Y toucher pour « harmoniser » ferait
     // refuser la prochaine version.
+    //
+    // NI L'UN NI L'AUTRE NE PORTE DE JETON ANTI-ROBOT, ET LE JOUR DE
+    // L'ACTIVATION NE CHANGERA RIEN POUR EUX.
+    //
+    //   • Apple part sur `POST /token?grant_type=id_token`, que le
+    //     serveur exempte explicitement de la vérification. L'interface
+    //     Swift n'offre d'ailleurs aucun paramètre pour en poser un.
+    //   • Google est une redirection vers un fournisseur
+    //     (`GET /authorize`), pas un appel à notre serveur
+    //     d'authentification. Il n'y a rien à protéger là, et rien à
+    //     envoyer.
+    //
+    // Autrement dit : les deux portes qui n'envoient jamais de courriel
+    // sont aussi les deux qui n'ont pas besoin de captcha. Ce n'est pas
+    // une coïncidence.
 
     static func signInWithApple(idToken: String, nonce: String) async throws {
         try await client.auth.signInWithIdToken(
