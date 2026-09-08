@@ -2,8 +2,13 @@
 
 import { redirect } from "next/navigation";
 import { revalidatePath } from "next/cache";
+import { cookies } from "next/headers";
 import { createClient } from "@/lib/supabase/server";
-import { getActiveOrganization } from "@/lib/auth/organization";
+import {
+  ACTIVE_ORGANIZATION_COOKIE,
+  getActiveOrganization,
+  getUserOrganizations,
+} from "@/lib/auth/organization";
 import { updateCompanyProfile } from "@/lib/company/actions";
 import { flash } from "@/lib/ui/flash";
 import { BUSINESS_TYPES, type BusinessType } from "@/lib/auth/permissions";
@@ -16,6 +21,7 @@ import { jourDeReference } from "@/lib/billing/composition";
 import { lirePlansActifs } from "@/lib/billing/plans";
 import { lireIntention, peutSouscrire } from "@/app/api/stripe/intention";
 import { programmerValidationTva } from "@/lib/tva/file";
+import { oublierPaiementEnCours, poserPaiementEnCours } from "./paiement-en-cours.ts";
 import {
   annoncesParOffre,
   lireDerniereAcceptation,
@@ -36,6 +42,7 @@ import {
   verifierSiret,
   verifierTvaIntracom,
 } from "./identite.ts";
+import { traduireRefus } from "@/lib/peage/messages";
 
 /**
  * §INSCRIPTION — LES ÉCRITURES, ET CE QU'ELLES REFUSENT D'ÉCRIRE.
@@ -100,6 +107,11 @@ function retourAvecFaute(formData: FormData, champ: string, message: string): ne
   params.set("etape", "societe");
   params.set("champ", champ);
   params.set("erreur", message);
+  // L'INTENTION SURVIT AU REFUS. Sans cette ligne, une faute de frappe
+  // dans le SIRET d'une SECONDE entreprise ramènerait un formulaire qui
+  // modifie la première : le drapeau serait perdu en chemin, et la
+  // correction se serait écrite sur la mauvaise société.
+  if (texte(formData, "nouvelle") === "1") params.set("nouvelle", "1");
   for (const cle of CHAMPS_PORTES) {
     const valeur = texte(formData, cle);
     if (valeur !== "") params.set(`v_${cle}`, valeur);
@@ -188,8 +200,64 @@ async function signalerCeQuOnNaPasPuVerifier(formData: FormData): Promise<void> 
 }
 
 /**
+ * L'AVANCEMENT DU PARCOURS D'INSTALLATION, POSÉ À LA CRÉATION.
+ *
+ * `onboarding_step` est ce qui fait retomber quelqu'un sur la bonne
+ * étape de `/bienvenue` le lendemain. La colonne vaut ZÉRO par défaut
+ * (migration 0060), et `/bienvenue` traite « en dessous de 3 » comme
+ * « entreprise née avant que ce parcours existe » : elle renvoie alors
+ * à l'accueil.
+ *
+ * Tant que `/bienvenue` créait les entreprises, il posait 3 lui-même.
+ * Maintenant que la création vit ICI et nulle part ailleurs, c'est ici
+ * qu'il faut le poser — sans quoi TOUTE entreprise neuve se verrait
+ * refuser l'installation de son propre espace, avec son logo, ses
+ * modules et son équipe. C'est le défaut mesuré en production sur la
+ * première organisation du produit.
+ *
+ * Une écriture qui échoue n'annule rien : l'entreprise existe, elle est
+ * facturable, et rater le fil du parcours d'installation ne vaut pas de
+ * perdre une inscription.
+ */
+async function poserLeDepartDeLInstallation(organizationId: string): Promise<void> {
+  try {
+    const supabase = await createClient();
+    await supabase
+      .from("business_organizations")
+      .update({ onboarding_step: 3, updated_at: new Date().toISOString() })
+      .eq("id", organizationId)
+      // JAMAIS EN ARRIÈRE. Sur une création, la colonne vaut zéro et ce
+      // filtre ne change rien ; il est là pour que la ligne reste juste
+      // si ce code venait un jour à être appelé deux fois.
+      .lt("onboarding_step", 3);
+  } catch {
+    // Voir ci-dessus : un fil de parcours perdu ne vaut pas une
+    // inscription perdue.
+  }
+}
+
+/**
  * ÉTAPE « SOCIÉTÉ » — création de l'entreprise si elle n'existe pas
  * encore, puis enregistrement de son identité légale.
+ *
+ * ══════════════════════════════════════════════════════════════════
+ * C'EST DÉSORMAIS LE SEUL ENDROIT DU PRODUIT QUI CRÉE UNE ENTREPRISE
+ * ══════════════════════════════════════════════════════════════════
+ *
+ * `/bienvenue` en créait une lui aussi, avec son propre formulaire et
+ * ses propres écritures. Les deux appelaient la même fonction Postgres
+ * mais n'enregistraient PAS la même chose : celui-ci pose la fiche
+ * entière et met le numéro de TVA dans la file de vérification, l'autre
+ * posait un nom et un métier. Une entreprise née par l'autre chemin
+ * n'avait donc aucun dossier fiscal, et `saas_issue_invoice` aurait
+ * refusé d'émettre sa première facture — mesuré en production sur la
+ * première organisation du produit.
+ *
+ * Deux chemins de création finissent toujours par diverger. Il n'en
+ * reste qu'un, et c'est celui qui sait facturer, parce que la règle du
+ * dirigeant — carte obligatoire avant l'essai — impose que le contrat
+ * précède l'accès. Un chemin de création qui ne sait pas facturer ne
+ * peut pas être le premier.
  *
  * La création passe par `create_professional_organization()`, comme
  * partout ailleurs : elle fabrique l'espace de travail, l'organisation
@@ -197,6 +265,18 @@ async function signalerCeQuOnNaPasPuVerifier(formData: FormData): Promise<void> 
  * appels séparés laisseraient, au premier échec, une organisation sans
  * propriétaire — c'est-à-dire une organisation dont plus personne ne
  * peut ouvrir la porte.
+ *
+ * ══════════════════════════════════════════════════════════════════
+ * LA DEUXIÈME ENTREPRISE — `nouvelle`
+ * ══════════════════════════════════════════════════════════════════
+ *
+ * Sans ce drapeau, cette action ne crée que lorsqu'AUCUNE entreprise
+ * n'est active : elle modifie l'existante le reste du temps, ce qui est
+ * exactement ce qu'il faut quand on revient corriger sa fiche. Mais le
+ * produit est multi-entreprises (§13), et un paysagiste qui en fonde
+ * une seconde doit pouvoir le faire quelque part. `nouvelle=1` est ce
+ * quelque part, et il est explicite : il vient d'un champ caché du
+ * formulaire, jamais d'une déduction.
  */
 export async function enregistrerSociete(formData: FormData): Promise<void> {
   const nom = texte(formData, "name").slice(0, 120);
@@ -213,15 +293,63 @@ export async function enregistrerSociete(formData: FormData): Promise<void> {
   normaliserDansLeFormulaire(formData);
   refuserLesIdentifiantsFaux(formData);
 
+  // Le drapeau vient du champ caché du formulaire, et de lui seul.
+  const nouvelle = texte(formData, "nouvelle") === "1";
+
   let organisation = await getActiveOrganization();
 
-  if (organisation === null) {
+  if (organisation === null || nouvelle) {
+    if (nouvelle) {
+      // UN DOUBLE ENVOI NE FONDE PAS DEUX SOCIÉTÉS. Le bouton
+      // « Continuer » cliqué deux fois, ou une page rechargée, ne doit
+      // pas laisser deux entreprises jumelles derrière lui — deux
+      // abonnements à payer, deux jeux de clients, et personne pour
+      // dire laquelle est la bonne.
+      const deja = await getUserOrganizations();
+      const homonyme = deja.find(
+        (o) => o.name.trim().toLocaleLowerCase("fr") === nom.toLocaleLowerCase("fr"),
+      );
+      if (homonyme) {
+        retourAvecFaute(
+          formData,
+          "name",
+          `Vous avez déjà une entreprise nommée « ${homonyme.name} ». Choisissez un autre nom, ou basculez dessus depuis le menu en haut de la barre latérale.`,
+        );
+      }
+    }
+
     const supabase = await createClient();
-    const { error } = await supabase.rpc("create_professional_organization", {
-      org_name: nom,
-      org_business_type: metier,
-    });
-    if (error) throw new Error(error.message);
+    const { data: identifiantCree, error } = await supabase.rpc(
+      "create_professional_organization",
+      { org_name: nom, org_business_type: metier },
+    );
+    if (error) throw new Error(traduireRefus(error));
+
+    /**
+     * LA NOUVELLE ENTREPRISE DEVIENT L'ACTIVE, TOUT DE SUITE.
+     *
+     * `getActiveOrganization()` suit le cookie du sélecteur
+     * d'entreprise et, à défaut, prend la première par ordre
+     * alphabétique. Sans cette ligne, fonder « Atelier Vert » depuis un
+     * compte qui possède déjà « Paysages Martin » remplirait la fiche
+     * de Paysages Martin et lui souscrirait l'abonnement : le tunnel
+     * entier travaillerait sur la mauvaise société, sans rien signaler.
+     *
+     * Le cookie n'exprime qu'une PRÉFÉRENCE, comme celui de
+     * `switchOrganization` : `getActiveOrganization` la confronte aux
+     * appartenances réelles avant de la suivre, et RLS refuserait de
+     * toute façon.
+     */
+    if (typeof identifiantCree === "string" && identifiantCree !== "") {
+      const store = await cookies();
+      store.set(ACTIVE_ORGANIZATION_COOKIE, identifiantCree, {
+        path: "/",
+        maxAge: 60 * 60 * 24 * 365,
+        sameSite: "lax",
+        httpOnly: true,
+      });
+    }
+
     // La mise en page entière dépend de l'existence de l'organisation :
     // barre latérale, menu, sélecteur d'entreprise.
     revalidatePath("/", "layout");
@@ -235,6 +363,10 @@ export async function enregistrerSociete(formData: FormData): Promise<void> {
         "L'entreprise a été créée mais reste introuvable pour votre compte. Rechargez la page.",
       );
     }
+
+    // L'INSTALLATION DU LOGICIEL COMMENCE ICI, même si elle se joue
+    // ailleurs. Voir `poserLeDepartDeLInstallation`.
+    await poserLeDepartDeLInstallation(organisation.organizationId);
   }
 
   // `updateCompanyProfile` réécrit la fiche ENTIÈRE : c'est pour cela
@@ -566,6 +698,35 @@ export async function ouvrirLePaiement(demande: DemandePaiement): Promise<Checko
   // Aucun droit n'est ouvert ici : c'est l'événement SIGNÉ reçu par le
   // webhook qui fera foi. Cette action ne fait qu'ouvrir la porte.
   try {
+    /**
+     * CE QU'ON VIENT DE DEMANDER, RETENU LE TEMPS DU TRAJET.
+     *
+     * Le client part chez le prestataire et revient chez nous quelques
+     * secondes plus tard — presque toujours AVANT l'événement signé.
+     * À cet instant, `organization_subscriptions` est encore vide : la
+     * page de confirmation n'aurait littéralement rien à afficher, au
+     * moment précis où la personne vient de donner sa carte.
+     *
+     * On pose donc un aide-mémoire, AVANT d'ouvrir la caisse plutôt
+     * qu'après : la fonction ci-dessous rend une URL, et le navigateur
+     * peut partir dessus sans nous laisser le temps d'écrire quoi que
+     * ce soit ensuite.
+     *
+     * IL N'OUVRE AUCUN DROIT — c'est un texte de paragraphe, et rien
+     * d'autre. Voir `paiement-partage.ts`.
+     *
+     * Les dates viennent du RÉSUMÉ, c'est-à-dire du même calcul que
+     * celui qui part au prestataire. Un second calcul fait ici dirait
+     * une autre date à l'écran que celle qui sera prélevée.
+     */
+    await poserPaiementEnCours({
+      planKey: intention.planKey,
+      cycle: intention.billingCycle,
+      avecEssai: resume.essai?.plan.avecEssai ?? demande.avecEssai,
+      premierPrelevementLe: resume.essai?.plan.premierPrelevementLe ?? leJour,
+      finEssaiLe: resume.essai?.plan.finEssaiLe ?? null,
+    });
+
     return await provider.startCheckout({
       // L'ENTREPRISE VIENT DE LA SESSION, jamais de la requête.
       organizationId: organisation.organizationId,
@@ -585,4 +746,43 @@ export async function ouvrirLePaiement(demande: DemandePaiement): Promise<Checko
       "La page de paiement n'a pas pu être ouverte. Rien n'a été prélevé ; réessayez dans un instant.",
     );
   }
+}
+
+// ==================================================================
+// L'ÉTAPE « CONFIRMATION » — LES DEUX SORTIES
+// ==================================================================
+
+/**
+ * §15 « Choisir → Résumé → Paiement → Confirmation ». La sortie.
+ *
+ * ══════════════════════════════════════════════════════════════════
+ * POURQUOI DEUX ACTIONS PLUTÔT QUE DEUX LIENS
+ * ══════════════════════════════════════════════════════════════════
+ *
+ * Parce qu'un lien ne peut pas effacer un cookie. L'aide-mémoire du
+ * paiement (`paiement-partage.ts`) vaut deux heures : il est ce qui
+ * permet de dire « nous attendons la confirmation de votre paiement »
+ * pendant que le prestataire nous répond. Passé la confirmation lue, il
+ * n'a plus rien à dire, et le laisser traîner ferait retomber sur
+ * l'écran d'attente quelqu'un qui est déjà entré dans le logiciel.
+ *
+ * On l'efface donc AU MOMENT OÙ LA PERSONNE S'EN VA, et pas avant :
+ * tant qu'elle est sur la confirmation, elle peut recharger, revenir,
+ * relire — et c'est le cookie qui lui permet d'y retrouver ce qu'elle a
+ * demandé tant que la base ne le sait pas encore.
+ *
+ * Aucune des deux ne touche à un droit ni à un abonnement. Elles
+ * ferment un aide-mémoire et changent de page.
+ */
+export async function installerMonEspace(): Promise<void> {
+  await oublierPaiementEnCours();
+  // L'installation du LOGICIEL : logo, mentions, effectif, modules,
+  // équipe. Facultative de bout en bout — c'était une bonne décision,
+  // et brancher le péage ne la défait pas.
+  redirect("/bienvenue");
+}
+
+export async function entrerDansLApplication(): Promise<void> {
+  await oublierPaiementEnCours();
+  redirect("/");
 }

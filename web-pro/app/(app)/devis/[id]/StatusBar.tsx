@@ -81,8 +81,16 @@ export function StatusBar({ quote }: { quote: Quote }) {
         </button>
       </form>
 
+      {/*
+        CETTE PHRASE DISAIT LE CONTRAIRE DE CE QUE FAIT LE BOUTON.
+        Depuis la migration 0084, « Marquer comme envoyé » expédie
+        réellement le devis au client. Laisser « aucun courriel n'est
+        envoyé » empêchait de comprendre ce qui venait de se passer — et
+        de comprendre pourquoi le client répondait.
+      */}
       <span className="ml-auto text-[11px] text-ink-faint">
-        Aucun courriel n&apos;est envoyé par Oasis. Vous transmettez le devis vous-même.
+        « Marquer comme envoyé » adresse le devis à votre client, à l&apos;adresse enregistrée
+        sur sa fiche. Les réponses vous reviennent directement.
       </span>
     </div>
   );

@@ -9,10 +9,16 @@ import type { PlatformPermission } from "@/lib/auth/roles";
  * LE CLIENT PRIVILÉGIÉ — `service_role`
  * ==================================================================
  *
- * Le seul module du dépôt qui lit `SUPABASE_SERVICE_ROLE_KEY`. Il est
- * marqué `server-only` : un composant client qui l'importerait, même
- * indirectement, ferait échouer la COMPILATION. Ce n'est pas une
- * convention qu'on peut oublier de suivre, c'est une erreur de build.
+ * L'un des DEUX seuls modules du dépôt qui lisent
+ * `SUPABASE_SERVICE_ROLE_KEY`. L'autre est `lib/email/machine.ts`, qui
+ * appelle le chemin de transport de la machine d'envoi — lequel
+ * n'accepte QUE ce porteur, ni jeton d'utilisateur ni secret de
+ * transporteur.
+ *
+ * Tous deux sont marqués `server-only` : un composant client qui les
+ * importerait, même indirectement, ferait échouer la COMPILATION. Ce
+ * n'est pas une convention qu'on peut oublier de suivre, c'est une
+ * erreur de build.
  *
  * ------------------------------------------------------------------
  * CE QU'IL N'EST PAS

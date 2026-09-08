@@ -5,9 +5,14 @@ import { redirect } from "next/navigation";
 import { createClient } from "@/lib/supabase/server";
 import { requireOrganization } from "@/lib/auth/organization";
 import { recordAudit } from "@/lib/audit/record";
+import { flash } from "@/lib/ui/flash";
+import {
+  annulerCourrierEnAttente, declencherDevisEnvoye, phrasePourEcran,
+} from "@/app/api/email/dependances";
 import {
   inputToCents, parseQuantity, COST_KIND_FROM_ITEM_TYPE, type QuoteStatus, type CatalogItemType, parseQuantityOr, parseVatRate,
 } from "./types";
+import { traduireRefus } from "@/lib/peage/messages";
 
 /**
  * §11E — devis.
@@ -17,10 +22,28 @@ import {
  * chose évidente à trafiquer. RLS refuserait de toute façon, mais il n'y
  * a aucune raison d'envoyer la tentative.
  *
- * CE QUE CES ACTIONS NE FONT PAS : envoyer. « NE PAS envoyer
- * automatiquement des devis » figure dans la liste des interdits.
- * Marquer un devis « envoyé » enregistre un fait — l'utilisateur l'a
- * transmis — et ne déclenche aucun courriel.
+ * ══════════════════════════════════════════════════════════════════
+ * §EMAILS — CE FICHIER ENVOIE MAINTENANT, ET IL FAUT LIRE POURQUOI CE
+ * N'EST PAS UNE CONTRADICTION
+ * ══════════════════════════════════════════════════════════════════
+ *
+ * L'en-tête disait : « CE QUE CES ACTIONS NE FONT PAS : envoyer. NE PAS
+ * envoyer automatiquement des devis figure dans la liste des
+ * interdits. » L'interdit visait un logiciel qui décide tout seul de
+ * démarcher les clients d'un paysagiste — et il tient toujours.
+ *
+ * Ce qui a changé est le sens du mot « automatiquement ». `setQuoteStatus`
+ * ne devine rien : quelqu'un a CLIQUÉ sur « envoyé ». Le message est la
+ * conséquence mécanique de ce geste humain, exactement comme
+ * `sent_at` et la ligne d'audit qui l'accompagnent déjà. Un modèle,
+ * lui, ne déclenche toujours rien — voir
+ * `app/api/email/frontiere-ia.test.ts`, qui vérifie sur les fichiers
+ * qu'aucun outil d'agent n'atteint le chemin d'envoi.
+ *
+ * ET L'ENVOI NE PEUT PAS FAIRE ÉCHOUER L'ACTION. `declencherDevisEnvoye`
+ * ne lève jamais : elle rend un résultat qu'on affiche. Un devis qui
+ * refuserait de passer en « envoyé » parce qu'un courriel a échoué
+ * serait un défaut grave.
  */
 
 function text(formData: FormData, key: string): string | null {
@@ -60,7 +83,7 @@ export async function createQuote(formData: FormData) {
     .select("id")
     .single();
 
-  if (error) throw new Error(error.message);
+  if (error) throw new Error(traduireRefus(error));
 
   revalidatePath("/devis");
   redirect(`/devis/${data.id}`);
@@ -81,7 +104,7 @@ export async function updateQuote(formData: FormData) {
 
   const supabase = await createClient();
   const { error } = await supabase.from("quotes").update(patch).eq("id", quoteId);
-  if (error) throw new Error(error.message);
+  if (error) throw new Error(traduireRefus(error));
 
   revalidatePath(`/devis/${quoteId}`);
 }
@@ -91,7 +114,8 @@ export async function updateQuote(formData: FormData) {
  *
  * Les horodatages accompagnent le changement plutôt que d'être saisis :
  * « envoyé le » est la date où l'on a cliqué, personne ne doit la taper.
- * Aucun courriel n'est émis — voir l'en-tête du fichier.
+ * Et c'est ce même clic qui expédie le devis au client — voir l'en-tête
+ * du fichier, et l'accroche en bas de cette fonction.
  */
 export async function setQuoteStatus(formData: FormData) {
   const organization = await requireOrganization();
@@ -108,7 +132,7 @@ export async function setQuoteStatus(formData: FormData) {
 
   const supabase = await createClient();
   const { error } = await supabase.from("quotes").update(patch).eq("id", quoteId);
-  if (error) throw new Error(error.message);
+  if (error) throw new Error(traduireRefus(error));
 
   // Trois basculements se tracent : l'envoi et la décision du client.
   // Les autres changements de statut sont du travail interne.
@@ -116,6 +140,30 @@ export async function setQuoteStatus(formData: FormData) {
   const action = audited[status as keyof typeof audited];
   if (action) {
     await recordAudit(organization.organizationId, action, "quote", quoteId, { status });
+  }
+
+  // §EMAILS — L'ACCROCHE, ET LE SEUL ENDROIT DE CE FICHIER QUI EXPÉDIE.
+  //
+  // APRÈS l'écriture et après l'audit, jamais avant : on n'envoie pas
+  // un devis que la base n'a pas fini d'enregistrer. Et le résultat se
+  // LIT au lieu d'être ignoré — quand rien n'est parti, le paysagiste
+  // doit le savoir, sinon il attend une réponse à un message qui
+  // n'existe pas et le produit ment par omission.
+  //
+  // Le ton n'est pas « erreur » : le devis EST passé en « envoyé ».
+  if (status === "sent") {
+    const phrase = phrasePourEcran(
+      await declencherDevisEnvoye(organization.organizationId, quoteId),
+    );
+    if (phrase) await flash("info", phrase);
+  }
+
+  // ET L'INVERSE : ANNULER UN DEVIS ARRÊTE CE QUI N'EST PAS ENCORE
+  // PARTI. Un message peut attendre en file quand le transporteur est
+  // momentanément absent ; sans cela, le passage suivant expédierait un
+  // devis annulé.
+  if (status === "cancelled" || status === "rejected") {
+    await annulerCourrierEnAttente(organization.organizationId, "quote", quoteId);
   }
 
   revalidatePath(`/devis/${quoteId}`);
@@ -147,7 +195,7 @@ export async function addSection(formData: FormData) {
     title,
     position: (last?.position ?? -1) + 1,
   });
-  if (error) throw new Error(error.message);
+  if (error) throw new Error(traduireRefus(error));
 
   revalidatePath(`/devis/${quoteId}`);
 }
@@ -162,7 +210,7 @@ export async function deleteSection(formData: FormData) {
   // null` les renvoie dans le bloc sans section. Supprimer un titre par
   // erreur ne doit jamais emporter le chiffrage avec lui.
   const { error } = await supabase.from("quote_sections").delete().eq("id", sectionId);
-  if (error) throw new Error(error.message);
+  if (error) throw new Error(traduireRefus(error));
 
   revalidatePath(`/devis/${quoteId}`);
 }
@@ -258,7 +306,7 @@ export async function addLine(formData: FormData) {
     vat_rate: vatRate,
     cost_kind: costKind,
   });
-  if (error) throw new Error(error.message);
+  if (error) throw new Error(traduireRefus(error));
 
   revalidatePath(`/devis/${quoteId}`);
 }
@@ -289,7 +337,7 @@ export async function updateLine(formData: FormData) {
 
   const supabase = await createClient();
   const { error } = await supabase.from("quote_lines").update(patch).eq("id", lineId);
-  if (error) throw new Error(error.message);
+  if (error) throw new Error(traduireRefus(error));
 
   revalidatePath(`/devis/${quoteId}`);
 }
@@ -301,7 +349,7 @@ export async function deleteLine(formData: FormData) {
 
   const supabase = await createClient();
   const { error } = await supabase.from("quote_lines").delete().eq("id", lineId);
-  if (error) throw new Error(error.message);
+  if (error) throw new Error(traduireRefus(error));
 
   revalidatePath(`/devis/${quoteId}`);
 }
@@ -343,7 +391,7 @@ export async function captureQuoteRevision(formData: FormData) {
     total_excluding_vat_cents: totals?.total_excluding_vat_cents ?? 0,
     created_by: user.user?.id ?? null,
   });
-  if (error) throw new Error(error.message);
+  if (error) throw new Error(traduireRefus(error));
 
   revalidatePath(`/devis/${quoteId}`);
 }

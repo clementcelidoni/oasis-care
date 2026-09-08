@@ -308,6 +308,59 @@ export const ADMIN_NAVIGATION: AdminNavGroup[] = [
   },
   /**
    * ------------------------------------------------------------------
+   * COURRIER — et sans ce groupe, les écrans n'existaient pour personne
+   * ------------------------------------------------------------------
+   * Les trois pages du courrier sortant étaient écrites et atteignables
+   * en tapant leur URL, c'est-à-dire jamais. C'est le même défaut que
+   * pour les sessions d'assistance, plus haut : un écran sans porte
+   * n'est pas un écran.
+   *
+   * TROIS ENTRÉES, TROIS PERMISSIONS DIFFÉRENTES, et c'est la
+   * séparation des pouvoirs de 0084 rendue visible : le responsable
+   * produit compose les annonces sans jamais voir la liste de
+   * suppression ; le responsable sécurité surveille la délivrabilité et
+   * réhabilite les adresses sans jamais écrire au parc. Aucun rôle sauf
+   * le super-administrateur ne voit les trois.
+   *
+   * « Messages de service » (/emails/service) n'a PAS d'entrée : cet
+   * écran explique ce que le produit ne sait pas encore envoyer. Une
+   * porte de barre latérale vers une absence dirait qu'on peut y faire
+   * quelque chose.
+   *
+   * LE PIÈGE DE SEMIS JOUE ICI AUSSI. Tant que 0084 n'est pas
+   * appliquée, ces trois permissions ne sont portées par PERSONNE — pas
+   * même par le super-administrateur — et le groupe entier disparaît du
+   * menu sans un mot. Les pages, elles, distinguent « migration
+   * absente » de « rôle trop étroit » (voir `lib/email/socle.ts`).
+   */
+  {
+    label: "Courrier",
+    items: [
+      {
+        label: "Annonces commerciales",
+        href: "/emails",
+        icon: "envelope",
+        permission: "emails.campaigns.read",
+        hint: "Ce qu'Oasis Care écrit à ses entreprises clientes, et à qui",
+      },
+      {
+        label: "Délivrabilité",
+        href: "/emails/delivrabilite",
+        icon: "gauge",
+        permission: "emails.log.read",
+        hint: "Rebonds et plaintes par entreprise — la réputation du domaine est commune",
+      },
+      {
+        label: "Liste de suppression",
+        href: "/emails/suppressions",
+        icon: "shield",
+        permission: "emails.suppression.read",
+        hint: "Les adresses qu'on ne sollicite plus en publicité, et pourquoi",
+      },
+    ],
+  },
+  /**
+   * ------------------------------------------------------------------
    * PARAMÈTRES — ce qui concerne la plateforme elle-même, pas ses clients
    * ------------------------------------------------------------------
    * La spec p.6 éparpille ces écrans entre SECURITY (« Admins »,

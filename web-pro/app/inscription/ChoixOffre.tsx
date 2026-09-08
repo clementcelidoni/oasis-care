@@ -369,7 +369,14 @@ export function ChoixOffre({
       if (sortie.kind === "completed") {
         // Destination INTERNE : le routeur, qui garde l'application
         // montée au lieu de recharger la page entière.
-        router.push("/entreprise/abonnement");
+        //
+        // ON VA À LA CONFIRMATION, pas à la fiche d'abonnement. Le
+        // client vient de souscrire : ce qu'il attend, c'est qu'on lui
+        // dise ce qui est souscrit et à partir de quand, pas un tableau
+        // de référence sur les offres. C'est la quatrième étape du
+        // tunnel — « Choisir → Résumé → Paiement → Confirmation » — et
+        // c'est le même écran que celui où le prestataire nous renvoie.
+        router.push("/inscription?etape=confirmation");
         router.refresh();
         return;
       }
@@ -1059,16 +1066,28 @@ function CarteOffre({
       {/* ---------------- L'action ---------------- */}
       <div className="mt-5">
         {surDevis ? (
-          /* Une offre sur devis NE SE SOUSCRIT PAS : la base le refuse
-             (`organization_subscriptions_plan_guard`), et un bouton qui
-             mènerait au tunnel enverrait le visiteur dans un cul-de-sac.
-             On l'envoie parler à quelqu'un. */
-          <a
-            href="/aide#contact"
-            className="inline-flex w-full items-center justify-center rounded-[var(--radius-control)] border border-line-strong bg-surface px-3.5 py-2 text-[var(--text-secondary)] font-medium hover:bg-canvas"
-          >
-            Nous contacter
-          </a>
+          /* UNE OFFRE SUR DEVIS N'EST PAS UN BOUTON DE PAIEMENT, C'EST
+             UNE PRISE DE CONTACT.
+             Elle ne se souscrit pas en libre-service : la base le refuse
+             (`saas_start_subscription` écarte les offres `is_quote_only`),
+             et un bouton qui mènerait au tunnel enverrait le visiteur
+             dans un cul-de-sac. Le contrat, lui, existe bel et bien : un
+             administrateur le pose à la main, avec son tarif négocié.
+             D'où le libellé — ce qu'on ouvre ici est une conversation,
+             et la phrase juste en dessous dit ce qui va suivre. */
+          <div className="flex flex-col gap-2">
+            <a
+              href="/aide#contact"
+              className="inline-flex w-full items-center justify-center rounded-[var(--radius-control)] border border-line-strong bg-surface px-3.5 py-2 text-[var(--text-secondary)] font-medium hover:bg-canvas"
+            >
+              Demander un devis
+            </a>
+            <span className="text-[var(--text-secondary)] text-ink-faint">
+              Cette offre se construit avec vous : nous en parlons, nous chiffrons, puis nous
+              mettons le contrat en place. Rien ne se souscrit ni ne se prélève depuis cet
+              écran.
+            </span>
+          </div>
         ) : annuelImpossible ? (
           <p className="text-[var(--text-secondary)] text-ink-faint">
             Cette offre n&apos;a pas de tarif annuel publié. Choisissez « Au mois » pour la

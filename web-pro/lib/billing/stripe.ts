@@ -81,6 +81,7 @@ import type {
   OrganizationSubscription,
 } from "./provider.ts";
 import { lireAbonnement } from "./abonnement.ts";
+import { lireSituationPeage } from "../peage/situation.ts";
 // CHEMIN RELATIF ET EXTENSION EXPLICITE, VOLONTAIREMENT.
 //
 // L'alias `@/…` est résolu par le compilateur de Next, PAS par Node :
@@ -300,9 +301,47 @@ export class StripeBillingProvider implements BillingProvider {
     supabase: SupabaseClient,
     organizationId: string,
   ): Promise<{ code: string; motif: string } | null> {
-    // ---- 1. Un abonnement en cours ferme la caisse ----------------
+    // ══════════════════════════════════════════════════════════════
+    // 1. CE N'EST PLUS LE STATUT QUI FERME LA CAISSE, C'EST LE PÉAGE
+    // ══════════════════════════════════════════════════════════════
+    //
+    // La question à poser n'est pas « y a-t-il une ligne
+    // d'abonnement ? » — il y en a toujours une après la première
+    // souscription, la clé primaire de la table y veille — mais
+    // « CET ABONNEMENT OUVRE-T-IL ENCORE QUELQUE CHOSE ? ». C'est
+    // exactement ce que rend `peage_etat_organisation` (migration
+    // 0092), et c'est la même réponse que celle qui garde les tables :
+    // une seule règle, un seul juge.
+    //
+    // La caisse est OUVERTE dans deux états, et fermée dans deux
+    // autres :
+    //
+    //   transit    aucune ligne → première souscription. Le webhook
+    //              appellera saas_start_subscription.
+    //   restreint  la ligne existe mais n'ouvre plus rien → le client
+    //              revient payer. Le webhook appellera
+    //              saas_reopen_subscription, qui REPREND la ligne au
+    //              lieu de buter sur son unicité.
+    //   ouvert     le contrat court : une seconde souscription
+    //              créerait un second dossier chez le prestataire.
+    //   sursis     il doit de l'argent sur le contrat EN COURS. Ce
+    //              n'est pas un réabonnement qu'il lui faut, c'est un
+    //              règlement — lui ouvrir un second contrat lui ferait
+    //              payer deux fois et ne solderait pas le premier.
+    const situation = await lireSituationPeage(supabase, organizationId);
     const abonnement = await lireAbonnement(supabase, organizationId);
-    if (abonnement !== null && STATUTS_DEJA_ABONNE.has(abonnement.status)) {
+
+    if (situation !== null && situation.etat === "sursis") {
+      return {
+        code: "reglementEnAttente",
+        motif:
+          "Votre abonnement est bien en cours, mais un règlement nous manque. Ce n'est pas une nouvelle "
+          + "souscription qu'il faut — elle ouvrirait un second contrat et vous feriez payer deux fois — "
+          + "c'est cette facture-là qu'il faut régler. Vous la trouvez dans Entreprise › Abonnement.",
+      };
+    }
+
+    if (situation !== null && situation.etat === "ouvert") {
       return {
         code: "dejaAbonne",
         motif:
@@ -310,35 +349,51 @@ export class StripeBillingProvider implements BillingProvider {
       };
     }
 
-    // ---- 1 bis. UN ABONNEMENT RÉSILIÉ FERME LA CAISSE AUSSI -------
+    // ---- 1 bis. TANT QUE 0092 N'EST PAS PASSÉE ---------------------
     //
-    // CE CONTRÔLE EST NOUVEAU, ET IL RENVERSE LE COMPORTEMENT
-    // PRÉCÉDENT — « un abonnement résilié ne ferme pas la caisse : on
-    // peut se réabonner ». Voici pourquoi, et ce qui le rouvrira.
+    // `lireSituationPeage` rend `null` quand la fonction n'existe pas
+    // encore — le code peut être déployé avant la migration. On
+    // retombe alors sur l'ancien contrôle, qui n'a qu'un défaut : il
+    // ferme aussi la caisse aux entreprises fermées. C'est le
+    // comportement d'avant, il est prudent, et il disparaît dès que la
+    // migration est passée.
+    if (situation === null && abonnement !== null && STATUTS_DEJA_ABONNE.has(abonnement.status)) {
+      return {
+        code: "dejaAbonne",
+        motif:
+          "Cette entreprise a déjà un abonnement en cours. Un changement d'offre se fait sur l'abonnement existant, pas par une nouvelle souscription : ouvrir une seconde souscription créerait un second dossier de paiement chez le prestataire, et un remboursement partirait du mauvais. Écrivez-nous, nous le faisons avec vous.",
+      };
+    }
+
+    // ---- 1 ter. LE VERROU DU RÉABONNEMENT A SAUTÉ -----------------
     //
-    // La souscription ne s'enregistre pas ici : elle s'enregistre par
-    // `saas_start_subscription()`, côté machine, quand l'encaissement
-    // est confirmé. Or cette fonction refuse net toute entreprise qui
-    // porte DÉJÀ une ligne dans `organization_subscriptions` —
-    // « Cette entreprise a déjà un abonnement. » — et la ligne
-    // résiliée en est une : `admin_cancel_subscription` la met à
-    // « cancelled », elle ne la supprime pas.
+    // Il y avait ici un refus net de toute entreprise portant DÉJÀ une
+    // ligne d'abonnement, même résiliée. Son motif était juste :
+    // `saas_start_subscription()` lève 23505 dans ce cas, si bien
+    // qu'encaisser aurait pris l'argent sans pouvoir rouvrir les
+    // droits. Son commentaire l'annonçait : « CE VERROU DOIT SAUTER le
+    // jour où le réabonnement aura son chemin ». C'est ce jour-là.
     //
-    // Laisser passer, c'est donc PRENDRE L'ARGENT puis échouer à
-    // enregistrer l'abonnement : un encaissement sans facture et sans
-    // droit, c'est-à-dire exactement ce que tout ce chantier refuse. Le
-    // client aurait payé et n'aurait rien.
+    // Le chemin existe : `saas_reopen_subscription` (0092 § 8) REPREND
+    // la ligne existante au lieu de buter dessus, et le webhook
+    // l'appelle dès que l'ouverture rend « déjà un abonnement ». Le
+    // garder aurait été bien pire qu'un oubli : le péage ferme les
+    // comptes impayés, et la seule porte pour les rouvrir est
+    // justement celle-ci. On aurait enfermé des clients dehors avec
+    // leurs données à l'intérieur.
     //
-    // On refuse en amont, pendant qu'il est encore temps de ne rien
-    // prélever, et on dit quoi faire. CE VERROU DOIT SAUTER le jour où
-    // le réabonnement aura son chemin — reprise de la ligne existante
-    // plutôt que création — et ce jour-là ce sera une décision, pas un
-    // oubli.
-    if (abonnement !== null) {
+    // Ce qui reste vrai, et qui est traité plus haut : on ne rouvre
+    // pas un contrat qui court (« ouvert »), et on ne fait pas
+    // souscrire deux fois celui qui doit simplement régler
+    // (« sursis »).
+    if (situation === null && abonnement !== null) {
+      // Sans le péage — migration pas encore passée — on ne sait pas
+      // distinguer « résilié » de « en cours ». On garde donc l'ancien
+      // refus prudent plutôt que d'encaisser à l'aveugle.
       return {
         code: "abonnementResilie",
         motif:
-          "Cette entreprise a déjà été abonnée par le passé. Un réabonnement ne se fait pas comme une première souscription — il reprend le dossier existant, et nous ne pouvons pas encore le faire depuis cet écran sans risquer d'encaisser sans pouvoir rouvrir vos droits. Écrivez-nous : nous le remettons en route avec vous, et rien n'a été prélevé.",
+          "Cette entreprise a déjà été abonnée par le passé. Un réabonnement reprend le dossier existant, et cette reprise n'est pas encore en service sur cette installation. Écrivez-nous : nous la remettons en route avec vous, et rien n'a été prélevé.",
       };
     }
 

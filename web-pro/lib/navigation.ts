@@ -214,6 +214,18 @@ export const NAVIGATION: NavGroup[] = [
       // KBIS, RIB) est ailleurs, sous `/entreprise/documents`, et lui
       // reste aux administrateurs.
       { label: "Documents", href: "/documents", icon: "document", permission: "projects.read", milestone: REFONTE },
+      // §15-§18 LES ÉTIQUETTES. Le module était livré et INVISIBLE :
+      // six routes, aucune entrée de menu, aucune icône — on n'y
+      // arrivait qu'en tapant l'adresse à la main.
+      //
+      // La permission est `etiquettes.read`, celle qui ouvre l'écran ;
+      // composer et imprimer demandent `etiquettes.manage`, et c'est la
+      // page qui masque ce qui s'écrit. Pas de `module` : une étiquette
+      // ne dépend d'aucun des six modules extinguibles — elle sert
+      // aussi bien un jardin qu'un lot de pépinière ou un bocal de
+      // laboratoire, et la lier à l'un d'eux la ferait disparaître pour
+      // les autres.
+      { label: "Étiquettes", href: "/etiquettes", icon: "tag", permission: "etiquettes.read", milestone: REFONTE },
     ],
   },
   {

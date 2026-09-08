@@ -6,6 +6,7 @@ import { cookies } from "next/headers";
 import { redirect } from "next/navigation";
 import { requireOrganization, ACTIVE_ORGANIZATION_COOKIE } from "./organization";
 import { BUSINESS_TYPES, type BusinessType } from "./permissions";
+import { traduireRefus } from "@/lib/peage/messages";
 
 /**
  * Modifier l'identité de l'organisation.
@@ -40,7 +41,7 @@ export async function updateOrganizationProfile(formData: FormData) {
     .from("business_organizations")
     .update(patch)
     .eq("id", organization.organizationId);
-  if (error) throw new Error(error.message);
+  if (error) throw new Error(traduireRefus(error));
 
   // Le menu est rendu par la mise en page : sans ce rafraîchissement,
   // les modules nouvellement débloqués n'apparaîtraient qu'au prochain
@@ -97,7 +98,7 @@ export async function updateOrganizationIdentity(formData: FormData) {
       updated_at: new Date().toISOString(),
     })
     .eq("id", organization.organizationId);
-  if (error) throw new Error(error.message);
+  if (error) throw new Error(traduireRefus(error));
 
   revalidatePath("/parametres");
   // L'entête change sur chaque devis et chaque facture déjà émis.

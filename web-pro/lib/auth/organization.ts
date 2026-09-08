@@ -17,12 +17,31 @@ export type OrganizationContext = {
  * Every organization the signed-in user belongs to.
  *
  * §"MULTI-ENTREPRISES : un même utilisateur peut appartenir à plusieurs
- * organisations." RLS does the filtering — this query asks for all rows
- * and the database returns only the caller's, so a bug here cannot leak
- * another company's organization.
+ * organisations."
+ *
+ * LA RLS NE FILTRE PAS SUR LE PORTEUR, ET C'ÉTAIT L'HYPOTHÈSE FAUSSE.
+ * Le commentaire d'origine affirmait que la base ne renvoie que les
+ * lignes de l'appelant. Ce n'est pas ce que fait la politique
+ * « Members can read the member list » (0043) : elle rend la liste
+ * ENTIÈRE des membres à tout membre de l'entreprise. Cette requête
+ * voyait donc, dès le deuxième salarié, le rôle et les permissions
+ * personnalisées DES AUTRES — la même entreprise revenait plusieurs
+ * fois, avec des droits qui n'étaient pas ceux du porteur, et
+ * getActiveOrganization() prenait la première qui correspondait.
+ *
+ * Invisible aujourd'hui : l'unique entreprise du produit n'a qu'un
+ * membre. Le défaut serait apparu à la première embauche, et il aurait
+ * pu donner à quelqu'un les droits d'un collègue.
+ *
+ * LE PORTEUR VIENT DE LA SESSION, JAMAIS D'UN PARAMÈTRE. La RLS reste
+ * la barrière — elle empêche de lire une AUTRE entreprise ; ce filtre
+ * dit seulement DE QUI on lit le rôle.
  */
 export async function getUserOrganizations(): Promise<OrganizationContext[]> {
   const supabase = await createClient();
+
+  const user = await getCurrentUser();
+  if (!user) return [];
 
   const { data, error } = await supabase
     .from("organization_members")
@@ -30,6 +49,7 @@ export async function getUserOrganizations(): Promise<OrganizationContext[]> {
       `role, custom_permissions,
        business_organizations!inner ( id, workspace_id, name, business_type, archived_at )`,
     )
+    .eq("user_id", user.id)
     .is("archived_at", null);
 
   if (error || !data) return [];
@@ -120,5 +140,10 @@ export async function requireOrganization(): Promise<OrganizationContext> {
   if (organization) return organization;
 
   const user = await getCurrentUser();
-  redirect(user ? "/bienvenue" : "/login");
+  // `/inscription` ET NON `/bienvenue`, comme la coquille de
+  // l'application : le contrat précède l'accès, et l'installation du
+  // logiciel vient après. Passer par `/bienvenue` fonctionnait encore
+  // — elle renvoie ici — mais au prix d'un saut de plus, et surtout en
+  // laissant croire dans le code que la porte est ailleurs.
+  redirect(user ? "/inscription" : "/login");
 }

@@ -6,6 +6,7 @@ import { requireOrganization } from "@/lib/auth/organization";
 import { flash } from "@/lib/ui/flash";
 import { BUSINESS_TYPES, type BusinessType } from "@/lib/auth/permissions";
 import { TOGGLEABLE_MODULES, type ModuleKey } from "@/lib/navigation";
+import { traduireRefus } from "@/lib/peage/messages";
 
 /**
  * §11 MA SOCIÉTÉ, §12 LOGO, §43 MODULES, §45 DOCUMENTS.
@@ -77,7 +78,7 @@ export async function updateCompanyProfile(formData: FormData) {
     .from("business_organizations")
     .update(patch)
     .eq("id", organization.organizationId);
-  if (error) throw new Error(error.message);
+  if (error) throw new Error(traduireRefus(error));
 
   await flash("success", "Fiche de l'entreprise enregistrée.");
   // L'activité gouverne le menu, et le nom s'affiche dans la barre
@@ -106,7 +107,7 @@ export async function updateCompanyAdministration(formData: FormData) {
       updated_at: new Date().toISOString(),
     })
     .eq("id", organization.organizationId);
-  if (error) throw new Error(error.message);
+  if (error) throw new Error(traduireRefus(error));
 
   await flash("success", "Assurances et agréments enregistrés.");
   revalidatePath("/entreprise");
@@ -198,7 +199,7 @@ export async function removeCompanyLogo() {
     .from("business_organizations")
     .update({ logo_path: null, updated_at: new Date().toISOString() })
     .eq("id", organization.organizationId);
-  if (error) throw new Error(error.message);
+  if (error) throw new Error(traduireRefus(error));
 
   if (before?.logo_path) {
     await supabase.storage.from("organization-logos").remove([before.logo_path]);
@@ -231,7 +232,7 @@ export async function updateModules(formData: FormData) {
     .from("business_organizations")
     .update({ disabled_modules: disabled as ModuleKey[], updated_at: new Date().toISOString() })
     .eq("id", organization.organizationId);
-  if (error) throw new Error(error.message);
+  if (error) throw new Error(traduireRefus(error));
 
   await flash(
     "success",
@@ -303,7 +304,7 @@ export async function deleteCompanyDocument(formData: FormData) {
     .maybeSingle();
 
   const { error } = await supabase.from("organization_documents").delete().eq("id", id);
-  if (error) throw new Error(error.message);
+  if (error) throw new Error(traduireRefus(error));
 
   // Le fichier APRÈS la ligne : dans l'ordre inverse, un échec
   // laisserait une ligne qui pointe vers un fichier disparu, et l'écran

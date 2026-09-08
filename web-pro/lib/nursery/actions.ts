@@ -6,6 +6,7 @@ import { createClient } from "@/lib/supabase/server";
 import { requireOrganization } from "@/lib/auth/organization";
 import { parseQuantity } from "@/lib/quotes/types";
 import { DEFAULT_STAGES } from "./types";
+import { traduireRefus } from "@/lib/peage/messages";
 
 /**
  * §11I à §11L — pépinière.
@@ -46,7 +47,7 @@ export async function createLocation(formData: FormData) {
       ? parseQuantity(String(formData.get("surface_m2"))) || null : null,
     capacity: formData.get("capacity") ? count(formData, "capacity") || null : null,
   });
-  if (error) throw new Error(error.message);
+  if (error) throw new Error(traduireRefus(error));
 
   revalidatePath("/pepiniere/emplacements");
 }
@@ -62,7 +63,7 @@ export async function archiveLocation(formData: FormData) {
     .from("nursery_locations")
     .update({ archived_at: new Date().toISOString() })
     .eq("id", id);
-  if (error) throw new Error(error.message);
+  if (error) throw new Error(traduireRefus(error));
 
   revalidatePath("/pepiniere/emplacements");
 }
@@ -133,7 +134,7 @@ export async function createLot(formData: FormData) {
     })
     .select("id")
     .single();
-  if (error) throw new Error(error.message);
+  if (error) throw new Error(traduireRefus(error));
 
   if (quantity > 0) {
     const { error: movementError } = await supabase.rpc("record_nursery_movement", {
@@ -166,7 +167,7 @@ export async function updateLot(formData: FormData) {
 
   const supabase = await createClient();
   const { error } = await supabase.from("nursery_lots").update(patch).eq("id", id);
-  if (error) throw new Error(error.message);
+  if (error) throw new Error(traduireRefus(error));
 
   revalidatePath(`/pepiniere/lots/${id}`);
   revalidatePath("/pepiniere");
@@ -189,7 +190,7 @@ export async function recordMovement(formData: FormData) {
   // Les refus de la fonction — survente, réservation impossible — sont
   // des messages écrits pour être lus. On les laisse remonter tels
   // quels plutôt que de les remplacer par « une erreur est survenue ».
-  if (error) throw new Error(error.message);
+  if (error) throw new Error(traduireRefus(error));
 
   revalidatePath(`/pepiniere/lots/${lotId}`);
   revalidatePath("/pepiniere");
@@ -209,7 +210,7 @@ export async function splitLot(formData: FormData) {
     p_new_lot_code: newCode,
     p_to_location_id: text(formData, "to_location_id"),
   });
-  if (error) throw new Error(error.message);
+  if (error) throw new Error(traduireRefus(error));
 
   revalidatePath("/pepiniere");
   redirect(`/pepiniere/lots/${data as string}`);
@@ -241,7 +242,7 @@ export async function recordRepotting(formData: FormData) {
     losses,
     occurred_on: text(formData, "occurred_on") ?? new Date().toISOString().slice(0, 10),
   });
-  if (error) throw new Error(error.message);
+  if (error) throw new Error(traduireRefus(error));
 
   // Les pertes du rempotage sortent réellement du stock. Les noter
   // seulement sur l'événement laisserait le lot faux, et l'écart ne se
@@ -282,7 +283,7 @@ export async function recordInspection(formData: FormData) {
     inspected_on: text(formData, "inspected_on") ?? new Date().toISOString().slice(0, 10),
     inspected_by: user.user?.id ?? null,
   });
-  if (error) throw new Error(error.message);
+  if (error) throw new Error(traduireRefus(error));
 
   revalidatePath(`/pepiniere/lots/${lotId}`);
 }
@@ -323,7 +324,7 @@ export async function createReservation(formData: FormData) {
     notes: text(formData, "notes"),
     created_by: user.user?.id ?? null,
   });
-  if (error) throw new Error(error.message);
+  if (error) throw new Error(traduireRefus(error));
 
   revalidatePath(`/pepiniere/lots/${lotId}`);
   revalidatePath("/pepiniere/stock");

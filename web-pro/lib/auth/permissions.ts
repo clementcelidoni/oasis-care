@@ -54,6 +54,18 @@ export const PERMISSIONS = [
   "biolab.read",
   "biolab.write",
   "biolab.manage",
+  // §15-§18 LES ÉTIQUETTES. Semées par 0090 § 9, et il en faut DEUX :
+  // scanner est un geste de terrain que tout le monde fait, y compris
+  // l'ouvrier qui cherche où planter ; poser une étiquette engage un
+  // rouleau, décide de ce qui est imprimé, et peut ouvrir une fiche à
+  // n'importe quel passant.
+  //
+  // Sans ces deux clés ici, permissionsForRole() les jetait : un rôle
+  // personnalisé à qui l'entreprise avait explicitement donné
+  // « etiquettes.manage » se voyait refuser le module, et aucun écran
+  // ne pouvait dire pourquoi.
+  "etiquettes.read",
+  "etiquettes.manage",
 ] as const;
 
 export type Permission = (typeof PERMISSIONS)[number];
@@ -124,29 +136,38 @@ const ROLE_PERMISSIONS: Record<Exclude<Role, "owner" | "admin" | "custom">, Perm
     "digitalTwin.edit", "nursery.stock.manage", "invoice.create",
     // Le responsable répond de la production végétale : les trois.
     "biolab.read", "biolab.write", "biolab.manage",
+    "etiquettes.read", "etiquettes.manage",
   ],
   sales: [
     "clients.read", "clients.write",
     "quotes.read", "quotes.create", "quotes.edit",
     "projects.read",
+    "etiquettes.read",
   ],
-  designer: ["clients.read", "projects.read", "digitalTwin.edit", "quotes.read", "quotes.create"],
+  designer: [
+    "clients.read", "projects.read", "digitalTwin.edit", "quotes.read", "quotes.create",
+    "etiquettes.read", "etiquettes.manage",
+  ],
   projectManager: [
     "clients.read", "projects.read", "projects.manage", "quotes.read", "digitalTwin.edit",
+    "etiquettes.read", "etiquettes.manage",
   ],
-  teamLeader: ["projects.read", "projects.manage"],
-  fieldWorker: ["projects.read"],
+  teamLeader: ["projects.read", "projects.manage", "etiquettes.read", "etiquettes.manage"],
+  fieldWorker: ["projects.read", "etiquettes.read"],
   nurseryManager: [
     "nursery.stock.manage", "projects.read", "clients.read",
     "biolab.read", "biolab.write", "biolab.manage",
+    "etiquettes.read", "etiquettes.manage",
   ],
   // La personne à la paillasse saisit une inspection, une photo, un
   // comptage. Elle ne SUPPRIME pas : effacer un lot efface la
   // généalogie de ses sous-lots avec lui.
-  nurseryWorker: ["nursery.stock.manage", "biolab.read", "biolab.write"],
-  orderPicker: ["nursery.stock.manage"],
-  accounting: ["clients.read", "quotes.read", "invoice.create", "projects.read"],
-  readOnly: ["clients.read", "quotes.read", "projects.read", "biolab.read"],
+  nurseryWorker: ["nursery.stock.manage", "biolab.read", "biolab.write", "etiquettes.read"],
+  orderPicker: ["nursery.stock.manage", "etiquettes.read"],
+  accounting: ["clients.read", "quotes.read", "invoice.create", "projects.read", "etiquettes.read"],
+  readOnly: [
+    "clients.read", "quotes.read", "projects.read", "biolab.read", "etiquettes.read",
+  ],
 };
 
 export function permissionsForRole(role: Role, customPermissions: string[] = []): Permission[] {

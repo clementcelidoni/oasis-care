@@ -28,6 +28,19 @@ values ('aaaaaaa9-0000-4000-8000-0000000000a9','00000000-0000-0000-0000-00000000
 select set_config('request.jwt.claims',
   json_build_object('sub','aaaaaaa9-0000-4000-8000-0000000000a9')::text, true);
 insert into ids select 'org', public.create_professional_organization('TVA Test','landscaper');
+
+-- LE CONTRAT — sans lui, le péage (0092) refuse tout (voir 0092 § 5).
+-- « created_at >= now() » : now() est l'heure de DÉBUT DE TRANSACTION et
+-- la colonne a now() pour défaut, donc ce filtre ne prend QUE les
+-- entreprises nées ici. Un jeu d'essai ne signe pas de contrat pour de
+-- vrais clients.
+insert into public.organization_subscriptions
+  (organization_id, plan, status, provider, billing_cycle)
+select o.id, 'business', 'active', 'manual', 'monthly'
+  from public.business_organizations o
+ where o.created_at >= now()
+on conflict (organization_id) do nothing;
+
 set local role authenticated;
 
 insert into ids select 'client', gen_random_uuid();

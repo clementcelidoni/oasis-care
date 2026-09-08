@@ -10,6 +10,9 @@ import { PageHeader } from "@/components/ui";
 import { BandeauTva } from "@/lib/tva/BandeauTva";
 import { lireEtatValidationTva } from "@/lib/tva/file";
 import { lireCatalogue } from "./catalogue.ts";
+import { etapeParDefaut, installationARappeler, type Etape } from "./aiguillage.ts";
+import { relirePaiementEnCours } from "./paiement-en-cours.ts";
+import { EtapeConfirmation } from "./EtapeConfirmation.tsx";
 import {
   manquePourFacturer,
   PAYS_PROPOSES,
@@ -50,12 +53,47 @@ import { ChoixOffre } from "./ChoixOffre.tsx";
  *      d'après le métier.
  *
  * ══════════════════════════════════════════════════════════════════
+ * C'EST DÉSORMAIS LA PORTE, ET C'EST UN CHANGEMENT D'ORDRE
+ * ══════════════════════════════════════════════════════════════════
+ *
+ * Un compte neuf sans entreprise arrivait sur `/bienvenue` —
+ * l'installation du LOGICIEL — traversait huit étapes, entrait dans
+ * l'application, et personne ne lui avait jamais parlé d'argent. Les
+ * deux seuls liens vers ce parcours-ci étaient enfouis DANS
+ * l'application, derrière la garde qu'il faut déjà avoir franchie pour
+ * les voir : il fallait être entré pour trouver la porte du péage.
+ *
+ * C'est cette page qui reçoit maintenant les comptes sans entreprise
+ * (`app/(app)/layout.tsx`), et l'ordre n'est pas une question de goût :
+ * la règle du dirigeant — « essai gratuit un mois AVEC CARTE
+ * OBLIGATOIREMENT » — impose que LE CONTRAT PRÉCÈDE L'ACCÈS.
+ *
+ * Le PORTAIL garde sa priorité, avant tout le reste : un particulier
+ * invité par son paysagiste n'a pas d'organisation et n'en veut pas.
+ * L'envoyer sur « créez votre société » lui demanderait de fonder une
+ * entreprise pour lire sa facture.
+ *
+ * ══════════════════════════════════════════════════════════════════
+ * TROIS ÉTAPES, ET LA TROISIÈME EST CELLE QUI MANQUAIT
+ * ══════════════════════════════════════════════════════════════════
+ *
+ *   1. LA SOCIÉTÉ — dénomination, forme juridique, SIRET, TVA, adresse.
+ *   2. L'OFFRE — la grille, le rythme, les modules, l'essai.
+ *   3. LA CONFIRMATION — ce qui vient d'être souscrit, à partir de
+ *      quand, et ce qui se passera à la fin de l'essai.
+ *
+ * La troisième n'existait pas : le prestataire nous renvoyait avec
+ * `?souscription=confirmee` et personne ne lisait ce paramètre. On
+ * donnait sa carte, et l'écran restait muet.
+ *
+ * ══════════════════════════════════════════════════════════════════
  * CE PARCOURS ET `/bienvenue` NE FONT PAS LA MÊME CHOSE
  * ══════════════════════════════════════════════════════════════════
  *
  * `/bienvenue` est l'installation du LOGICIEL : logo, effectif, modules
  * du menu, invitation de l'équipe. Ses étapes sont facultatives et c'est
- * très bien ainsi — personne ne doit être bloqué par un logo.
+ * très bien ainsi — personne ne doit être bloqué par un logo. Elle vient
+ * désormais APRÈS le contrat, et l'étape 3 y renvoie.
  *
  * Celui-ci est l'installation du CONTRAT : ce qui est facturé, à qui, et
  * sur quelle identité légale. Les exigences n'y sont pas les mêmes,
@@ -63,14 +101,15 @@ import { ChoixOffre } from "./ChoixOffre.tsx";
  * manquant ne fait rien, un SIRET manquant empêche d'émettre la facture
  * d'un paiement déjà encaissé.
  *
- * Les deux écrivent par la MÊME action (`updateCompanyProfile`) : un
- * second chemin d'écriture aurait fini par diverger, et l'inscription
- * aurait enregistré des champs que la fiche société ne relit pas.
- * (Le compte rendu propose à l'intégration de relier les deux — l'étape
- * 4 de `/bienvenue` menant ici. Ce fichier-là ne m'appartient pas.)
+ * ET C'EST LE SEUL À CRÉER UNE ENTREPRISE. `/bienvenue` en créait une
+ * aussi, sans fiche légale et sans dossier fiscal : deux chemins de
+ * création pour une même chose finissent toujours par diverger, et
+ * celui-là avait déjà divergé — l'entreprise qu'il fabriquait n'était
+ * pas facturable. Il n'en reste qu'un, et c'est celui qui sait
+ * facturer.
+ *
+ * Les deux écrivent la fiche par la MÊME action (`updateCompanyProfile`).
  */
-
-type Etape = "societe" | "offre";
 
 /** Les champs de la fiche que l'étape « société » n'affiche pas mais réécrit. */
 const CHAMPS_NON_AFFICHES = [
@@ -111,21 +150,23 @@ export default async function InscriptionPage({ searchParams }: PageProps<"/insc
 
   const organisation = await getActiveOrganization();
 
-  // L'étape par défaut suit l'état réel : pas d'entreprise, on commence
-  // par la créer ; elle existe, on va droit aux offres. Un `?etape=`
-  // explicite prime — c'est ainsi qu'on revient corriger la fiche.
-  const demandee = chaine(params?.etape);
-  const etape: Etape =
-    demandee === "societe" || demandee === "offre"
-      ? demandee
-      : organisation === null
-        ? "societe"
-        : "offre";
+  /**
+   * LA DEUXIÈME ENTREPRISE, DEMANDÉE EXPLICITEMENT.
+   *
+   * Sans ce drapeau, arriver ici avec une entreprise active veut dire
+   * « je viens corriger ma fiche ». Le produit est pourtant
+   * multi-entreprises (§13), et fonder la seconde doit avoir un chemin.
+   * `?nouvelle=1` est ce chemin, et il est explicite — jamais déduit.
+   */
+  const nouvelle = chaine(params?.nouvelle) === "1";
 
-  // La fiche telle qu'elle est enregistrée, pour préremplir.
+  // La fiche telle qu'elle est enregistrée, pour préremplir. Une
+  // NOUVELLE entreprise part d'une page blanche : reprendre la fiche de
+  // la précédente y recopierait son SIRET, c'est-à-dire l'identité
+  // légale d'une autre société.
   let fiche: LigneEntreprise = {};
-  if (organisation !== null) {
-    const supabase = await createClient();
+  const supabase = await createClient();
+  if (organisation !== null && !nouvelle) {
     const { data } = await supabase
       .from("business_organizations")
       .select("*")
@@ -133,6 +174,43 @@ export default async function InscriptionPage({ searchParams }: PageProps<"/insc
       .maybeSingle();
     fiche = (data ?? {}) as LigneEntreprise;
   }
+
+  /**
+   * L'ÉTAPE PAR DÉFAUT SUIT L'ÉTAT RÉEL, et la règle est écrite —
+   * et testée — dans `aiguillage.ts`. Trois faits l'alimentent :
+   *
+   *   • une entreprise existe-t-elle ? (sinon il n'y a personne à
+   *     facturer) ;
+   *   • UNE LIGNE d'abonnement existe-t-elle ? On lit son EXISTENCE et
+   *     non son statut : la clé primaire de `organization_subscriptions`
+   *     est l'organisation seule, il y a donc au plus une ligne, et son
+   *     absence — pas un statut — distingue « jamais souscrit » de
+   *     « souscrit ». La lecture détaillée, elle, appartient à l'étape
+   *     de confirmation : cette page dit OÙ aller, pas QUOI dire ;
+   *   • un paiement vient-il d'être ouvert depuis ce navigateur ? C'est
+   *     ce qui permet d'atterrir sur la confirmation même quand le
+   *     prestataire nous renvoie AVANT son événement signé.
+   */
+  let abonnementExiste = false;
+  if (organisation !== null && !nouvelle) {
+    const { data } = await supabase
+      .from("organization_subscriptions")
+      .select("organization_id")
+      .eq("organization_id", organisation.organizationId)
+      .maybeSingle();
+    abonnementExiste = data !== null;
+  }
+
+  const paiement = await relirePaiementEnCours();
+
+  const etape: Etape = etapeParDefaut({
+    demandee: chaine(params?.etape) || null,
+    // Une création explicitement demandée remet le parcours à son
+    // début : l'entreprise active ne compte pas, on en fonde une autre.
+    organisationExiste: organisation !== null && !nouvelle,
+    abonnementExiste,
+    paiementEnCours: paiement !== null,
+  });
 
   const identite: IdentiteSaisie = {
     legalName: chaine(fiche.legal_name) || null,
@@ -149,18 +227,27 @@ export default async function InscriptionPage({ searchParams }: PageProps<"/insc
   const etapes = [
     { cle: "societe" as const, numero: 1, label: "Votre société" },
     { cle: "offre" as const, numero: 2, label: "Votre offre" },
+    { cle: "confirmation" as const, numero: 3, label: "Confirmation" },
   ];
+
+  const TITRES: Record<Etape, string> = {
+    societe: nouvelle ? "Votre nouvelle société" : "Votre société",
+    offre: "Votre offre",
+    confirmation: "Confirmation",
+  };
+  const SOUS_TITRES: Record<Etape, string> = {
+    societe:
+      "Ces informations figureront sur vos factures. Elles décident aussi de la TVA qui vous sera appliquée.",
+    offre: "Choisissez votre offre et son rythme. Tous les prix sont hors taxes.",
+    confirmation: "Où en est votre souscription, et ce qui se passe ensuite.",
+  };
 
   return (
     <main className="mx-auto max-w-5xl px-8 py-10">
       <PageHeader
         eyebrow="Oasis Care Pro"
-        title={etape === "societe" ? "Votre société" : "Votre offre"}
-        subtitle={
-          etape === "societe"
-            ? "Ces informations figureront sur vos factures. Elles décident aussi de la TVA qui vous sera appliquée."
-            : "Choisissez votre offre et son rythme. Tous les prix sont hors taxes."
-        }
+        title={TITRES[etape]}
+        subtitle={SOUS_TITRES[etape]}
       />
 
       {/* ---------------- Le fil des étapes ---------------- */}
@@ -169,8 +256,14 @@ export default async function InscriptionPage({ searchParams }: PageProps<"/insc
           const active = e.cle === etape;
           // On ne laisse aller aux offres que si l'entreprise existe :
           // il n'y a rien à souscrire tant qu'il n'y a personne à
-          // facturer.
-          const accessible = e.cle === "societe" || organisation !== null;
+          // facturer. Et pas à la confirmation avant qu'il y ait quelque
+          // chose à confirmer — un abonnement, ou un paiement en route.
+          const accessible =
+            e.cle === "societe"
+              ? true
+              : e.cle === "offre"
+                ? organisation !== null && !nouvelle
+                : abonnementExiste || paiement !== null;
           const contenu = (
             <span
               className={`inline-flex items-center gap-2 rounded-[var(--radius-pill)] border px-3.5 py-1.5 text-[var(--text-secondary)] font-medium ${
@@ -199,9 +292,12 @@ export default async function InscriptionPage({ searchParams }: PageProps<"/insc
 
       {etape === "societe" ? (
         <EtapeSociete
-          organisationExiste={organisation !== null}
+          // Une création explicitement demandée déverrouille le métier :
+          // la nouvelle société n'a pas à hériter de celui de l'ancienne.
+          organisationExiste={organisation !== null && !nouvelle}
+          nouvelle={nouvelle}
           fiche={fiche}
-          nomParDefaut={chaine(fiche.name) || organisation?.name || ""}
+          nomParDefaut={chaine(fiche.name) || (nouvelle ? "" : (organisation?.name ?? ""))}
           metierParDefaut={
             BUSINESS_TYPES.includes(chaine(fiche.business_type) as BusinessType)
               ? (chaine(fiche.business_type) as BusinessType)
@@ -211,10 +307,76 @@ export default async function InscriptionPage({ searchParams }: PageProps<"/insc
           messageEnFaute={chaine(params?.erreur) || null}
           valeursRejetees={params}
         />
-      ) : (
+      ) : etape === "offre" ? (
         <EtapeOffre organisationId={organisation?.organizationId ?? null} identite={identite} metier={organisation?.businessType ?? null} />
+      ) : (
+        <EtapeTroisieme
+          organisationId={organisation?.organizationId ?? null}
+          nomEntreprise={organisation?.name ?? ""}
+          metier={organisation?.businessType ?? null}
+          fiche={fiche}
+        />
       )}
     </main>
+  );
+}
+
+// ------------------------------------------------------------------
+// Étape 3 — la confirmation
+// ------------------------------------------------------------------
+
+/**
+ * L'enveloppe de l'étape 3 : elle rassemble ce dont la confirmation a
+ * besoin, et le composant dit ce qu'il y a à dire.
+ *
+ * Le catalogue est lu ICI pour une seule chose : le NOM de l'offre.
+ * `organization_subscriptions.plan` porte une clé (« team »), et
+ * afficher une clé à un paysagiste au moment où il vient de payer
+ * serait de la paresse. La grille est en base précisément pour que ces
+ * noms se changent sans toucher à l'application.
+ */
+async function EtapeTroisieme({
+  organisationId,
+  nomEntreprise,
+  metier,
+  fiche,
+}: {
+  organisationId: string | null;
+  nomEntreprise: string;
+  metier: BusinessType | null;
+  fiche: LigneEntreprise;
+}) {
+  if (organisationId === null) {
+    return (
+      <p className="text-[var(--text-body)] text-ink-soft">
+        Créez d&apos;abord votre entreprise : il n&apos;y a rien à confirmer tant qu&apos;elle
+        n&apos;existe pas.
+      </p>
+    );
+  }
+
+  const supabase = await createClient();
+  const [catalogue, paiement] = await Promise.all([
+    lireCatalogue({ metier: metier ?? undefined, supabase }),
+    relirePaiementEnCours(),
+  ]);
+
+  return (
+    <EtapeConfirmation
+      supabase={supabase}
+      organisationId={organisationId}
+      nomEntreprise={nomEntreprise}
+      nomsDesOffres={new Map(catalogue.offres.map((a) => [a.offre.key, a.offre.name]))}
+      paiement={paiement}
+      installationARappeler={installationARappeler({
+        onboardingStep:
+          typeof fiche.onboarding_step === "number" ? fiche.onboarding_step : null,
+        onboardingCompletedAt:
+          typeof fiche.onboarding_completed_at === "string"
+            ? fiche.onboarding_completed_at
+            : null,
+      })}
+    />
   );
 }
 
@@ -224,6 +386,7 @@ export default async function InscriptionPage({ searchParams }: PageProps<"/insc
 
 async function EtapeSociete({
   organisationExiste,
+  nouvelle,
   fiche,
   nomParDefaut,
   metierParDefaut,
@@ -232,6 +395,7 @@ async function EtapeSociete({
   valeursRejetees,
 }: {
   organisationExiste: boolean;
+  nouvelle: boolean;
   fiche: LigneEntreprise;
   nomParDefaut: string;
   metierParDefaut: BusinessType;
@@ -297,6 +461,7 @@ async function EtapeSociete({
       champEnFaute={champEnFaute}
       messageEnFaute={messageEnFaute}
       entrepriseExiste={organisationExiste}
+      nouvelle={nouvelle}
     />
   );
 }

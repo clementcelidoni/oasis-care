@@ -13,6 +13,7 @@ import { StatusBar } from "./StatusBar";
 import { ToProjectBar } from "./ToProjectBar";
 import { ToInvoiceBar } from "./ToInvoiceBar";
 import { AnalysePanel } from "./AnalysePanel";
+import { PartageDevis } from "@/lib/partage/PartageDevis";
 
 /**
  * §11E — la fiche d'un devis.
@@ -158,6 +159,24 @@ export default async function QuotePage({
       )}
 
       {!clientMode && <StatusBar quote={quote} />}
+
+      {/*
+        §PORTE ANONYME — le lien à envoyer au client, qui n'a pas de
+        compte et n'en aura pas. 0089 § 8 a ouvert la porte en base et
+        `app/d` l'a posée côté web ; sans ce panneau, personne ne
+        pouvait la déverrouiller.
+
+        Masqué en mode client : celui qui lit déjà le devis n'a pas
+        besoin du lien qui le lui a ouvert, et le compteur d'ouvertures
+        est une information commerciale du paysagiste.
+      */}
+      {!clientMode && (
+        <PartageDevis
+          quoteId={quote.id}
+          validUntil={quote.valid_until}
+          partageable={quote.status !== "draft" && quote.status !== "internalReview"}
+        />
+      )}
 
       {/*
         §DEVIS ACCEPTÉ — « Bouton : Transformer en projet. »

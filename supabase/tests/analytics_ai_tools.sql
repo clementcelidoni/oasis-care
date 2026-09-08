@@ -80,10 +80,36 @@ select set_config('request.jwt.claims',
   json_build_object('sub','ddddddd1-0000-4000-8000-0000000000d1')::text, true);
 insert into ids select 'org', public.create_professional_organization('Analytique Test','landscaperAndNursery');
 
+-- LE CONTRAT — sans lui, le péage (0092) refuse tout (voir 0092 § 5).
+-- « created_at >= now() » : now() est l'heure de DÉBUT DE TRANSACTION et
+-- la colonne a now() pour défaut, donc ce filtre ne prend QUE les
+-- entreprises nées ici. Un jeu d'essai ne signe pas de contrat pour de
+-- vrais clients.
+insert into public.organization_subscriptions
+  (organization_id, plan, status, provider, billing_cycle)
+select o.id, 'business', 'active', 'manual', 'monthly'
+  from public.business_organizations o
+ where o.created_at >= now()
+on conflict (organization_id) do nothing;
+
+
 reset role;
 select set_config('request.jwt.claims',
   json_build_object('sub','ddddddd2-0000-4000-8000-0000000000d2')::text, true);
 insert into ids select 'orgB', public.create_professional_organization('Le Concurrent','landscaper');
+
+-- LE CONTRAT — sans lui, le péage (0092) refuse tout (voir 0092 § 5).
+-- « created_at >= now() » : now() est l'heure de DÉBUT DE TRANSACTION et
+-- la colonne a now() pour défaut, donc ce filtre ne prend QUE les
+-- entreprises nées ici. Un jeu d'essai ne signe pas de contrat pour de
+-- vrais clients.
+insert into public.organization_subscriptions
+  (organization_id, plan, status, provider, billing_cycle)
+select o.id, 'business', 'active', 'manual', 'monthly'
+  from public.business_organizations o
+ where o.created_at >= now()
+on conflict (organization_id) do nothing;
+
 
 reset role;
 select set_config('request.jwt.claims',
@@ -276,6 +302,19 @@ reset role;
 select set_config('request.jwt.claims',
   json_build_object('sub','ddddddd1-0000-4000-8000-0000000000d1')::text, true);
 insert into ids select 'orgVide', public.create_professional_organization('Sans Estimation','landscaper');
+
+-- LE CONTRAT — sans lui, le péage (0092) refuse tout (voir 0092 § 5).
+-- « created_at >= now() » : now() est l'heure de DÉBUT DE TRANSACTION et
+-- la colonne a now() pour défaut, donc ce filtre ne prend QUE les
+-- entreprises nées ici. Un jeu d'essai ne signe pas de contrat pour de
+-- vrais clients.
+insert into public.organization_subscriptions
+  (organization_id, plan, status, provider, billing_cycle)
+select o.id, 'business', 'active', 'manual', 'monthly'
+  from public.business_organizations o
+ where o.created_at >= now()
+on conflict (organization_id) do nothing;
+
 set local role authenticated;
 
 insert into ids select 'clientVide', gen_random_uuid();

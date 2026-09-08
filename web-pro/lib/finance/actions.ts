@@ -7,8 +7,12 @@ import { requireOrganization } from "@/lib/auth/organization";
 import { flash } from "@/lib/ui/flash";
 import { recordAudit } from "@/lib/audit/record";
 import {
+  annulerCourrierEnAttente, declencherFactureEmise, phrasePourEcran,
+} from "@/app/api/email/dependances";
+import {
   inputToCents, parseQuantity, parseQuantityOr, parseVatRate,
 } from "@/lib/quotes/types";
+import { traduireRefus } from "@/lib/peage/messages";
 
 /**
  * §11O facturation, §DÉPENSES / TRÉSORERIE.
@@ -22,9 +26,34 @@ import {
  * figure dans la liste des interdits : enregistrer un encaissement, ici,
  * c'est constater qu'il a eu lieu — jamais le déclencher.
  *
- * ET AUCUNE FACTURE N'EST ENVOYÉE. Comme pour les devis, marquer une
- * facture « émise » enregistre un fait ; c'est l'utilisateur qui la
- * transmet.
+ * ══════════════════════════════════════════════════════════════════
+ * §EMAILS — LA FACTURE ÉMISE PART MAINTENANT, ET VOICI LA LIMITE
+ * ══════════════════════════════════════════════════════════════════
+ *
+ * L'en-tête disait : « AUCUNE FACTURE N'EST ENVOYÉE. Marquer une
+ * facture émise enregistre un fait ; c'est l'utilisateur qui la
+ * transmet. » Le fait est toujours ce qui compte — c'est même sur lui,
+ * et non sur le statut, que l'envoi s'accroche : `issue_invoice()` pose
+ * `issued_at`, et 0054 rappelle qu'« un statut se change, un fait daté
+ * non ». Ce qui change est qu'on ne laisse plus le paysagiste
+ * réenregistrer un PDF à la main pour l'attacher à un courriel.
+ *
+ * TROIS LIMITES, ET ELLES TIENNENT :
+ *
+ *   • RIEN N'EST AUTOMATISÉ DU CÔTÉ DE L'ARGENT. Aucun paiement, aucun
+ *     prélèvement, aucune relance de paiement décidée par le logiciel.
+ *     Enregistrer un encaissement reste constater qu'il a eu lieu.
+ *
+ *   • L'ENVOI NE PEUT PAS FAIRE ÉCHOUER L'ÉMISSION.
+ *     `declencherFactureEmise` ne lève jamais. Une facture qui refuse
+ *     de s'émettre parce qu'un courriel a échoué ferait perdre un
+ *     numéro de séquence, et c'est la première chose qu'un comptable
+ *     regarde.
+ *
+ *   • L'IDENTITÉ LÉGALE EST VÉRIFIÉE PAR LA BASE, PAS ICI. Sans SIRET
+ *     ni adresse complète, `email_sender_identity` refuse d'expédier
+ *     (art. 242 nonies A du CGI) — et la facture reste émise. Le
+ *     document est opposable, le courrier attend.
  */
 
 function text(formData: FormData, key: string): string | null {
@@ -54,7 +83,7 @@ export async function createInvoice(formData: FormData) {
     })
     .select("id")
     .single();
-  if (error) throw new Error(error.message);
+  if (error) throw new Error(traduireRefus(error));
 
   revalidatePath("/factures");
   redirect(`/factures/${data.id}`);
@@ -69,7 +98,7 @@ export async function invoiceFromQuote(formData: FormData) {
   const { data, error } = await supabase.rpc("create_invoice_from_quote", {
     p_quote_id: quoteId,
   });
-  if (error) throw new Error(error.message);
+  if (error) throw new Error(traduireRefus(error));
 
   revalidatePath("/factures");
   revalidatePath(`/devis/${quoteId}`);
@@ -90,7 +119,7 @@ export async function updateInvoice(formData: FormData) {
   // Le déclencheur en base refuse de toucher au contenu d'une facture
   // émise, avec un message qui explique pourquoi et quoi faire à la
   // place. On le laisse remonter tel quel.
-  if (error) throw new Error(error.message);
+  if (error) throw new Error(traduireRefus(error));
 
   revalidatePath(`/factures/${id}`);
 }
@@ -120,7 +149,7 @@ export async function addInvoiceLine(formData: FormData) {
     unit_price_cents: inputToCents(String(formData.get("unit_price") ?? "0")),
     vat_rate: parseVatRate(String(formData.get("vat_rate") ?? "20")),
   });
-  if (error) throw new Error(error.message);
+  if (error) throw new Error(traduireRefus(error));
 
   revalidatePath(`/factures/${invoiceId}`);
 }
@@ -132,7 +161,7 @@ export async function deleteInvoiceLine(formData: FormData) {
 
   const supabase = await createClient();
   const { error } = await supabase.from("invoice_lines").delete().eq("id", lineId);
-  if (error) throw new Error(error.message);
+  if (error) throw new Error(traduireRefus(error));
 
   revalidatePath(`/factures/${invoiceId}`);
 }
@@ -144,7 +173,8 @@ export async function deleteInvoiceLine(formData: FormData) {
  * création laisserait un trou dans la séquence à chaque brouillon
  * abandonné, et c'est la première chose qu'un comptable regarde.
  *
- * Rien n'est envoyé. L'utilisateur transmet la facture lui-même.
+ * L'émission expédie la facture au client — voir l'accroche en bas de
+ * cette fonction, et les trois limites en tête de fichier.
  */
 export async function issueInvoice(formData: FormData) {
   const organization = await requireOrganization();
@@ -156,7 +186,7 @@ export async function issueInvoice(formData: FormData) {
     p_invoice_id: id,
     p_due_in_days: Math.round(parseQuantity(String(formData.get("due_in_days") ?? "30"))) || 30,
   });
-  if (error) throw new Error(error.message);
+  if (error) throw new Error(traduireRefus(error));
 
   // §SECURITY « audit actions critiques ». L'émission est le moment où
   // une facture devient un document opposable : c'est celui qu'il faut
@@ -164,6 +194,16 @@ export async function issueInvoice(formData: FormData) {
   await recordAudit(organization.organizationId, "invoiceIssued", "invoice", id, {
     number: number as string,
   });
+
+  // §EMAILS — L'ACCROCHE, SUR LE FAIT DATÉ ET APRÈS L'AUDIT.
+  //
+  // `issue_invoice()` vient de poser `issued_at` ; c'est ce fait, relu
+  // en base par le déclencheur, qui autorise l'envoi. Le résultat se
+  // LIT : « Renseignez le SIRET de votre entreprise » est une phrase
+  // que le paysagiste doit voir, pas un silence. Le ton reste « info »
+  // parce que la facture, elle, est bien émise.
+  const phrase = phrasePourEcran(await declencherFactureEmise(organization.organizationId, id));
+  if (phrase) await flash("info", phrase);
 
   revalidatePath(`/factures/${id}`);
   revalidatePath("/factures");
@@ -185,13 +225,28 @@ export async function cancelInvoice(formData: FormData) {
     .from("invoices")
     .update({ status: "cancelled", updated_at: new Date().toISOString() })
     .eq("id", id);
-  if (error) throw new Error(error.message);
+  if (error) throw new Error(traduireRefus(error));
 
   await recordAudit(
     organization.organizationId, "invoiceCancelled", "invoice", id,
     { status: "cancelled" },
     (before ?? undefined) as Record<string, unknown> | undefined,
   );
+
+  // §EMAILS — ON ARRÊTE CE QUI N'EST PAS ENCORE PARTI.
+  //
+  // Un message peut attendre en file : c'est le comportement voulu
+  // quand le transporteur est momentanément absent. Sans cette ligne,
+  // le passage suivant expédiait quand même — le client recevait une
+  // facture annulée, et il n'existait aucun moyen de l'empêcher.
+  //
+  // Elle n'arrête QUE ce qui attend. Un message déjà chez le
+  // transporteur ne se rattrape pas, et prétendre le contraire serait
+  // pire que de ne rien faire.
+  const arret = await annulerCourrierEnAttente(organization.organizationId, "invoice", id);
+  if (arret > 0) {
+    await flash("info", "Le courriel de cette facture n'était pas encore parti : il a été arrêté.");
+  }
 
   revalidatePath(`/factures/${id}`);
   revalidatePath("/factures");
@@ -247,7 +302,7 @@ export async function createCreditNote(formData: FormData) {
     })
     .select("id")
     .single();
-  if (error) throw new Error(error.message);
+  if (error) throw new Error(traduireRefus(error));
 
   const { error: lineError } = await supabase.from("credit_note_lines").insert({
     organization_id: organization.organizationId,
@@ -302,7 +357,7 @@ export async function recordPayment(formData: FormData) {
     })
     .select("id")
     .single();
-  if (error) throw new Error(error.message);
+  if (error) throw new Error(traduireRefus(error));
 
   // L'affectation recalcule le statut de la facture dans la même
   // opération : séparés, un encaissement enregistré sans mise à jour
@@ -370,7 +425,7 @@ export async function recordExpense(formData: FormData) {
     invoice_reference: text(formData, "invoice_reference"),
     recorded_by: user.user?.id ?? null,
   });
-  if (error) throw new Error(error.message);
+  if (error) throw new Error(traduireRefus(error));
 
   revalidatePath("/factures/tresorerie");
   // Une dépense rattachée à un chantier change son coût réel : sans
@@ -454,7 +509,7 @@ export async function invoiceFromProject(formData: FormData) {
     const { data, error } = await supabase.rpc("create_invoice_from_quote", {
       p_quote_id: project.quote_id,
     });
-    if (error) throw new Error(error.message);
+    if (error) throw new Error(traduireRefus(error));
     revalidatePath("/factures");
     revalidatePath(`/projets/${projectId}`);
     redirect(`/factures/${data as string}`);
@@ -472,7 +527,7 @@ export async function invoiceFromProject(formData: FormData) {
     })
     .select("id")
     .single();
-  if (error) throw new Error(error.message);
+  if (error) throw new Error(traduireRefus(error));
 
   revalidatePath("/factures");
   revalidatePath(`/projets/${projectId}`);

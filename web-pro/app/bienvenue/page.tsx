@@ -10,7 +10,6 @@ import {
 } from "@/lib/auth/organization";
 import { hasPortalAccess } from "@/lib/portal/access";
 import {
-  BUSINESS_TYPES,
   BUSINESS_TYPE_LABELS,
   ROLES,
   ROLE_LABELS,
@@ -24,11 +23,51 @@ import { flash } from "@/lib/ui/flash";
 import { Badge, Field, Panel, SelectField, SubmitButton } from "@/components/ui";
 import { Icon } from "@/components/shell/Icon";
 import { LogoUploader } from "@/app/(app)/entreprise/LogoUploader";
+import { traduireRefus } from "@/lib/peage/messages";
 
 /**
  * §44 ONBOARDING PRO — « 1 Nom entreprise · 2 Activité · 3 Logo ·
  * 4 Informations légales · 5 Nombre de salariés · 6 Modules souhaités ·
  * 7 Inviter équipe · 8 Terminer. Étapes facultatives passables. »
+ *
+ * ══════════════════════════════════════════════════════════════════
+ * CETTE PAGE N'EST PLUS LA PORTE, ET ELLE NE CRÉE PLUS D'ENTREPRISE
+ * ══════════════════════════════════════════════════════════════════
+ *
+ * Elle recevait les comptes neufs, et ses deux premières étapes
+ * fondaient la société. C'était le défaut central du produit : on
+ * traversait huit écrans, on entrait dans l'application, et personne
+ * n'avait jamais parlé d'argent. La règle du dirigeant — « essai
+ * gratuit un mois AVEC CARTE OBLIGATOIREMENT » — impose l'ordre
+ * inverse : LE CONTRAT PRÉCÈDE L'ACCÈS.
+ *
+ * Les étapes 1 et 2 vivent donc maintenant dans `/inscription`, qui est
+ * la porte, et qui fait ce que celles-ci ne faisaient pas : la fiche
+ * légale complète, le contrôle des identifiants, la mise en file du
+ * numéro de TVA. Une entreprise née ici n'avait AUCUN dossier fiscal —
+ * mesuré en production — et `saas_issue_invoice` aurait refusé
+ * d'émettre sa première facture.
+ *
+ * Deux chemins de création pour une même chose finissent toujours par
+ * diverger. Celui-ci avait divergé ; il n'en reste qu'un.
+ *
+ * ══════════════════════════════════════════════════════════════════
+ * CE QUI RESTE, ET QUI A DE LA VALEUR
+ * ══════════════════════════════════════════════════════════════════
+ *
+ * L'installation du LOGICIEL : le logo, les mentions légales,
+ * l'effectif, les modules du menu, l'invitation de l'équipe. Rien de
+ * tout cela n'existe dans le tunnel de souscription, et rien de tout
+ * cela n'est bloquant — c'était une bonne décision, et brancher le
+ * péage ne la défait pas. Toutes les étapes restent passables.
+ *
+ * OÙ ELLE SE RACCROCHE, maintenant qu'on ne la traverse plus d'office :
+ *   • l'étape « confirmation » du tunnel y envoie, juste après le
+ *     paiement — le moment où « installons votre espace » est la suite
+ *     naturelle ;
+ *   • un bandeau dans la coquille de l'application la rappelle tant
+ *     qu'elle n'est pas close (`app/(app)/layout.tsx`), sans jamais
+ *     bloquer quoi que ce soit.
  *
  * UNE ÉTAPE = UNE URL (`/bienvenue?etape=4`), et l'avancement s'écrit en
  * base (`onboarding_step`, migration 0060). Ce n'est pas un détail
@@ -37,12 +76,13 @@ import { LogoUploader } from "@/app/(app)/entreprise/LogoUploader";
  * lendemain. Un état React aurait tout perdu ; ici elle retombe sur
  * l'étape où elle s'était arrêtée, avec ce qu'elle avait déjà saisi.
  *
- * CE QUI NE CHANGE PAS. La création passe toujours par la fonction
- * Postgres `create_professional_organization()`, qui fabrique l'espace
- * de travail, l'organisation et l'appartenance du propriétaire en une
- * seule transaction. Trois appels séparés laisseraient, au premier
- * échec, une organisation sans propriétaire — c'est-à-dire une
- * organisation dont plus personne ne peut ouvrir la porte.
+ * LA NUMÉROTATION NE BOUGE PAS — les étapes commencent à 3. Ce n'est
+ * pas un vestige : `onboarding_step` est écrit en base, et « en dessous
+ * de 3 » y signifie « entreprise née avant que ce parcours existe ».
+ * Renuméroter aurait fait redémarrer à zéro chaque parcours en cours et
+ * cassé ce test. Les deux premières étapes ne disparaissent pas de
+ * l'écran pour autant : elles s'affichent comme franchies, parce
+ * qu'elles le sont — dans `/inscription`.
  *
  * LES ÉTAPES 3 À 7 NE SONT PAS DES FORMULAIRES NEUFS : elles appellent
  * `updateCompanyProfile`, `uploadCompanyLogo`, `updateModules` et
@@ -54,9 +94,15 @@ import { LogoUploader } from "@/app/(app)/entreprise/LogoUploader";
 
 const LAST_STEP = 8;
 
+/**
+ * LA PREMIÈRE ÉTAPE DE CETTE PAGE. Les deux d'avant se jouent dans
+ * `/inscription` : la société, puis l'offre.
+ */
+const FIRST_STEP = 3;
+
 const STEPS = [
-  { n: 1, label: "Entreprise" },
-  { n: 2, label: "Activité" },
+  { n: 1, label: "Société" },
+  { n: 2, label: "Offre" },
   { n: 3, label: "Logo" },
   { n: 4, label: "Informations légales" },
   { n: 5, label: "Salariés" },
@@ -132,35 +178,6 @@ async function rememberStep(organizationId: string, step: number) {
     .eq("id", organizationId);
 }
 
-/** Étape 2 — la création proprement dite. */
-async function createOrganizationAction(formData: FormData) {
-  "use server";
-
-  const name = String(formData.get("name") ?? "").trim().slice(0, 120);
-  const requested = String(formData.get("business_type") ?? "");
-  const businessType = BUSINESS_TYPES.includes(requested as BusinessType)
-    ? requested
-    : "landscaper";
-
-  // Sans nom il n'y a rien à créer : on renvoie au champ, pas à une
-  // page d'erreur. Le nom voyage dans l'URL entre les étapes 1 et 2 —
-  // tant que l'organisation n'existe pas, il n'y a aucune ligne où le
-  // poser.
-  if (!name) redirect("/bienvenue?etape=1");
-
-  const supabase = await createClient();
-  const { data: organizationId, error } = await supabase.rpc(
-    "create_professional_organization",
-    { org_name: name, org_business_type: businessType },
-  );
-  if (error) throw new Error(error.message);
-
-  if (organizationId) await rememberStep(String(organizationId), 3);
-
-  revalidatePath("/", "layout");
-  redirect("/bienvenue?etape=3");
-}
-
 /** « Continuer » et « Passer cette étape » : le même geste, deux mots. */
 async function goToStep(formData: FormData) {
   "use server";
@@ -231,7 +248,7 @@ async function finishOnboarding() {
       updated_at: new Date().toISOString(),
     })
     .eq("id", organization.organizationId);
-  if (error) throw new Error(error.message);
+  if (error) throw new Error(traduireRefus(error));
 
   // Écrase au passage le « Fiche de l'entreprise enregistrée » laissé
   // par la dernière étape : ce qu'on veut lire en arrivant sur le
@@ -246,7 +263,7 @@ async function finishOnboarding() {
 // Les morceaux d'écran
 // ---------------------------------------------------------------
 
-function Stepper({ step, reachable }: { step: number; reachable: boolean }) {
+function Stepper({ step }: { step: number }) {
   return (
     <div className="mb-8">
       <div className="mb-3 flex flex-wrap items-baseline justify-between gap-2">
@@ -290,17 +307,27 @@ function Stepper({ step, reachable }: { step: number; reachable: boolean }) {
             current ? "bg-accent-wash font-medium text-accent" : "text-ink-faint"
           }`;
 
+          /**
+           * LES DEUX PREMIÈRES ÉTAPES NE SONT PAS ICI, ET ON LE MONTRE.
+           *
+           * Elles se jouent dans `/inscription` — la société, puis
+           * l'offre — et elles sont franchies, sans quoi on ne serait
+           * pas sur cette page. Les afficher barrées d'une coche répond
+           * à la question « où en suis-je », qui ne s'arrête pas à la
+           * frontière de deux routes. Et elles restent CLIQUABLES : on
+           * revient corriger un SIRET sans refaire quoi que ce soit.
+           */
+          const ailleurs = entry.n < FIRST_STEP;
+          const destination = ailleurs
+            ? `/inscription?etape=${entry.n === 1 ? "societe" : "offre"}`
+            : `/bienvenue?etape=${entry.n}`;
+
           return (
             <li key={entry.n}>
               {/* Une étape déjà franchie redevient cliquable : on corrige
-                  une coquille sans refaire le parcours. Les deux
-                  premières, non — l'entreprise existe, son nom se change
-                  désormais dans sa fiche. */}
-              {done && reachable && entry.n >= 3 ? (
-                <Link
-                  href={`/bienvenue?etape=${entry.n}`}
-                  className={`${shell} transition-colors hover:text-ink`}
-                >
+                  une coquille sans refaire le parcours. */}
+              {done ? (
+                <Link href={destination} className={`${shell} transition-colors hover:text-ink`}>
                   {content}
                 </Link>
               ) : (
@@ -374,12 +401,39 @@ export default async function WelcomePage({ searchParams }: PageProps<"/bienvenu
   const params = await searchParams;
   const organizations = await getUserOrganizations();
 
-  // Un client invité arrive ici par le chemin le plus court : connexion,
-  // pas d'organisation, redirection. Lui demander de créer une
-  // entreprise pour lire sa facture serait absurde.
-  if (organizations.length === 0 && (await hasPortalAccess())) redirect("/portail");
+  /**
+   * SANS ENTREPRISE, IL N'Y A RIEN À INSTALLER ICI.
+   *
+   * Le PORTAIL passe en premier, comme partout : un client invité par
+   * son paysagiste n'a pas d'organisation et n'en veut pas. Lui
+   * demander de créer une entreprise pour lire sa facture serait
+   * absurde.
+   *
+   * Les autres partent au tunnel. Cette page ne crée plus d'entreprise
+   * — c'est `/inscription` qui le fait, et lui seul —, alors la laisser
+   * afficher un parcours d'installation vide serait proposer de
+   * décorer une maison qui n'existe pas.
+   */
+  if (organizations.length === 0) {
+    redirect((await hasPortalAccess()) ? "/portail" : "/inscription?etape=societe");
+  }
 
-  const organization = organizations.length > 0 ? await getActiveOrganization() : null;
+  const organization = await getActiveOrganization();
+
+  /**
+   * INSTALLER L'ESPACE EST LE TRAVAIL DE CELUI QUI DIRIGE.
+   *
+   * Chaque étape écrit dans `business_organizations`, que la base
+   * réserve à `organization.manageUsers`. Sans ce garde-fou, un ouvrier
+   * qui arrive ici par un lien voit un parcours d'installation dont
+   * chaque « Continuer » sera refusé par RLS — huit écrans qui ne
+   * mènent nulle part. Ce contrôle-ci ne fait que masquer ; c'est la
+   * base qui refuse.
+   */
+  if (organization && !organization.permissions.includes("organization.manageUsers")) {
+    redirect("/");
+  }
+
   const supabase = await createClient();
 
   const { data: company } = organization
@@ -405,11 +459,8 @@ export default async function WelcomePage({ searchParams }: PageProps<"/bienvenu
   }
 
   // Une appartenance sans fiche lisible : la ligne existe forcément
-  // puisqu'on est membre. Plutôt que de proposer d'en créer une
-  // deuxième — ce que ferait l'étape 1 —, on renvoie à l'accueil.
-  if (organization && !company) redirect("/");
-
-  const draftName = typeof params.nom === "string" ? params.nom.trim().slice(0, 120) : "";
+  // puisqu'on est membre. Il n'y a rien à installer sans elle.
+  if (!company) redirect("/");
 
   const requestedStep = Number.parseInt(
     typeof params.etape === "string" ? params.etape : "",
@@ -417,16 +468,13 @@ export default async function WelcomePage({ searchParams }: PageProps<"/bienvenu
   );
 
   // Sans `?etape=`, on reprend là où la base dit qu'on s'est arrêté.
-  let step = Number.isFinite(requestedStep)
-    ? company
-      ? clampStep(requestedStep, 3)
-      : Math.min(clampStep(requestedStep, 1), 2)
-    : company
-      ? clampStep(company.onboarding_step, 3)
-      : 1;
-
-  // L'étape 2 n'a de sens qu'avec un nom à confirmer.
-  if (!company && step === 2 && !draftName) step = 1;
+  // C'est ce qui fait retomber sur la bonne étape le lendemain — et
+  // c'est pour cela que `/inscription` pose `onboarding_step = 3` à la
+  // création : sans ce départ, la garde du dessus renverrait à
+  // l'accueil toute entreprise neuve.
+  const step = Number.isFinite(requestedStep)
+    ? clampStep(requestedStep, FIRST_STEP)
+    : clampStep(company.onboarding_step, FIRST_STEP);
 
   const logoUrl = company?.logo_path
     ? supabase.storage.from("organization-logos").getPublicUrl(company.logo_path).data
@@ -509,69 +557,16 @@ export default async function WelcomePage({ searchParams }: PageProps<"/bienvenu
           </div>
 
           <h1 className="text-[length:var(--text-page)] font-semibold leading-tight tracking-tight text-balance">
-            {company ? `Installons ${company.name}` : "Bienvenue dans Oasis Care Pro"}
+            Installons {company.name}
           </h1>
           <p className="mt-2 max-w-xl text-[var(--text-body)] text-ink-soft">
-            Huit étapes, dont cinq facultatives. Vous pouvez fermer cette page et
-            reprendre plus tard : ce qui est enregistré reste enregistré.
+            Votre société et votre offre sont réglées. Il reste six étapes, dont cinq
+            facultatives. Vous pouvez fermer cette page et reprendre plus tard : ce qui est
+            enregistré reste enregistré.
           </p>
         </header>
 
-        <Stepper step={step} reachable={company !== null} />
-
-        {/* ---------------- 1. Nom de l'entreprise ---------------- */}
-        {step === 1 && (
-          /* Un formulaire GET : le nom part dans l'URL, et l'étape 2
-             survit à un rechargement sans qu'aucune ligne n'ait encore
-             été écrite en base. */
-          <form action="/bienvenue">
-            <input type="hidden" name="etape" defaultValue={2} />
-            <Panel
-              title="Le nom de votre entreprise"
-              description="Celui que vos clients liront en haut de vos devis."
-              footer={<SubmitButton>Continuer</SubmitButton>}
-            >
-              <div className="px-5 py-5">
-                <Field
-                  label="Nom de l'entreprise"
-                  name="nom"
-                  required
-                  defaultValue={draftName}
-                  placeholder="Paysages Martin"
-                  hint="Modifiable à tout moment dans la fiche de votre société."
-                />
-              </div>
-            </Panel>
-          </form>
-        )}
-
-        {/* ---------------- 2. Activité ---------------- */}
-        {step === 2 && (
-          <>
-            <form action={createOrganizationAction}>
-              <input type="hidden" name="name" defaultValue={draftName} />
-              <Panel
-                title="Votre activité"
-                description={`${draftName} — paysage, pépinière, ou les deux ?`}
-                footer={<SubmitButton>Créer mon espace</SubmitButton>}
-              >
-                <div className="px-5 py-5">
-                  <SelectField
-                    label="Activité"
-                    name="business_type"
-                    defaultValue="landscaper"
-                    options={BUSINESS_TYPES.map((type) => ({
-                      value: type,
-                      label: BUSINESS_TYPE_LABELS[type],
-                    }))}
-                    hint="Détermine les modules affichés dans le menu. Modifiable à tout moment."
-                  />
-                </div>
-              </Panel>
-            </form>
-            <StepFooter back={`/bienvenue?etape=1&nom=${encodeURIComponent(draftName)}`} />
-          </>
-        )}
+        <Stepper step={step} />
 
         {/* ---------------- 3. Logo ---------------- */}
         {step === 3 && company && (

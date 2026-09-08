@@ -98,6 +98,9 @@ test("le super-administrateur voit toutes les entrées livrées", () => {
     "/ia",
     "/ia/couts",
     "/ia/plafonds",
+    "/emails",
+    "/emails/delivrabilite",
+    "/emails/suppressions",
     "/parametres",
     "/equipe",
   ]);
@@ -135,6 +138,12 @@ test("chaque écran de premier niveau a sa porte dans le menu", () => {
     "/parametres",
     "/equipe",
     "/ia",
+    // Les trois écrans du courrier sortant (0084). Ils étaient écrits,
+    // éprouvés et atteignables en tapant leur URL : exactement l'oubli
+    // que ce test existe pour empêcher.
+    "/emails",
+    "/emails/delivrabilite",
+    "/emails/suppressions",
   ]) {
     assert.ok(hrefs.has(attendu), `${attendu} n'est atteignable qu'en tapant son URL`);
   }
@@ -147,7 +156,7 @@ test("aucune section sans écran n'est déclarée", () => {
   // « Feature Flags » avant que l'écran n'existe.
   assert.deepEqual(
     ADMIN_NAVIGATION.map((group) => group.label),
-    ["Vue d'ensemble", "Clients", "Commercial", "Assistance", "Sécurité", "IA", "Paramètres"],
+    ["Vue d'ensemble", "Clients", "Commercial", "Assistance", "Sécurité", "IA", "Courrier", "Paramètres"],
   );
 });
 

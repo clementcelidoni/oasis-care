@@ -77,7 +77,50 @@ export async function proxy(request: NextRequest) {
   const isPublic =
     pathname.startsWith("/login") ||
     pathname.startsWith("/auth") ||
-    pathname.startsWith("/invitation");
+    pathname.startsWith("/invitation") ||
+    // LE DÉSABONNEMENT DOIT MARCHER SANS COMPTE, ET SANS DÉLAI.
+    //
+    // C'est une obligation légale (art. L.34-5 CPCE, art. 7-3 RGPD : le
+    // retrait doit être aussi simple que le consentement). Rediriger ce
+    // lien vers une page de connexion, c'est refuser le désabonnement —
+    // et la personne n'aurait alors qu'un seul geste possible :
+    // « signaler comme indésirable ». C'est cette plainte qui remplit la
+    // liste de blocage TRANSACTIONNELLE du transporteur, et qui finit
+    // par bloquer les FACTURES de la même adresse.
+    pathname.startsWith("/desabonnement") ||
+    // LE DEVIS PARTAGÉ S'OUVRE SANS COMPTE. C'est la décision du
+    // dirigeant : « il doit pas créer de compte ». Le client d'un
+    // paysagiste n'a pas de compte et n'en aura pas.
+    //
+    // Sans cette ligne, /d/<jeton> était redirigé vers /login — donc la
+    // porte ne s'ouvrait JAMAIS, et la redirection était une impasse
+    // pour quelqu'un qui ne peut pas se connecter.
+    //
+    // ET LA CONSÉQUENCE ÉTAIT PIRE QUE FONCTIONNELLE : le paragraphe
+    // ci-dessous recopiait le chemin dans `?next=`, donc le JETON —
+    // l'unique barrière de la porte, 256 bits — partait dans une URL de
+    // page de connexion. Un paramètre de requête finit dans les
+    // journaux d'accès de l'hébergeur, dans l'historique du navigateur,
+    // et dans l'en-tête Referer de tout ce que /login émet. La page /d
+    // se défend justement par `referrer: no-referrer` et
+    // `robots: noindex` — défenses qui ne s'appliquaient jamais,
+    // puisqu'elle ne s'affichait pas.
+    pathname.startsWith("/d/") ||
+    // L'ÉTIQUETTE SCANNÉE S'OUVRE SANS COMPTE, ET C'EST TOUT LE § 15.
+    //
+    // « Le backend détermine ensuite l'organisation, l'entité, les
+    // permissions, l'écran à ouvrir. » Le porteur le plus fréquent
+    // n'est pas un salarié : c'est quelqu'un qui passe devant une
+    // plante dans un jardin et sort son téléphone. Sans cette ligne,
+    // /x/<jeton> était redirigé vers /login — mesuré : 307 vers
+    // /login?next=… —, donc CHAQUE QR imprimé menait à un écran de
+    // connexion, et les écrans du produit promettaient à l'écran
+    // qu'un passant verrait une fiche.
+    //
+    // Le résolveur ne crée aucune session : il lit celle qui existe
+    // pour décider quoi montrer, et ne montre rien de plus à un
+    // anonyme que ce que le propriétaire a explicitement publié.
+    pathname.startsWith("/x/");
 
   /**
    * A Server Action is not a page navigation.
@@ -93,11 +136,35 @@ export async function proxy(request: NextRequest) {
    */
   const isServerAction = request.headers.get("next-action") !== null;
 
+  /**
+   * UN CHEMIN QUI PORTE UN SECRET NE SE RECOPIE PAS DANS UNE URL.
+   *
+   * `?next=` est une commodité utile partout ailleurs. Mais /d/<jeton>
+   * porte l'unique barrière de la porte anonyme dans son chemin, et un
+   * paramètre de requête se retrouve dans les journaux d'accès, dans
+   * l'historique du navigateur et dans l'en-tête Referer.
+   *
+   * La ligne d'`isPublic` ci-dessus suffit pour /d aujourd'hui. Cette
+   * liste-ci est la ceinture : la prochaine route à jeton — une
+   * facture, un portail — ramènerait exactement la même fuite si elle
+   * arrivait sans que personne y pense. On la nomme par sa PROPRIÉTÉ,
+   * pas par son nom.
+   */
+  //
+  // /x/<jeton> porte le même genre de secret : recopié dans `?next=`,
+  // le jeton d'une étiquette partait dans les journaux d'accès, dans
+  // l'historique et dans le Referer de /login. Il est nommé ici par
+  // sa PROPRIÉTÉ, comme le commentaire ci-dessus le demandait.
+  const cheminPorteUnSecret = pathname.startsWith("/d/") || pathname.startsWith("/x/");
+
   if (!user && !isPublic && answered && !isServerAction) {
     const loginUrl = request.nextUrl.clone();
     loginUrl.pathname = "/login";
+    loginUrl.search = "";
     // Send them back where they were headed once signed in.
-    loginUrl.searchParams.set("next", pathname);
+    if (!cheminPorteUnSecret) {
+      loginUrl.searchParams.set("next", pathname);
+    }
     return NextResponse.redirect(loginUrl);
   }
 

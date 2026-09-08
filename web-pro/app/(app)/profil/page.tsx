@@ -191,11 +191,18 @@ export default async function ProfilePage() {
       >
         {organizations.length === 0 ? (
           <div className="px-5 py-5">
+            {/* LA PORTE, ET NON L'INSTALLATION. Ce lien menait à
+                `/bienvenue`, qui créait les entreprises et n'y mettait
+                ni SIRET, ni numéro de TVA, ni dossier fiscal : la
+                société née par là n'était pas facturable. La création
+                vit désormais dans `/inscription`, et là seulement. */}
             <EmptyState
               title="Aucune entreprise pour le moment"
               description="Créez votre entreprise pour commencer à saisir vos clients, vos devis et vos chantiers."
               icon={<Icon name="company" className="h-5 w-5" />}
-              action={<ButtonLink href="/bienvenue">Créer mon entreprise</ButtonLink>}
+              action={
+                <ButtonLink href="/inscription?etape=societe">Créer mon entreprise</ButtonLink>
+              }
             />
           </div>
         ) : (

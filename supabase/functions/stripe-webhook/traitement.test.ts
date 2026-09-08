@@ -27,8 +27,10 @@ import type { FactureCandidate } from "./rapprochement.ts";
 import {
   RefusMetier,
   traiter,
+  type DemandeAbonnement,
   type DemandeEncaissement,
   type EtatEvenement,
+  type IssueAbonnement,
   type Issue,
   type PorteBase,
 } from "./traitement.ts";
@@ -84,6 +86,28 @@ function sessionTerminee(surcharge: Record<string, unknown> = {}): unknown {
       },
     },
   };
+}
+
+/**
+ * Une session terminée portant LE CONTRAT DE MÉTADONNÉES COMPLET —
+ * celui que `web-pro/lib/billing/stripe.ts` pose sur la session et sur
+ * l'abonnement. C'est lui qui permet d'ouvrir l'abonnement.
+ */
+function sessionAvecContrat(metadata: Record<string, string> = {}): unknown {
+  return sessionTerminee({
+    metadata: {
+      oasis_organization_id: ORG,
+      planKey: "team",
+      billingCycle: "monthly",
+      mode: "test",
+      avecEssai: "true",
+      finEssaiLe: "2026-10-06",
+      premierPrelevementLe: "2026-10-06",
+      jourAnniversaire: "6",
+      siegesFacturables: "3",
+      ...metadata,
+    },
+  });
 }
 
 function lire(brut: unknown): { evenement: EvenementNormalise; intention: Intention } {
@@ -162,6 +186,46 @@ class BaseSimulee implements PorteBase {
     ligne.processed_at = new Date().toISOString();
     if (motif !== null) (ligne as { error?: string }).error = motif;
     return Promise.resolve("closed");
+  }
+
+  /** Les abonnements ouverts : entreprise → ce qui a été demandé. */
+  readonly abonnements = new Map<string, DemandeAbonnement>();
+
+  ouvrirAbonnement(demande: DemandeAbonnement): Promise<IssueAbonnement | null> {
+    this.controler("ouvrirAbonnement");
+    // `saas_start_subscription` refuse une entreprise déjà abonnée
+    // (23505) ; l'implémentation traduit ce refus-là en `null`.
+    if (this.abonnements.has(demande.organisationId)) return Promise.resolve(null);
+    this.abonnements.set(demande.organisationId, demande);
+    this.clients.set(demande.organisationId, demande.clientPrestataire);
+    return Promise.resolve(
+      demande.avecEssai
+        ? { statut: "trialing", numeroFacture: null, message: "Essai ouvert." }
+        : { statut: "active", numeroFacture: "FS-2026-00001", message: "Abonnement actif." },
+    );
+  }
+
+  /**
+   * Les abonnements FERMÉS — « restreint » ou « en sursis » du péage.
+   * Le double reproduit la règle de `saas_reopen_subscription` : elle
+   * ne reprend QUE ceux-là, et lève 23505 sur tout abonnement en cours
+   * (que l'implémentation traduit en `null`, comme à l'ouverture).
+   */
+  readonly abonnementsFermes = new Set<string>();
+
+  reprendreAbonnement(demande: DemandeAbonnement): Promise<IssueAbonnement | null> {
+    this.controler("reprendreAbonnement");
+    if (!this.abonnementsFermes.has(demande.organisationId)) return Promise.resolve(null);
+    this.abonnementsFermes.delete(demande.organisationId);
+    this.abonnements.set(demande.organisationId, demande);
+    this.clients.set(demande.organisationId, demande.clientPrestataire);
+    // JAMAIS D'ESSAI À LA REPRISE : la base ne l'accorde pas, le double
+    // non plus. Un « trialing » rendu ici masquerait la règle.
+    return Promise.resolve({
+      statut: "active",
+      numeroFacture: "FS-2026-00042",
+      message: "Abonnement repris.",
+    });
   }
 
   rattacherClient(organisationId: string, clientPrestataire: string): Promise<"linked" | "alreadyLinked"> {
@@ -627,24 +691,234 @@ test("PAYER LA FACTURE D'UNE AUTRE ENTREPRISE EST REFUSÉ DE BOUT EN BOUT", asyn
   assert.equal(base.evenements.get("evt_1")?.outcome, "failed");
 });
 
-test("LE WEBHOOK N'OUVRE AUCUN ABONNEMENT — la porte n'existe même pas", async () => {
-  // Preuve par la surface : `PorteBase` ne comporte aucune méthode qui
-  // crée ou fait avancer un abonnement. Ce n'est pas un oubli (0083
-  // § 11 : aucun chemin machine n'existe), et si quelqu'un en ajoutait
-  // une un jour, ce test tomberait et l'obligerait à s'en expliquer.
+test("UN ENCAISSEMENT N'OUVRE JAMAIS D'ABONNEMENT", async () => {
+  // ══════════════════════════════════════════════════════════════
+  // CE TEST DISAIT L'INVERSE, ET IL AVAIT RAISON DE LE DIRE — JUSQU'À
+  // CE QUE LE CHEMIN EXISTE.
+  // ══════════════════════════════════════════════════════════════
+  //
+  // Il affirmait « le webhook n'ouvre aucun abonnement, la porte
+  // n'existe même pas », au motif que 0083 § 11 n'offrait aucun chemin
+  // machine. 0089 § 4 en a posé un — `saas_start_subscription` — et
+  // l'audit a mesuré qu'il n'avait AUCUN appelant : l'argent arrivait
+  // donc toujours avant la facture, et chaque prélèvement tombait en
+  // rapprochement manuel.
+  //
+  // Ce qui reste vrai, et qu'on garde : l'ARGENT n'ouvre rien. Un
+  // `invoice.paid` constate un encaissement sur une facture existante,
+  // point. Ouvrir un abonnement à partir d'un paiement, ce serait
+  // ouvrir un droit sur un événement dont on ne sait pas ce qu'il
+  // vendait.
   const base = new BaseSimulee();
   await jouer(base, facturePayee());
 
-  const methodes = base.appels.slice().sort();
-  for (const methode of methodes) {
-    assert.doesNotMatch(
-      methode,
-      /abonnement|subscription|souscri/i,
-      `« ${methode} » ressemble à un chemin d'abonnement : le webhook n'en a pas le droit.`,
+  assert.equal(base.appels.includes("ouvrirAbonnement"), false);
+  assert.equal(base.abonnements.size, 0);
+});
+
+test("UNE SESSION CONFIRMÉE OUVRE L'ABONNEMENT — c'est ce qui manquait", async () => {
+  const base = new BaseSimulee();
+  const reponse = await jouer(base, sessionAvecContrat());
+
+  assert.equal(reponse.statut, 200);
+  assert.equal(base.evenements.get("evt_session")?.outcome, "applied");
+
+  const demande = base.abonnements.get(ORG);
+  assert.ok(demande, "L'abonnement doit être ouvert.");
+  assert.equal(demande.plan, "team");
+  assert.equal(demande.cycle, "monthly");
+  assert.equal(demande.avecEssai, true);
+  assert.equal(demande.clientPrestataire, CLIENT);
+});
+
+test("LES TROIS VÉRITÉS DU DEHORS TRAVERSENT INTACTES", async () => {
+  // La base compte en UTC, l'écran compte à Paris, et c'est le
+  // PRESTATAIRE qui débite — à la date annoncée au client. Un recalcul
+  // côté base fixait une ancre différente, donc décalait tous les mois
+  // suivants, et la facture ne tombait plus le jour de l'encaissement.
+  const base = new BaseSimulee();
+  await jouer(base, sessionAvecContrat());
+
+  const demande = base.abonnements.get(ORG);
+  assert.ok(demande);
+  assert.equal(demande.finEssaiLe, "2026-10-06");
+  // L'ancre est celle ANNONCÉE, et elle ne se déduit pas de la date :
+  // un essai ouvert le 31 janvier finit le 28 février, et l'ancre reste
+  // 31 (0089 § 1).
+  assert.equal(demande.jourAnniversaire, 6);
+  // Et les sièges viennent de la CAISSE : c'est ce qui a été débité.
+  assert.equal(demande.siegesFacturables, 3);
+});
+
+test("SANS ESSAI, AUCUNE DATE D'ESSAI NE PART", async () => {
+  // Transmettre une fin d'essai à un client qui paie tout de suite
+  // ouvrirait un essai en base pendant que le prestataire débite : le
+  // pire des deux mondes.
+  const base = new BaseSimulee();
+  await jouer(base, sessionAvecContrat({ avecEssai: "false" }));
+
+  const demande = base.abonnements.get(ORG);
+  assert.ok(demande);
+  assert.equal(demande.avecEssai, false);
+  assert.equal(demande.finEssaiLe, null);
+});
+
+test("UNE CLÉ « avecEssai » MAL ORTHOGRAPHIÉE FAIT PAYER, ELLE N'OFFRE PAS UN MOIS", async () => {
+  // Le sens de l'erreur qui coûte le moins : seul « true » vaut essai.
+  for (const valeur of ["vrai", "TRUE", "1", "oui", ""]) {
+    const base = new BaseSimulee();
+    await jouer(base, sessionAvecContrat({ avecEssai: valeur }));
+    assert.equal(
+      base.abonnements.get(ORG)?.avecEssai,
+      false,
+      `« ${valeur} » ne doit pas ouvrir un mois gratuit.`,
     );
   }
-  // Et il n'émet aucune facture ni aucun numéro non plus.
-  for (const methode of methodes) {
-    assert.doesNotMatch(methode, /emettre|numero|facturer/i, `« ${methode} » n'a rien à faire dans un webhook.`);
-  }
+});
+
+test("UN NOMBRE DE SIÈGES ILLISIBLE VAUT « JE NE SAIS PAS », JAMAIS ZÉRO", async () => {
+  // « Zéro siège supplémentaire » et « je n'ai pas su lire » sont deux
+  // réponses différentes. La seconde doit laisser la base recompter,
+  // pas facturer un chiffre inventé — c'est la règle « jamais de || 0
+  // derrière un montant qui peut être inconnu ».
+  const base = new BaseSimulee();
+  await jouer(base, sessionAvecContrat({ siegesFacturables: "trois" }));
+  assert.equal(base.abonnements.get(ORG)?.siegesFacturables, null);
+
+  const base2 = new BaseSimulee();
+  await jouer(base2, sessionAvecContrat({ siegesFacturables: "0" }));
+  assert.equal(base2.abonnements.get(ORG)?.siegesFacturables, 0);
+});
+
+test("UNE SESSION SANS LE CONTRAT RETOMBE SUR LE SIMPLE RATTACHEMENT", async () => {
+  // Une session créée à la main dans le tableau de bord du prestataire,
+  // ou une session d'avant ce chantier. On n'invente pas d'abonnement à
+  // partir d'une session dont on ne sait pas ce qu'elle vendait.
+  const base = new BaseSimulee();
+  const reponse = await jouer(base, sessionTerminee());
+
+  assert.equal(reponse.statut, 200);
+  assert.equal(base.abonnements.size, 0);
+  assert.equal(base.clients.get(ORG), CLIENT);
+});
+
+test("UNE ENTREPRISE DÉJÀ ABONNÉE N'EST PAS UNE ANOMALIE", async () => {
+  // C'est le rejeu d'un événement, ou une seconde session. On consigne
+  // « ignored » et on répond 200 : consigner « failed » ferait rejouer
+  // Stripe trois jours pour une situation parfaitement normale.
+  const base = new BaseSimulee();
+  await jouer(base, sessionAvecContrat());
+
+  const seconde = await traiter(
+    base,
+    { ...lire(sessionAvecContrat()).evenement, id: "evt_session_2" },
+    lire(sessionAvecContrat()).intention,
+  );
+
+  assert.equal(seconde.statut, 200);
+  assert.equal(base.evenements.get("evt_session_2")?.outcome, "ignored");
+  assert.equal(base.abonnements.size, 1);
+});
+
+test("UNE ENTREPRISE FERMÉE QUI REPASSE À LA CAISSE EST REPRISE, PAS IGNORÉE", async () => {
+  // ══════════════════════════════════════════════════════════════
+  // LE CHEMIN DU RETOUR. C'est la moitié manquante du péage.
+  // ══════════════════════════════════════════════════════════════
+  //
+  // `saas_start_subscription` lève 23505 dès qu'une ligne existe, et il
+  // en existe toujours une après la première souscription. Avant cette
+  // reprise, une entreprise résiliée ou suspendue voyait son paiement
+  // partir et son accès rester fermé : on encaissait sans rouvrir. Un
+  // péage sans sortie n'est pas un péage, c'est une prison.
+  const base = new BaseSimulee();
+  await jouer(base, sessionAvecContrat());
+  assert.equal(base.abonnements.size, 1);
+
+  // Le temps passe : le prélèvement échoue, le péage ferme. La ligne
+  // d'abonnement, elle, RESTE — c'est tout le problème que la reprise
+  // résout, et c'est pour cela qu'on ne la supprime pas ici.
+  base.abonnementsFermes.add(ORG);
+
+  const retour = await traiter(
+    base,
+    { ...lire(sessionAvecContrat()).evenement, id: "evt_retour" },
+    lire(sessionAvecContrat()).intention,
+  );
+
+  assert.equal(retour.statut, 200);
+  assert.equal(
+    base.evenements.get("evt_retour")?.outcome,
+    "applied",
+    "Une reprise est un effet appliqué, pas un événement ignoré.",
+  );
+  assert.equal(base.abonnementsFermes.has(ORG), false, "L'abonnement doit être rouvert.");
+  assert.equal(base.appels.includes("reprendreAbonnement"), true);
+});
+
+test("LA REPRISE N'OFFRE JAMAIS UN SECOND MOIS D'ESSAI", async () => {
+  // Résilier pour redemander un mois gratuit serait le dernier
+  // contournement du péage. La base le refuse ; on ne le lui demande
+  // même pas, et c'est ce que ce test fige : la session porte pourtant
+  // « avecEssai = true ».
+  const base = new BaseSimulee();
+  base.abonnementsFermes.add(ORG);
+  base.abonnements.set(ORG, {
+    organisationId: ORG, plan: "team", cycle: "monthly", avecEssai: true,
+    clientPrestataire: "cus_1", mode: "test", finEssaiLe: null,
+    jourAnniversaire: null, siegesFacturables: null,
+  });
+
+  await jouer(base, sessionAvecContrat({ avecEssai: "true" }));
+
+  assert.equal(
+    base.abonnements.get(ORG)?.avecEssai,
+    false,
+    "La reprise doit demander un abonnement payant, jamais un essai.",
+  );
+  assert.equal(base.abonnements.get(ORG)?.finEssaiLe, null);
+});
+
+test("UN ABONNEMENT EN COURS N'EST PAS « REPRIS » — la base tranche, pas nous", async () => {
+  // La reprise est tentée, la base refuse (rien à rouvrir), et l'on
+  // retombe sur « ignored ». C'est ce qui distingue un rejeu banal
+  // d'un vrai retour, et ce n'est pas au webhook d'en décider.
+  const base = new BaseSimulee();
+  await jouer(base, sessionAvecContrat());
+
+  const rejeu = await traiter(
+    base,
+    { ...lire(sessionAvecContrat()).evenement, id: "evt_rejeu" },
+    lire(sessionAvecContrat()).intention,
+  );
+
+  assert.equal(base.appels.includes("reprendreAbonnement"), true, "On demande…");
+  assert.equal(rejeu.statut, 200);
+  assert.equal(base.evenements.get("evt_rejeu")?.outcome, "ignored", "…et la base dit non.");
+});
+
+test("L'ABONNEMENT EST OUVERT AVANT QUE L'ARGENT N'ARRIVE", async () => {
+  // ══════════════════════════════════════════════════════════════
+  // LA CHAÎNE COMPLÈTE, DANS L'ORDRE OÙ STRIPE LA LIVRE.
+  // ══════════════════════════════════════════════════════════════
+  //
+  // C'est la règle que 0089 s'est donnée en tête de fichier : « La
+  // facture PRÉCÈDE l'encaissement, jamais l'inverse. » Sans elle, le
+  // rapprochement ne trouve aucune candidate et chaque prélèvement
+  // tombe en « à rapprocher à la main ».
+  const base = new BaseSimulee();
+  base.factures = [];
+
+  await jouer(base, sessionAvecContrat({ avecEssai: "false" }));
+  assert.equal(base.abonnements.get(ORG)?.avecEssai, false);
+
+  // La facture que `saas_start_subscription` vient d'émettre.
+  base.factures = [
+    { id: "f-neuve", organizationId: ORG, devise: "EUR", statut: "issued", resteCentimes: 9588 },
+  ];
+
+  const paiement = await jouer(base, facturePayee());
+  assert.equal(paiement.statut, 200);
+  assert.equal(base.paiements.length, 1, "L'encaissement doit trouver sa facture.");
+  assert.equal(base.paiements[0].factureId, "f-neuve");
+  assert.equal(base.evenements.get("evt_1")?.outcome, "applied");
 });

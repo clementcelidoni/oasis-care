@@ -161,8 +161,8 @@ export default async function InvoicesPage({ searchParams }: PageProps<"/facture
         Oasis Care Pro tient vos factures avec assez de rigueur pour qu&apos;un
         expert-comptable s&apos;en serve. Ce n&apos;est <strong>pas une comptabilité
         certifiée</strong> : ni NF525, ni archivage à valeur probante, ni journal comptable.
-        Aucune facture n&apos;est envoyée et aucun paiement n&apos;est déclenché — vous
-        transmettez et vous constatez.
+        Émettre une facture l&apos;adresse à votre client ; <strong>aucun paiement n&apos;est
+        déclenché</strong> — vous constatez les règlements, vous ne les provoquez pas.
       </p>
     </div>
   );

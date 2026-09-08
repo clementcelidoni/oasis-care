@@ -1,4 +1,4 @@
--- Oasis Care — §11Y, LES DIX AGENTS QUE LA BASE RECONNAÎT (migration 0082).
+-- Oasis Care — §11Y/§11Z, LES AGENTS QUE LA BASE RECONNAÎT (0082, puis 0088).
 --
 -- CE QUE CE TEST DÉFEND, dans l'ordre d'importance :
 --
@@ -9,12 +9,26 @@
 --      moment où l'appel de modèle est déjà payé. On les revérifie une
 --      par une, plutôt que de compter dix.
 --
---   2. LES QUATRE FAÇADES SONT TOUJOURS REFUSÉES. `sales`, `market`,
---      `risk` et `classification` n'ont aucune donnée derrière eux. Les
---      accepter permettrait de leur fixer un plafond de coût et de leur
---      choisir un modèle — un réglage qui a l'air actif pour un agent
---      qui n'existe pas. Ce test est la seule chose qui empêche qu'on
---      les ajoute « pendant qu'on y est ».
+--   2. LES QUATRE DERNIERS SONT ENTRÉS EN 0088, ET LE TEST A SUIVI.
+--      Ce point exigeait autrefois que `sales`, `market`, `risk` et
+--      `classification` soient REFUSÉS : ils n'avaient aucune donnée
+--      derrière eux, et on ne fixe pas un plafond de coût pour un agent
+--      qui n'existe pas.
+--
+--      Le dirigeant a tranché contre cet avis. Les trois premiers sont
+--      devenus des répondeurs (une fonction SQL chacun, posée par
+--      0088) ; le quatrième, `classification`, ne répond toujours à
+--      personne mais DÉPENSAIT DÉJÀ — le routeur le facturait pendant
+--      que `ai_model_overrides` refusait son nom, donc sa dépense
+--      n'était ni plafonnable ni épinglable.
+--
+--      CE QUI RESTE REFUSÉ, ET QUI EST LE VRAI PIÈGE : la graphie de la
+--      spec, `market_intelligence`. Elle se normalise en `market` côté
+--      TypeScript ; si la base l'acceptait AUSSI, le même agent aurait
+--      deux clés possibles dans `ai_agent_settings`, donc deux niveaux
+--      d'autonomie, et le gagnant serait celui qui a écrit en dernier.
+--      C'est ce refus-là que les sections 2, 4 et 5 défendent
+--      maintenant — en lecture, en écriture, et après rejeu.
 --
 --   3. LA CONTRAINTE MORD VRAIMENT. Une fonction juste ne prouve rien
 --      si les `check` ne l'appellent pas : on écrit réellement une
@@ -36,7 +50,20 @@
 -- SANS EFFET DE BORD : tout est dans une transaction terminée par
 -- ROLLBACK.
 --
--- Pour le rejouer : jouer 0072 (au moins), puis 0082, puis ce fichier.
+-- Pour le rejouer : jouer 0072 (au moins), puis 0082, PUIS 0088, puis ce
+-- fichier. 0088 n'est pas facultative : depuis §11Z ce test décrit
+-- l'état que produit la chaîne COMPLÈTE des migrations, et il échouera
+-- sur une base arrêtée à 0082.
+--
+-- UN PIÈGE DE HARNAIS, ET IL A DÉJÀ TROMPÉ CE CHANTIER : ce fichier
+-- compte CINQ blocs « begin; … rollback; ». Le harnais
+-- (`node runsql.js`) n'imprime que le DERNIER jeu de lignes rendu, donc
+-- il affiche les verdicts du cinquième bloc seulement — « 45/45 tests
+-- passés » pendant que les quatre premiers peuvent être rouges. Pour
+-- lire tous les verdicts, jouer chaque bloc SÉPARÉMENT, avec la
+-- migration devant. Un fichier à bloc unique, comme
+-- `agents_derniers.sql`, n'a pas ce défaut : c'est la forme à préférer
+-- pour un test neuf.
 
 begin;
 
@@ -62,14 +89,44 @@ insert into res values
   ('1j : customer accepté',      'true', public.ai_is_supported_agent('customer')::text);
 
 -- ============================================================
--- 2. Les quatre façades restent dehors
+-- 2. Les quatre derniers sont entrés en 0088
 -- ============================================================
-
+--
+-- ══════════════════════════════════════════════════════════════════
+-- CETTE SECTION A CHANGÉ DE SENS, ET CE N'EST PAS UN RENONCEMENT
+-- ══════════════════════════════════════════════════════════════════
+--
+-- Elle s'appelait « les quatre façades restent dehors » et exigeait un
+-- refus. C'était juste à l'époque de 0082 : les quatre agents n'avaient
+-- rien derrière eux, et on ne fixe pas un plafond de coût pour un agent
+-- qui n'existe pas.
+--
+-- Le dirigeant a tranché contre cet avis et demandé les quatre. 0088
+-- les accepte, mais PAS TOUS POUR LA MÊME RAISON, et la différence est
+-- le vrai sujet :
+--
+--   • sales, market et risk sont devenus des RÉPONDEURS. Un fichier,
+--     une mission, des limites, une fonction SQL chacun
+--     (ai_sales_flow, ai_internal_history, ai_risk_snapshot).
+--
+--   • classification n'est TOUJOURS PAS un répondeur, et ne le sera
+--     pas : c'est l'étape de pré-traitement, elle désigne l'agent à qui
+--     la question s'adresse puis s'efface. Son nom est en base pour une
+--     raison différente — elle DÉPENSAIT déjà, facturée au niveau le
+--     moins cher par le routeur, pendant que ai_model_overrides
+--     refusait son nom. Sa dépense n'était donc ni plafonnable ni
+--     épinglable. 0088 lui donne un contrôle, pas une capacité.
+--
+-- Ce fichier éprouve 0082 ; il est rejoué APRÈS toute la chaîne de
+-- migrations, donc il doit décrire l'état que la chaîne produit. Le
+-- laisser exiger un refus aurait rendu la suite d'intégration rouge
+-- pour une décision qui a été prise.
 insert into res values
-  ('2a : sales refusé',          'false', public.ai_is_supported_agent('sales')::text),
-  ('2b : market refusé',         'false', public.ai_is_supported_agent('market')::text),
-  ('2c : risk refusé',           'false', public.ai_is_supported_agent('risk')::text),
-  ('2d : classification refusé', 'false', public.ai_is_supported_agent('classification')::text);
+  ('2a : sales accepté depuis 0088',          'true', public.ai_is_supported_agent('sales')::text),
+  ('2b : market accepté depuis 0088',         'true', public.ai_is_supported_agent('market')::text),
+  ('2c : risk accepté depuis 0088',           'true', public.ai_is_supported_agent('risk')::text),
+  ('2d : classification accepté depuis 0088, parce qu''il dépense', 'true',
+   public.ai_is_supported_agent('classification')::text);
 
 -- Et le nom de la spec pour l'agent Marché non plus : `MarketIntelligenceAgent`
 -- se normalise en `market` côté TypeScript, et rien ne doit rattraper
@@ -121,6 +178,19 @@ declare
 begin
   v_org := public.create_professional_organization('TEST 0082 — agents', 'landscaper');
 
+-- LE CONTRAT — sans lui, le péage (0092) refuse tout (voir 0092 § 5).
+-- « created_at >= now() » : now() est l'heure de DÉBUT DE TRANSACTION et
+-- la colonne a now() pour défaut, donc ce filtre ne prend QUE les
+-- entreprises nées ici. Un jeu d'essai ne signe pas de contrat pour de
+-- vrais clients.
+insert into public.organization_subscriptions
+  (organization_id, plan, status, provider, billing_cycle)
+select o.id, 'business', 'active', 'manual', 'monthly'
+  from public.business_organizations o
+ where o.created_at >= now()
+on conflict (organization_id) do nothing;
+
+
   -- Un des six nouveaux doit passer.
   begin
     insert into public.ai_agent_settings (organization_id, agent, enabled, autonomy_level)
@@ -130,11 +200,26 @@ begin
     v_ok_nouveau := false;
   end;
 
-  -- Une façade doit être refusée par la contrainte, pas par une
-  -- convention de nommage ni par la bonne volonté de l'appelant.
+  -- ══════════════════════════════════════════════════════════════════
+  -- LE NOM ÉPROUVÉ ICI A CHANGÉ, PARCE QUE « risk » EST DEVENU VALIDE
+  -- ══════════════════════════════════════════════════════════════════
+  --
+  -- Ce test écrivait 'risk' et attendait un refus. 0088 accepte 'risk' :
+  -- l'assertion serait devenue fausse, et c'est la plus proche du
+  -- comportement réel des trois qui portaient sur cette liste — les
+  -- autres interrogent la fonction, celle-ci ÉCRIT.
+  --
+  -- On garde donc l'assertion en changeant de cobaye, et le nouveau est
+  -- meilleur : 'market_intelligence' est le nom que la SPEC donne à
+  -- l'agent Marché. Il se normalise en 'market' côté TypeScript, et
+  -- rien ne doit rattraper cette graphie-là en base — sans quoi le même
+  -- agent aurait deux clés possibles dans ai_agent_settings, donc deux
+  -- niveaux d'autonomie, et le gagnant serait celui qui a écrit en
+  -- dernier. C'est exactement le piège que 2e surveille en lecture ;
+  -- ici on le surveille en écriture.
   begin
     insert into public.ai_agent_settings (organization_id, agent, enabled, autonomy_level)
-    values (v_org, 'risk', true, 2);
+    values (v_org, 'market_intelligence', true, 2);
     v_refus_facade := false;
   exception when check_violation then
     v_refus_facade := true;
@@ -142,7 +227,7 @@ begin
 
   insert into res values
     ('4a : un agent construit entre dans ai_agent_settings', 'true', v_ok_nouveau::text),
-    ('4b : une façade est refusée par le check',             'true', v_refus_facade::text);
+    ('4b : la graphie de la spec est refusée par le check',  'true', v_refus_facade::text);
 end;
 $$;
 
@@ -153,6 +238,14 @@ $$;
 -- l'identique de 0082, et c'est voulu : si les deux divergeaient, ce
 -- test passerait en vérifiant autre chose que la migration.
 
+-- CE REJEU REPOSE LA DÉFINITION COURANTE — CELLE DE 0088, PAS CELLE DE
+-- 0082. Ce que la section éprouve est l'IDEMPOTENCE : rejouer la
+-- migration ne casse rien. Y laisser la liste à dix clés ne testait
+-- plus l'idempotence, cela REVENAIT EN ARRIÈRE — la fonction repartait
+-- à dix agents au milieu du fichier, et tout ce qui suit se serait
+-- éprouvé sur un état que la chaîne de migrations ne produit jamais.
+-- Un test qui construit lui-même l'état périmé qu'il vérifie est la
+-- pire espèce de test vert.
 create or replace function public.ai_is_supported_agent(p_agent text)
 returns boolean
 language sql
@@ -161,19 +254,26 @@ set search_path = public
 as $$
   select p_agent in (
     'executive', 'finance', 'billing', 'quote_pricing',
-    'operations', 'planning', 'procurement', 'nursery', 'fleet', 'customer'
+    'operations', 'planning', 'procurement', 'nursery', 'fleet', 'customer',
+    'sales', 'market', 'risk', 'classification'
   );
 $$;
 
 insert into res values
   ('5a : après rejeu, nursery toujours accepté', 'true',
    public.ai_is_supported_agent('nursery')::text),
-  ('5b : après rejeu, risk toujours refusé', 'false',
-   public.ai_is_supported_agent('risk')::text),
+  ('5b : après rejeu, la graphie de la spec reste refusée', 'false',
+   public.ai_is_supported_agent('market_intelligence')::text),
   ('5c : après rejeu, les quatre de 0072 tiennent', '4',
    (
      select count(*)::text
      from unnest(array['executive', 'finance', 'billing', 'quote_pricing']) a(cle)
+     where public.ai_is_supported_agent(a.cle)
+   )),
+  ('5d : après rejeu, les quatre de 0088 tiennent aussi', '4',
+   (
+     select count(*)::text
+     from unnest(array['sales', 'market', 'risk', 'classification']) a(cle)
      where public.ai_is_supported_agent(a.cle)
    ));
 
@@ -326,9 +426,35 @@ select set_config('request.jwt.claims',
   json_build_object('sub','a0000082-0000-4000-8000-0000000000a1')::text, true);
 insert into ids select 'orgA', public.create_professional_organization('Chantiers A','landscaper');
 
+-- LE CONTRAT — sans lui, le péage (0092) refuse tout (voir 0092 § 5).
+-- « created_at >= now() » : now() est l'heure de DÉBUT DE TRANSACTION et
+-- la colonne a now() pour défaut, donc ce filtre ne prend QUE les
+-- entreprises nées ici. Un jeu d'essai ne signe pas de contrat pour de
+-- vrais clients.
+insert into public.organization_subscriptions
+  (organization_id, plan, status, provider, billing_cycle)
+select o.id, 'business', 'active', 'manual', 'monthly'
+  from public.business_organizations o
+ where o.created_at >= now()
+on conflict (organization_id) do nothing;
+
+
 select set_config('request.jwt.claims',
   json_build_object('sub','b0000082-0000-4000-8000-0000000000b1')::text, true);
 insert into ids select 'orgB', public.create_professional_organization('Chantiers B','landscaper');
+
+-- LE CONTRAT — sans lui, le péage (0092) refuse tout (voir 0092 § 5).
+-- « created_at >= now() » : now() est l'heure de DÉBUT DE TRANSACTION et
+-- la colonne a now() pour défaut, donc ce filtre ne prend QUE les
+-- entreprises nées ici. Un jeu d'essai ne signe pas de contrat pour de
+-- vrais clients.
+insert into public.organization_subscriptions
+  (organization_id, plan, status, provider, billing_cycle)
+select o.id, 'business', 'active', 'manual', 'monthly'
+  from public.business_organizations o
+ where o.created_at >= now()
+on conflict (organization_id) do nothing;
+
 
 -- LE COMPTE SANS `projects.read`. Il voit les clients, rien d'autre :
 -- c'est le seul moyen d'éprouver le refus plutôt que la vue partielle.
@@ -725,9 +851,35 @@ select set_config('request.jwt.claims',
   json_build_object('sub','a0000082-0000-4000-8000-0000000000a2')::text, true);
 insert into ids select 'orgA', public.create_professional_organization('Planning A','landscaper');
 
+-- LE CONTRAT — sans lui, le péage (0092) refuse tout (voir 0092 § 5).
+-- « created_at >= now() » : now() est l'heure de DÉBUT DE TRANSACTION et
+-- la colonne a now() pour défaut, donc ce filtre ne prend QUE les
+-- entreprises nées ici. Un jeu d'essai ne signe pas de contrat pour de
+-- vrais clients.
+insert into public.organization_subscriptions
+  (organization_id, plan, status, provider, billing_cycle)
+select o.id, 'business', 'active', 'manual', 'monthly'
+  from public.business_organizations o
+ where o.created_at >= now()
+on conflict (organization_id) do nothing;
+
+
 select set_config('request.jwt.claims',
   json_build_object('sub','b0000082-0000-4000-8000-0000000000b2')::text, true);
 insert into ids select 'orgB', public.create_professional_organization('Planning B','landscaper');
+
+-- LE CONTRAT — sans lui, le péage (0092) refuse tout (voir 0092 § 5).
+-- « created_at >= now() » : now() est l'heure de DÉBUT DE TRANSACTION et
+-- la colonne a now() pour défaut, donc ce filtre ne prend QUE les
+-- entreprises nées ici. Un jeu d'essai ne signe pas de contrat pour de
+-- vrais clients.
+insert into public.organization_subscriptions
+  (organization_id, plan, status, provider, billing_cycle)
+select o.id, 'business', 'active', 'manual', 'monthly'
+  from public.business_organizations o
+ where o.created_at >= now()
+on conflict (organization_id) do nothing;
+
 
 insert into public.organization_members (organization_id, user_id, role, custom_permissions)
 select v, 'c0000082-0000-4000-8000-0000000000c2', 'custom', array['clients.read']
@@ -1166,9 +1318,35 @@ select set_config('request.jwt.claims',
   json_build_object('sub','a0000082-0000-4000-8000-0000000000f1')::text, true);
 insert into ids select 'orgA', public.create_professional_organization('Matériel A','landscaper');
 
+-- LE CONTRAT — sans lui, le péage (0092) refuse tout (voir 0092 § 5).
+-- « created_at >= now() » : now() est l'heure de DÉBUT DE TRANSACTION et
+-- la colonne a now() pour défaut, donc ce filtre ne prend QUE les
+-- entreprises nées ici. Un jeu d'essai ne signe pas de contrat pour de
+-- vrais clients.
+insert into public.organization_subscriptions
+  (organization_id, plan, status, provider, billing_cycle)
+select o.id, 'business', 'active', 'manual', 'monthly'
+  from public.business_organizations o
+ where o.created_at >= now()
+on conflict (organization_id) do nothing;
+
+
 select set_config('request.jwt.claims',
   json_build_object('sub','b0000082-0000-4000-8000-0000000000f2')::text, true);
 insert into ids select 'orgB', public.create_professional_organization('Matériel B','landscaper');
+
+-- LE CONTRAT — sans lui, le péage (0092) refuse tout (voir 0092 § 5).
+-- « created_at >= now() » : now() est l'heure de DÉBUT DE TRANSACTION et
+-- la colonne a now() pour défaut, donc ce filtre ne prend QUE les
+-- entreprises nées ici. Un jeu d'essai ne signe pas de contrat pour de
+-- vrais clients.
+insert into public.organization_subscriptions
+  (organization_id, plan, status, provider, billing_cycle)
+select o.id, 'business', 'active', 'manual', 'monthly'
+  from public.business_organizations o
+ where o.created_at >= now()
+on conflict (organization_id) do nothing;
+
 
 -- Le troisième compte est membre de A mais n'a QUE `clients.read` : il
 -- doit être refusé net, pas servi avec un parc vide.
@@ -1760,9 +1938,35 @@ select set_config('request.jwt.claims',
   json_build_object('sub','a0000082-0000-4000-8000-0000000000c1')::text, true);
 insert into ids select 'orgA', public.create_professional_organization('Clients A','landscaper');
 
+-- LE CONTRAT — sans lui, le péage (0092) refuse tout (voir 0092 § 5).
+-- « created_at >= now() » : now() est l'heure de DÉBUT DE TRANSACTION et
+-- la colonne a now() pour défaut, donc ce filtre ne prend QUE les
+-- entreprises nées ici. Un jeu d'essai ne signe pas de contrat pour de
+-- vrais clients.
+insert into public.organization_subscriptions
+  (organization_id, plan, status, provider, billing_cycle)
+select o.id, 'business', 'active', 'manual', 'monthly'
+  from public.business_organizations o
+ where o.created_at >= now()
+on conflict (organization_id) do nothing;
+
+
 select set_config('request.jwt.claims',
   json_build_object('sub','b0000082-0000-4000-8000-0000000000c2')::text, true);
 insert into ids select 'orgB', public.create_professional_organization('Clients B','landscaper');
+
+-- LE CONTRAT — sans lui, le péage (0092) refuse tout (voir 0092 § 5).
+-- « created_at >= now() » : now() est l'heure de DÉBUT DE TRANSACTION et
+-- la colonne a now() pour défaut, donc ce filtre ne prend QUE les
+-- entreprises nées ici. Un jeu d'essai ne signe pas de contrat pour de
+-- vrais clients.
+insert into public.organization_subscriptions
+  (organization_id, plan, status, provider, billing_cycle)
+select o.id, 'business', 'active', 'manual', 'monthly'
+  from public.business_organizations o
+ where o.created_at >= now()
+on conflict (organization_id) do nothing;
+
 
 -- LE COMPTE QUI FAIT TOUT L'INTÉRÊT DE §5 : membre de A, et il n'a QUE
 -- `clients.read`. Il voit le client et rien de son argent.

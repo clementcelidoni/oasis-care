@@ -2,6 +2,7 @@
 
 import { revalidatePath } from "next/cache";
 import { createClient } from "@/lib/supabase/server";
+import { traduireRefus } from "@/lib/peage/messages";
 
 /**
  * §17 MON PROFIL — le compte de la PERSONNE.
@@ -50,7 +51,7 @@ export async function updateDisplayName(formData: FormData) {
     .from("profiles")
     .update({ display_name: name, updated_at: new Date().toISOString() })
     .eq("id", user.id);
-  if (error) throw new Error(error.message);
+  if (error) throw new Error(traduireRefus(error));
 
   const { error: authError } = await supabase.auth.updateUser({ data: { full_name: name } });
   if (authError) throw new Error(authError.message);

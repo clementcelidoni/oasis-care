@@ -160,6 +160,40 @@ export const PLATFORM_PERMISSIONS = [
   "product.flags.read",
   "product.flags.write",
   "platform.security.write",
+
+  /**
+   * ----------------------------------------------------------------
+   * LES SIX CLÉS DE LA MIGRATION 0084 — le courrier sortant
+   * ----------------------------------------------------------------
+   * Le parc entier expédie depuis UN SEUL domaine authentifié. Un
+   * paysagiste qui écrit à des adresses achetées fait tomber la
+   * délivrabilité de tous — y compris les factures d'abonnement d'Oasis
+   * Care et les messages d'authentification, qui passent par le même
+   * domaine. Écrire au parc, suspendre une entreprise et réhabiliter
+   * une adresse sont donc trois gestes distincts, et la matrice de 0084
+   * refuse de les confier au même rôle : celui qui envoie la publicité
+   * n'est pas celui qui lève le garde-fou.
+   *
+   * `emails.suppression.read` mérite une ligne à part. La liste de
+   * suppression est alimentée depuis l'adresse de tout message qui
+   * rebondit — donc, en majorité, depuis des devis et des factures
+   * adressés aux CLIENTS DES PAYSAGISTES, des gens qui n'ont rien signé
+   * avec Oasis Care. Elle ne se lit que MASQUÉE
+   * (`email_suppression_digest`), et le garde-fou de 0084 lui applique
+   * la même liste blanche qu'à `customer.%`.
+   *
+   * LE PIÈGE DE SEMIS JOUE ENCORE, et c'est la quatrième fois : 0084
+   * rejoue explicitement la jointure du super-administrateur. Tant
+   * qu'elle n'est pas appliquée, ces six clés existent ici et dans
+   * aucune fiche d'administrateur — les écrans du courrier disparaissent
+   * alors du menu sans un mot.
+   */
+  "emails.log.read",
+  "emails.campaigns.read",
+  "emails.campaigns.send",
+  "emails.suppression.read",
+  "emails.suppression.manage",
+  "emails.sending.suspend",
 ] as const;
 
 export type PlatformPermission = (typeof PLATFORM_PERMISSIONS)[number];
@@ -212,6 +246,17 @@ export const PERMISSION_LABELS: Record<PlatformPermission, string> = {
   "product.flags.read": "Voir les drapeaux de fonctionnalité",
   "product.flags.write": "Basculer un drapeau de fonctionnalité",
   "platform.security.write": "Régler la politique de second facteur des administrateurs",
+
+  // Recopiés MOT POUR MOT de ce que 0084 § 16 insère dans
+  // `platform_admin_permissions`, et identiques à
+  // `lib/email/permissions.ts` — qui les garde de son côté pour pouvoir
+  // afficher un refus même quand la lecture du catalogue a échoué.
+  "emails.log.read": "Lire le courrier expédié par Oasis Care et la délivrabilité du parc",
+  "emails.campaigns.read": "Voir les annonces commerciales",
+  "emails.campaigns.send": "Écrire à toutes les entreprises du parc",
+  "emails.suppression.read": "Voir la liste de suppression",
+  "emails.suppression.manage": "Lever une suppression d'adresse",
+  "emails.sending.suspend": "Suspendre ou rétablir l'expédition d'une entreprise",
 };
 
 /**
@@ -252,6 +297,11 @@ export const PERMISSION_FAMILIES = [
     note: "Les demandes des clients et les sessions d'accès encadrées. Le responsable sécurité SURVEILLE les sessions sans pouvoir en ouvrir : surveiller et faire ne sont pas le même rôle.",
   },
   { prefix: "product.", label: "Produit", note: "Les drapeaux de fonctionnalité." },
+  {
+    prefix: "emails.",
+    label: "Courrier sortant",
+    note: "Tout le parc expédie depuis un seul domaine authentifié : un client qui se fait signaler comme indésirable fait tomber la délivrabilité de tous, y compris celle des factures d'Oasis Care. Écrire au parc appartient au produit ; suspendre une entreprise et réhabiliter une adresse appartiennent à la sécurité — celui qui crée le problème ne lève pas le garde-fou.",
+  },
 ] as const;
 
 /** La famille d'une permission, ou `null` si son préfixe est inconnu de l'interface. */
@@ -283,6 +333,9 @@ export const WRITE_PERMISSIONS: readonly PlatformPermission[] = [
   "support.tickets.write",
   "support.sessions.manage",
   "product.flags.write",
+  "emails.campaigns.send",
+  "emails.suppression.manage",
+  "emails.sending.suspend",
 ];
 
 /**

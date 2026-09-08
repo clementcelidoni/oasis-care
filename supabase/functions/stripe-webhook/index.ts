@@ -70,6 +70,7 @@ import type { FactureCandidate } from "./rapprochement.ts";
 import {
   RefusMetier,
   traiter,
+  type DemandeAbonnement,
   type DemandeEncaissement,
   type EtatEvenement,
   type Issue,
@@ -248,6 +249,103 @@ function porteSupabase(admin: SupabaseClient, mode: string): PorteBase {
         .maybeSingle();
       if (error) throw traduire(error);
       return data?.organization_id ?? null;
+    },
+
+    async ouvrirAbonnement(demande: DemandeAbonnement) {
+      // ------------------------------------------------------------
+      // AUCUN MONTANT NE TRAVERSE CET APPEL, ET C'EST LE POINT.
+      // ------------------------------------------------------------
+      // Le prix vient d'`organization_plans`, côté base. Ce webhook
+      // transmet une INTENTION — quelle offre, quel cycle, avec ou sans
+      // essai — et trois dates ou nombres que le prestataire a déjà
+      // opposés au client. Un prix qui viendrait d'ici serait un prix
+      // qu'un attaquant pourrait proposer.
+      const { data, error } = await admin.rpc("saas_start_subscription", {
+        p_organization_id: demande.organisationId,
+        p_plan: demande.plan,
+        p_billing_cycle: demande.cycle,
+        p_with_trial: demande.avecEssai,
+        p_provider: PRESTATAIRE,
+        p_provider_mode: demande.mode,
+        p_provider_customer_id: demande.clientPrestataire,
+        // LA CARTE EST ENREGISTRÉE, ET ON PEUT L'AFFIRMER : Stripe
+        // Checkout la collecte par défaut, et le tunnel pose en outre
+        // `payment_method_collection: 'always'`. Une session `complete`
+        // sans carte n'existe pas dans ce montage.
+        p_card_registered: true,
+        p_reason: "Souscription en ligne (session de paiement confirmée).",
+        // LES TROIS VÉRITÉS QUI VIENNENT DU DEHORS. La base ne les
+        // recalcule pas : c'est le prestataire qui débite, à la date
+        // annoncée au client, et cette base compte en UTC pendant que
+        // l'écran compte à Paris.
+        p_trial_ends_on: demande.finEssaiLe,
+        p_billing_anchor_day: demande.jourAnniversaire,
+        p_billable_extra_seats: demande.siegesFacturables,
+      });
+
+      if (error) {
+        // 23505 = « Cette entreprise a déjà un abonnement. » Ce n'est
+        // pas un refus à consigner comme une anomalie : c'est le rejeu
+        // d'un événement déjà traité, ou une seconde session. On rend
+        // `null` et `traitement.ts` en fait un « ignored ».
+        if (error.code === "23505") return null;
+        throw traduire(error);
+      }
+
+      const ligne = Array.isArray(data) ? data[0] : data;
+      if (!ligne) {
+        throw new Error("saas_start_subscription n'a rien rendu : abonnement dans un état indéterminé.");
+      }
+      return {
+        statut: String(ligne.subscription_status ?? "inconnu"),
+        numeroFacture: ligne.invoice_number ?? null,
+        message: String(ligne.message ?? ""),
+      };
+    },
+
+    async reprendreAbonnement(demande: DemandeAbonnement) {
+      // LE CHEMIN DU RETOUR (migration 0092 § 8). Mêmes principes que
+      // l'ouverture : aucun montant ne traverse cet appel, et les
+      // vérités qui viennent du dehors se limitent à ce que le
+      // prestataire a déjà opposé au client.
+      //
+      // L'ESSAI N'EST PAS UN PARAMÈTRE ICI, et c'est délibéré :
+      // `saas_reopen_subscription` n'en accorde jamais. Résilier pour
+      // redemander un mois gratuit serait le dernier contournement du
+      // péage, et il se ferme du côté de la base plutôt que du côté de
+      // l'appelant.
+      const { data, error } = await admin.rpc("saas_reopen_subscription", {
+        p_organization_id: demande.organisationId,
+        p_plan: demande.plan,
+        p_billing_cycle: demande.cycle,
+        p_provider: PRESTATAIRE,
+        p_provider_mode: demande.mode,
+        p_provider_customer_id: demande.clientPrestataire,
+        p_card_registered: true,
+        p_reason: "Réabonnement en ligne (session de paiement confirmée).",
+        p_billing_anchor_day: demande.jourAnniversaire,
+        p_billable_extra_seats: demande.siegesFacturables,
+      });
+
+      if (error) {
+        // 23505 = « Cet abonnement est en cours : il n'y a rien à
+        // rouvrir. » Ce n'est pas une anomalie : c'est le rejeu d'un
+        // événement déjà traité, ou une seconde session pour un client
+        // dont l'abonnement court. Comme pour l'ouverture, on rend
+        // `null` et `traitement.ts` en fait un « ignored ».
+        if (error.code === "23505") return null;
+        throw traduire(error);
+      }
+
+      const ligne = Array.isArray(data) ? data[0] : data;
+      if (!ligne) {
+        throw new Error("saas_reopen_subscription n'a rien rendu : abonnement dans un état indéterminé.");
+      }
+      return {
+        statut: String(ligne.subscription_status ?? "inconnu"),
+        numeroFacture: ligne.invoice_number ?? null,
+        message: String(ligne.message ?? ""),
+      };
     },
 
     facturesEncaissables(organisationId: string | null, factureDemandee: string | null) {

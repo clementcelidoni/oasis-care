@@ -140,6 +140,7 @@ export function FormulaireSociete({
   champEnFaute,
   messageEnFaute,
   entrepriseExiste,
+  nouvelle = false,
 }: {
   action: (formData: FormData) => void | Promise<void>;
   valeurs: ValeursSociete;
@@ -149,6 +150,15 @@ export function FormulaireSociete({
   champEnFaute: string | null;
   messageEnFaute: string | null;
   entrepriseExiste: boolean;
+  /**
+   * FONDER UNE SECONDE ENTREPRISE, DEMANDÉ EXPLICITEMENT.
+   *
+   * Le drapeau voyage en champ caché parce que la Server Action ne voit
+   * pas l'URL : sans lui, elle croirait qu'on vient corriger la fiche de
+   * l'entreprise active, et la nouvelle société s'écrirait par-dessus
+   * l'ancienne — même SIRET, même TVA, même abonnement.
+   */
+  nouvelle?: boolean;
 }) {
   const [v, setV] = useState<ValeursSociete>(valeurs);
   const set = (cle: keyof ValeursSociete) => (valeur: string) =>
@@ -198,6 +208,10 @@ export function FormulaireSociete({
       {Object.entries(portees).map(([cle, valeur]) => (
         <input key={cle} type="hidden" name={cle} defaultValue={valeur} />
       ))}
+
+      {/* L'intention de FONDER, et non de corriger. Voir la propriété
+          `nouvelle` ci-dessus. */}
+      {nouvelle && <input type="hidden" name="nouvelle" value="1" />}
 
       {/* ---------------- Identité ---------------- */}
       <div className="grid gap-4 sm:grid-cols-2">

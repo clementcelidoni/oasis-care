@@ -8,6 +8,7 @@ import {
   inputToCents, parseQuantity, parseQuantityOr,
 } from "@/lib/quotes/types";
 import { DEFAULT_PHASES } from "./types";
+import { traduireRefus } from "@/lib/peage/messages";
 
 /**
  * §11F — chantiers.
@@ -41,7 +42,7 @@ export async function createProjectFromQuote(formData: FormData) {
   const { data, error } = await supabase.rpc("create_project_from_quote", {
     p_quote_id: quoteId,
   });
-  if (error) throw new Error(error.message);
+  if (error) throw new Error(traduireRefus(error));
 
   revalidatePath("/projets");
   revalidatePath(`/devis/${quoteId}`);
@@ -73,7 +74,7 @@ export async function createProject(formData: FormData) {
     })
     .select("id")
     .single();
-  if (error) throw new Error(error.message);
+  if (error) throw new Error(traduireRefus(error));
 
   await supabase.from("project_phases").insert(
     DEFAULT_PHASES.map((title, position) => ({
@@ -117,7 +118,7 @@ export async function updateProject(formData: FormData) {
   if (patch.actual_end_on === undefined) delete patch.actual_end_on;
 
   const { error } = await supabase.from("projects").update(patch).eq("id", projectId);
-  if (error) throw new Error(error.message);
+  if (error) throw new Error(traduireRefus(error));
 
   revalidatePath(`/projets/${projectId}`);
   revalidatePath("/projets");
@@ -148,7 +149,7 @@ export async function addPhase(formData: FormData) {
     title,
     position: (last?.position ?? -1) + 1,
   });
-  if (error) throw new Error(error.message);
+  if (error) throw new Error(traduireRefus(error));
 
   revalidatePath(`/projets/${projectId}`);
 }
@@ -171,7 +172,7 @@ export async function updatePhase(formData: FormData) {
 
   const supabase = await createClient();
   const { error } = await supabase.from("project_phases").update(patch).eq("id", phaseId);
-  if (error) throw new Error(error.message);
+  if (error) throw new Error(traduireRefus(error));
 
   revalidatePath(`/projets/${projectId}`);
 }
@@ -186,7 +187,7 @@ export async function deletePhase(formData: FormData) {
   // les détache. Supprimer un titre de phase par erreur ne doit jamais
   // emporter le chiffrage ni les dépenses déjà saisies.
   const { error } = await supabase.from("project_phases").delete().eq("id", phaseId);
-  if (error) throw new Error(error.message);
+  if (error) throw new Error(traduireRefus(error));
 
   revalidatePath(`/projets/${projectId}`);
 }
@@ -217,7 +218,7 @@ export async function addTask(formData: FormData) {
       : null,
     due_on: text(formData, "due_on"),
   });
-  if (error) throw new Error(error.message);
+  if (error) throw new Error(traduireRefus(error));
 
   revalidatePath(`/projets/${projectId}`);
 }
@@ -237,7 +238,7 @@ export async function updateTask(formData: FormData) {
 
   const supabase = await createClient();
   const { error } = await supabase.from("project_tasks").update(patch).eq("id", taskId);
-  if (error) throw new Error(error.message);
+  if (error) throw new Error(traduireRefus(error));
 
   revalidatePath(`/projets/${projectId}`);
 }
@@ -249,7 +250,7 @@ export async function deleteTask(formData: FormData) {
 
   const supabase = await createClient();
   const { error } = await supabase.from("project_tasks").delete().eq("id", taskId);
-  if (error) throw new Error(error.message);
+  if (error) throw new Error(traduireRefus(error));
 
   revalidatePath(`/projets/${projectId}`);
 }
@@ -281,7 +282,7 @@ export async function addCost(formData: FormData) {
     invoice_reference: text(formData, "invoice_reference"),
     recorded_by: user.user?.id ?? null,
   });
-  if (error) throw new Error(error.message);
+  if (error) throw new Error(traduireRefus(error));
 
   revalidatePath(`/projets/${projectId}`);
 }
@@ -293,7 +294,7 @@ export async function deleteCost(formData: FormData) {
 
   const supabase = await createClient();
   const { error } = await supabase.from("project_costs").delete().eq("id", costId);
-  if (error) throw new Error(error.message);
+  if (error) throw new Error(traduireRefus(error));
 
   revalidatePath(`/projets/${projectId}`);
 }

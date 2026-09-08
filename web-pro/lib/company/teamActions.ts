@@ -10,6 +10,7 @@ import {
 } from "@/lib/auth/organization";
 import { ROLES, type Role } from "@/lib/auth/permissions";
 import { recordAudit } from "@/lib/audit/record";
+import { traduireRefus } from "@/lib/peage/messages";
 
 /**
  * §14 ÉQUIPE — « Inviter un membre », « Modifier rôle », « Désactiver
@@ -98,7 +99,7 @@ export async function updateMemberRole(formData: FormData) {
     .update({ role: nextRole, updated_at: new Date().toISOString() })
     .eq("id", memberId)
     .eq("organization_id", organization.organizationId);
-  if (error) throw new Error(error.message);
+  if (error) throw new Error(traduireRefus(error));
 
   // L'ancien rôle ET le nouveau : un journal qui ne dirait que le
   // nouveau ne permettrait pas de savoir ce qu'on a retiré.
@@ -161,7 +162,7 @@ export async function setMemberAccess(formData: FormData) {
     })
     .eq("id", memberId)
     .eq("organization_id", organization.organizationId);
-  if (error) throw new Error(error.message);
+  if (error) throw new Error(traduireRefus(error));
 
   await recordAudit(
     organization.organizationId,
@@ -296,7 +297,7 @@ export async function revokeInvitation(formData: FormData) {
     .eq("id", invitationId)
     .eq("organization_id", organization.organizationId)
     .eq("status", "pending");
-  if (error) throw new Error(error.message);
+  if (error) throw new Error(traduireRefus(error));
 
   revalidatePath(TEAM_PATH);
   redirect(`${TEAM_PATH}?message=invitation-revoquee`);
@@ -331,7 +332,7 @@ export async function acceptTeamInvitation(formData: FormData) {
     "accept_organization_invitation",
     { invitation_token: token },
   );
-  if (error) throw new Error(error.message);
+  if (error) throw new Error(traduireRefus(error));
 
   if (typeof organizationId === "string") {
     const store = await cookies();

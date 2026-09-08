@@ -4,6 +4,7 @@ import { revalidatePath } from "next/cache";
 import { redirect } from "next/navigation";
 import { createClient } from "@/lib/supabase/server";
 import { requireOrganization } from "@/lib/auth/organization";
+import { traduireRefus } from "@/lib/peage/messages";
 
 /**
  * Server Actions for the CRM.
@@ -45,7 +46,7 @@ export async function createCustomer(formData: FormData) {
     .select("id")
     .single();
 
-  if (error) throw new Error(error.message);
+  if (error) throw new Error(traduireRefus(error));
 
   revalidatePath("/crm", "layout");
   redirect(`/crm/clients/${data.id}`);
@@ -62,7 +63,7 @@ export async function updateProspectStatus(formData: FormData) {
     .update({ prospect_status: status, updated_at: new Date().toISOString() })
     .eq("id", customerId);
 
-  if (error) throw new Error(error.message);
+  if (error) throw new Error(traduireRefus(error));
   revalidatePath("/crm", "layout");
 }
 
@@ -76,7 +77,7 @@ export async function convertLead(formData: FormData) {
   const { error } = await supabase.rpc("convert_lead_to_customer", {
     customer_id: customerId,
   });
-  if (error) throw new Error(error.message);
+  if (error) throw new Error(traduireRefus(error));
 
   revalidatePath("/crm", "layout");
 }
@@ -98,7 +99,7 @@ export async function addContact(formData: FormData) {
     email: text(formData, "email"),
     phone: text(formData, "phone"),
   });
-  if (error) throw new Error(error.message);
+  if (error) throw new Error(traduireRefus(error));
   revalidatePath(`/crm/clients/${customerId}`);
 }
 
@@ -119,7 +120,7 @@ export async function addSite(formData: FormData) {
     postal_code: text(formData, "postal_code"),
     city: text(formData, "city"),
   });
-  if (error) throw new Error(error.message);
+  if (error) throw new Error(traduireRefus(error));
   revalidatePath(`/crm/clients/${customerId}`);
 }
 
@@ -172,7 +173,7 @@ export async function addActivity(formData: FormData) {
     subject: text(formData, "subject"),
     body: text(formData, "body"),
   });
-  if (error) throw new Error(error.message);
+  if (error) throw new Error(traduireRefus(error));
   revalidatePath(`/crm/clients/${customerId}`);
 }
 
@@ -196,7 +197,7 @@ export async function createOpportunity(formData: FormData) {
     stage: text(formData, "stage") ?? "qualification",
     estimated_value_cents: cents,
   });
-  if (error) throw new Error(error.message);
+  if (error) throw new Error(traduireRefus(error));
   revalidatePath(`/crm/clients/${customerId}`);
   revalidatePath("/crm/opportunites");
 }

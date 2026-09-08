@@ -92,9 +92,35 @@ select set_config('request.jwt.claims',
   json_build_object('sub','80000001-0000-4000-8000-000000000080')::text, true);
 insert into ids select 'orgA', public.create_professional_organization('Paysages Gouvernance A','landscaper');
 
+-- LE CONTRAT — sans lui, le péage (0092) refuse tout (voir 0092 § 5).
+-- « created_at >= now() » : now() est l'heure de DÉBUT DE TRANSACTION et
+-- la colonne a now() pour défaut, donc ce filtre ne prend QUE les
+-- entreprises nées ici. Un jeu d'essai ne signe pas de contrat pour de
+-- vrais clients.
+insert into public.organization_subscriptions
+  (organization_id, plan, status, provider, billing_cycle)
+select o.id, 'business', 'active', 'manual', 'monthly'
+  from public.business_organizations o
+ where o.created_at >= now()
+on conflict (organization_id) do nothing;
+
+
 select set_config('request.jwt.claims',
   json_build_object('sub','80000004-0000-4000-8000-000000000080')::text, true);
 insert into ids select 'orgB', public.create_professional_organization('Paysages Gouvernance B','landscaper');
+
+-- LE CONTRAT — sans lui, le péage (0092) refuse tout (voir 0092 § 5).
+-- « created_at >= now() » : now() est l'heure de DÉBUT DE TRANSACTION et
+-- la colonne a now() pour défaut, donc ce filtre ne prend QUE les
+-- entreprises nées ici. Un jeu d'essai ne signe pas de contrat pour de
+-- vrais clients.
+insert into public.organization_subscriptions
+  (organization_id, plan, status, provider, billing_cycle)
+select o.id, 'business', 'active', 'manual', 'monthly'
+  from public.business_organizations o
+ where o.created_at >= now()
+on conflict (organization_id) do nothing;
+
 
 insert into public.organization_members (organization_id, user_id, role)
 select (select v from ids where k='orgA'), '80000002-0000-4000-8000-000000000080', 'admin';
@@ -566,10 +592,17 @@ insert into res select '6.8 et il n''y a plus de plafond du tout','0',
 -- aucune politique d'écriture n'existe, pour personne.
 reset role;
 
+-- PERMISSIVE SEULEMENT, ET C'EST LA QUESTION QU'ON POSE. Une politique
+-- RESTRICTIVE n'accorde jamais rien : elle ne fait que retrancher, en ET,
+-- de ce que les permissives ont ouvert. Le péage (0092) en pose une par
+-- table du périmètre, et ces deux-là en font partie ; les compter ici
+-- ferait échouer un test dont la question est « qui a le droit
+-- d'écrire ? ». La réponse reste : personne.
 insert into res select '6.9 aucune politique d''écriture sur les deux tables, pour personne','0',
   (select count(*)::text from pg_policies
     where schemaname='public'
       and tablename in ('ai_model_overrides','ai_cost_limits')
+      and permissive = 'PERMISSIVE'
       and cmd <> 'SELECT');
 
 insert into res select '6.10 la politique « Managers write » a bien disparu','0',
@@ -827,9 +860,11 @@ end $T$;
 -- disparaître par un autre chemin que celui qu'on a joué.
 reset role;
 
+-- PERMISSIVE SEULEMENT : voir 6.9. Une restrictive ne donne rien.
 insert into res select '8.10 aucune politique d''écriture sur ai_result_cache, pour personne','0',
   (select count(*)::text from pg_policies
-    where schemaname='public' and tablename='ai_result_cache' and cmd <> 'SELECT');
+    where schemaname='public' and tablename='ai_result_cache'
+      and permissive = 'PERMISSIVE' and cmd <> 'SELECT');
 
 insert into res select '8.11 la lecture du membre, elle, est conservée','1',
   (select count(*)::text from pg_policies

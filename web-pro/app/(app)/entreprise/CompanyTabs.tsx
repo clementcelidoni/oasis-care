@@ -14,6 +14,11 @@ export function CompanyTabs({ current }: { current: string }) {
         { label: "Société", href: "/entreprise" },
         { label: "Documents", href: "/entreprise/documents" },
         { label: "Équipe", href: "/entreprise/equipe" },
+        // §EMAILS — SANS CET ONGLET, L'ÉCRAN N'EXISTE POUR PERSONNE.
+        // C'est lui qui tient les trois promesses de la migration 0084 :
+        // voir ses rebonds, lire le motif d'une suspension, et pouvoir
+        // consentir aux communications commerciales.
+        { label: "Courrier", href: "/entreprise/courrier" },
         { label: "Abonnement", href: "/entreprise/abonnement" },
       ]}
     />

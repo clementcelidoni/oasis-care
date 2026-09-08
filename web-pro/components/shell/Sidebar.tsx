@@ -244,8 +244,15 @@ function CompanySwitcher({
           </form>
         ))}
 
+        {/* CE LIEN NE MARCHAIT PAS, ET DEPUIS LONGTEMPS.
+            Il pointait vers `/bienvenue`, qui renvoie sur « / » dès que
+            l'installation est terminée : cliquer « Créer une
+            organisation » ramenait au tableau de bord, sans rien créer
+            ni rien dire. Il mène maintenant au tunnel d'inscription,
+            avec le drapeau qui lui fait FONDER une société de plus au
+            lieu de reprendre celle qui existe. */}
         <Link
-          href="/bienvenue"
+          href="/inscription?etape=societe&nouvelle=1"
           className="mt-1 flex items-center gap-2 rounded-[var(--radius-control)] border-t border-line px-2.5 py-2 text-[var(--text-secondary)] text-ink-soft transition-colors hover:bg-canvas hover:text-ink"
         >
           <Icon name="plus" className="h-4 w-4" />

@@ -5,6 +5,7 @@ import { redirect } from "next/navigation";
 import { createClient } from "@/lib/supabase/server";
 import { requireOrganization } from "@/lib/auth/organization";
 import { parseQuantity, COST_KIND_FROM_ITEM_TYPE, type CatalogItemType } from "./types";
+import { traduireRefus } from "@/lib/peage/messages";
 
 /**
  * §"DIGITAL TWIN → DEVIS" — l'écriture, après validation humaine.
@@ -125,7 +126,7 @@ export async function addProposedLinesToQuote(formData: FormData) {
 
   if (rows.length > 0) {
     const { error } = await supabase.from("quote_lines").insert(rows);
-    if (error) throw new Error(error.message);
+    if (error) throw new Error(traduireRefus(error));
   }
 
   // Le devis se souvient du plan dont il vient : c'est ce qui permettra,

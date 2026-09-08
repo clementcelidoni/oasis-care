@@ -51,6 +51,25 @@ export interface DemandeEncaissement {
   readonly reference: string;
 }
 
+/** Ce que `saas_start_subscription` (0089 § 4) demande, et rien de plus. */
+export interface DemandeAbonnement {
+  readonly organisationId: string;
+  readonly plan: string;
+  readonly cycle: string;
+  readonly avecEssai: boolean;
+  readonly clientPrestataire: string;
+  readonly mode: string;
+  readonly finEssaiLe: string | null;
+  readonly jourAnniversaire: number | null;
+  readonly siegesFacturables: number | null;
+}
+
+export interface IssueAbonnement {
+  readonly statut: string;
+  readonly numeroFacture: string | null;
+  readonly message: string;
+}
+
 /**
  * LA PORTE VERS LA BASE.
  *
@@ -68,6 +87,39 @@ export interface PorteBase {
 
   rattacherClient(organisationId: string, clientPrestataire: string): Promise<"linked" | "alreadyLinked">;
   organisationDuClient(clientPrestataire: string): Promise<string | null>;
+
+  /**
+   * OUVRIR L'ABONNEMENT, ET ÉMETTRE LA FACTURE DU PREMIER MOIS.
+   *
+   * Elle rend `null` quand l'entreprise a DÉJÀ un abonnement —
+   * `saas_start_subscription` lève alors 23505, et ce refus-là n'en est
+   * pas un : c'est le rejeu normal d'un événement déjà traité, ou une
+   * seconde session pour un client déjà abonné. Le distinguer d'un vrai
+   * refus est le travail de l'implémentation, parce qu'elle seule voit
+   * le code SQL.
+   */
+  ouvrirAbonnement(demande: DemandeAbonnement): Promise<IssueAbonnement | null>;
+
+  /**
+   * REPRENDRE UN ABONNEMENT FERMÉ — LE CHEMIN DU RETOUR.
+   *
+   * `saas_start_subscription` lève 23505 dès qu'une ligne existe pour
+   * l'entreprise, et la clé primaire de la table (organization_id seul)
+   * garantit qu'il y en aura toujours une après la première
+   * souscription. Sans ce second appel, une entreprise résiliée ou
+   * suspendue voyait son paiement partir, le webhook conclure « elle a
+   * déjà un abonnement : rien à ouvrir », et son accès rester fermé.
+   * Le péage aurait alors été une prison : une porte sans poignée à
+   * l'intérieur.
+   *
+   * Elle rend `null` quand il n'y avait rien à rouvrir — l'abonnement
+   * court toujours, et c'est le rejeu normal d'un événement déjà
+   * traité. La base est seule juge : `saas_reopen_subscription` refuse
+   * tout ce qui n'est pas « restreint » ou « sursis », et
+   * l'implémentation traduit ce refus-là en `null` comme elle le fait
+   * déjà pour le 23505 de l'ouverture.
+   */
+  reprendreAbonnement(demande: DemandeAbonnement): Promise<IssueAbonnement | null>;
 
   facturesEncaissables(
     organisationId: string | null,
@@ -245,6 +297,114 @@ async function appliquer(
       detail: issue === "alreadyLinked"
         ? `Client ${intention.clientPrestataire} déjà rattaché à ${intention.organisationDemandee}.`
         : `Client ${intention.clientPrestataire} rattaché à ${intention.organisationDemandee}.`,
+    };
+  }
+
+  // ----------------------------------------------------------------
+  // L'OUVERTURE DE L'ABONNEMENT
+  // ----------------------------------------------------------------
+  //
+  // ELLE PRÉCÈDE L'ARGENT, ET C'EST TOUT L'INTÉRÊT. `checkout.session
+  // .completed` arrive avant `invoice.paid` : la facture existe donc,
+  // ÉMISE, quand l'encaissement se présente, et le rapprochement par
+  // montant trouve enfin une candidate.
+  //
+  // Sans ce chemin, `saas_start_subscription` n'avait aucun appelant et
+  // chaque prélèvement — le premier comme les suivants — tombait en
+  // « à rapprocher à la main ».
+  if (intention.genre === "ouvrirAbonnement") {
+    const issue = await porte.ouvrirAbonnement({
+      organisationId: intention.organisationDemandee,
+      plan: intention.plan,
+      cycle: intention.cycle,
+      avecEssai: intention.avecEssai,
+      clientPrestataire: intention.clientPrestataire,
+      mode: intention.mode,
+      finEssaiLe: intention.finEssaiLe,
+      jourAnniversaire: intention.jourAnniversaire,
+      siegesFacturables: intention.siegesFacturables,
+    });
+
+    if (issue === null) {
+      // ════════════════════════════════════════════════════════════
+      // DÉJÀ UNE LIGNE. DEUX CAS TRÈS DIFFÉRENTS, ET ON LES CONFONDAIT.
+      // ════════════════════════════════════════════════════════════
+      //
+      // Avant, tout finissait ici en « rien à ouvrir ». C'était juste
+      // pour le rejeu d'un événement, et FAUX pour le cas qui compte :
+      // une entreprise dont l'abonnement est FERMÉ — résiliée, ou
+      // suspendue pour impayé — qui vient de repasser à la caisse. Son
+      // paiement partait, et son accès restait clos. Le péage se
+      // serait refermé sur des clients sans leur laisser de sortie.
+      //
+      // On demande donc à la base de REPRENDRE la ligne existante.
+      // C'est elle qui tranche : `saas_reopen_subscription` ne reprend
+      // qu'un abonnement « restreint » ou « en sursis », n'offre jamais
+      // un second essai, et lève la résiliation. Si l'abonnement court
+      // toujours, elle refuse et l'on retombe sur l'ancien chemin.
+      //
+      // POURQUOI ESSAYER D'OUVRIR D'ABORD, PUIS REPRENDRE. Parce que
+      // c'est l'ordre qui ne peut pas se tromper : l'ouverture échoue
+      // sur la contrainte d'unicité, c'est-à-dire sur un fait de la
+      // base, jamais sur une lecture qu'une livraison simultanée
+      // pourrait démentir entre-temps.
+      let reprise: IssueAbonnement | null = null;
+      try {
+        reprise = await porte.reprendreAbonnement({
+          organisationId: intention.organisationDemandee,
+          plan: intention.plan,
+          cycle: intention.cycle,
+          // UNE REPRISE N'OFFRE JAMAIS UN SECOND ESSAI. La base le
+          // refuserait de toute façon ; on ne le lui demande même pas.
+          avecEssai: false,
+          clientPrestataire: intention.clientPrestataire,
+          mode: intention.mode,
+          finEssaiLe: null,
+          jourAnniversaire: intention.jourAnniversaire,
+          siegesFacturables: intention.siegesFacturables,
+        });
+      } catch (erreur) {
+        // UN REFUS DE REPRISE NE FAIT PAS PERDRE LE RATTACHEMENT. Même
+        // raison qu'au rattachement plus bas : on consigne et on
+        // continue, plutôt que de rendre un 5xx qui ferait rejouer
+        // Stripe sur un refus qui ne changera pas.
+        if (!(erreur instanceof RefusMetier)) throw erreur;
+      }
+
+      // Dans les deux cas, on s'assure que le client du prestataire est
+      // bien rattaché — un tunnel repris depuis le début en crée un
+      // second, et l'encaissement à venir devra le reconnaître.
+      try {
+        await porte.rattacherClient(intention.organisationDemandee, intention.clientPrestataire);
+      } catch (erreur) {
+        if (!(erreur instanceof RefusMetier)) throw erreur;
+      }
+
+      if (reprise !== null) {
+        return {
+          issue: "applied",
+          detail:
+            `Abonnement REPRIS pour ${intention.organisationDemandee} `
+            + `(${intention.plan}, ${intention.cycle}) — statut ${reprise.statut}`
+            + (reprise.numeroFacture === null
+              ? ", facture à émettre à la main."
+              : `, facture ${reprise.numeroFacture}.`),
+        };
+      }
+
+      return {
+        issue: "ignored",
+        detail: `L'entreprise ${intention.organisationDemandee} a déjà un abonnement en cours : rien à ouvrir ni à reprendre.`,
+      };
+    }
+
+    return {
+      issue: "applied",
+      detail:
+        `Abonnement ouvert pour ${intention.organisationDemandee} `
+        + `(${intention.plan}, ${intention.cycle}, ${intention.avecEssai ? "avec essai" : "sans essai"}) `
+        + `— statut ${issue.statut}`
+        + (issue.numeroFacture === null ? ", aucune facture (essai en cours)." : `, facture ${issue.numeroFacture}.`),
     };
   }
 

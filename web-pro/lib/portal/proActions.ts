@@ -5,6 +5,7 @@ import { createClient } from "@/lib/supabase/server";
 import { requireOrganization } from "@/lib/auth/organization";
 import { flash } from "@/lib/ui/flash";
 import { recordAudit } from "@/lib/audit/record";
+import { traduireRefus } from "@/lib/peage/messages";
 
 /**
  * §11S côté PROFESSIONNEL — inviter, livrer, révoquer.
@@ -39,7 +40,7 @@ export async function inviteClient(formData: FormData) {
     p_customer_id: customerId,
     p_email: email,
   });
-  if (error) throw new Error(error.message);
+  if (error) throw new Error(traduireRefus(error));
 
   // Le jeton lui-même ne va PAS dans le journal : il ouvre l'accès aux
   // documents du client, et un journal lisible par toute l'équipe n'est
@@ -69,7 +70,7 @@ export async function cancelInvitation(formData: FormData) {
     .delete()
     .eq("id", invitationId)
     .is("accepted_at", null);
-  if (error) throw new Error(error.message);
+  if (error) throw new Error(traduireRefus(error));
 
   revalidatePath(`/crm/clients/${customerId}`);
 }
@@ -97,7 +98,7 @@ export async function revokePortalAccess(formData: FormData) {
     .from("client_portal_access")
     .update({ revoked_at: new Date().toISOString() })
     .eq("id", accessId);
-  if (error) throw new Error(error.message);
+  if (error) throw new Error(traduireRefus(error));
 
   await recordAudit(organization.organizationId, "portalRevoked", "customer", customerId, {
     access_id: accessId,
@@ -131,7 +132,7 @@ export async function deliverGarden(formData: FormData) {
     p_garden_id: gardenId,
     p_customer_id: customerId,
   });
-  if (error) throw new Error(error.message);
+  if (error) throw new Error(traduireRefus(error));
 
   // La livraison fait CHANGER LE JARDIN DE PROPRIÉTAIRE. C'est
   // l'opération la moins réversible du produit : elle mérite sa ligne.

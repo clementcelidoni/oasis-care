@@ -3,6 +3,7 @@
 import { revalidatePath } from "next/cache";
 import { createClient } from "@/lib/supabase/server";
 import { getActiveOrganization, requireOrganization } from "@/lib/auth/organization";
+import { traduireRefus } from "@/lib/peage/messages";
 
 /**
  * §27 RECHERCHES RÉCENTES et §28 FAVORIS.
@@ -71,7 +72,7 @@ export async function toggleFavorite(formData: FormData) {
 
   if (existing) {
     const { error } = await supabase.from("user_favorites").delete().eq("id", existing.id);
-    if (error) throw new Error(error.message);
+    if (error) throw new Error(traduireRefus(error));
   } else {
     const { error } = await supabase.from("user_favorites").insert({
       user_id: userId,
@@ -81,7 +82,7 @@ export async function toggleFavorite(formData: FormData) {
       title,
       url,
     });
-    if (error) throw new Error(error.message);
+    if (error) throw new Error(traduireRefus(error));
   }
 
   // Les favoris s'affichent dans la palette, donc dans la mise en page.

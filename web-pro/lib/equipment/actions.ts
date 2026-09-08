@@ -12,6 +12,7 @@ import {
   type EquipmentCategory, type EquipmentStatus, type Ownership, type MeterKind,
   type DeadlineKind, type MaintenanceKind,
 } from "./types";
+import { traduireRefus } from "@/lib/peage/messages";
 
 /**
  * §5 GESTION → MATÉRIEL — les écritures.
@@ -192,7 +193,7 @@ export async function createEquipment(formData: FormData) {
       await flash("error", friendly);
       return;
     }
-    throw new Error(error.message);
+    throw new Error(traduireRefus(error));
   }
 
   await flash("success", `${patch.name} est entré au parc.`);
@@ -221,7 +222,7 @@ export async function updateEquipment(formData: FormData) {
       revalidatePath(`/materiel/${id}`);
       return;
     }
-    throw new Error(error.message);
+    throw new Error(traduireRefus(error));
   }
 
   await flash("success", "Fiche du matériel enregistrée.");
@@ -254,7 +255,7 @@ export async function archiveEquipment(formData: FormData) {
     .update({ archived_at: now, updated_at: now })
     .eq("id", id)
     .eq("organization_id", organization.organizationId);
-  if (error) throw new Error(error.message);
+  if (error) throw new Error(traduireRefus(error));
 
   // L'affectation ouverte se ferme avec lui : un engin sorti du parc
   // ne peut pas rester « sur le chantier des Oliviers » indéfiniment.
@@ -281,7 +282,7 @@ export async function restoreEquipment(formData: FormData) {
     .update({ archived_at: null, updated_at: new Date().toISOString() })
     .eq("id", id)
     .eq("organization_id", organization.organizationId);
-  if (error) throw new Error(error.message);
+  if (error) throw new Error(traduireRefus(error));
 
   await flash("success", "Matériel remis au parc.");
   revalidatePath(`/materiel/${id}`);
@@ -313,7 +314,7 @@ export async function addDeadline(formData: FormData) {
     reminder_days: wholeOr(formData, "reminder_days", 30),
     recurrence_months: positiveOrNull(formData, "recurrence_months"),
   });
-  if (error) throw new Error(error.message);
+  if (error) throw new Error(traduireRefus(error));
 
   await flash("success", "Échéance ajoutée. Elle remontera d'elle-même le moment venu.");
   revalidatePath(`/materiel/${id}`);
@@ -342,7 +343,7 @@ export async function completeDeadline(formData: FormData) {
     p_cost_cents: centsOrNull(formData, "completed_cost"),
     p_note: text(formData, "completed_note"),
   });
-  if (error) throw new Error(error.message);
+  if (error) throw new Error(traduireRefus(error));
 
   await flash("success", "Échéance honorée. La suivante est posée si elle se renouvelle.");
   if (id) revalidatePath(`/materiel/${id}`);
@@ -369,7 +370,7 @@ export async function deleteDeadline(formData: FormData) {
     .delete()
     .eq("id", deadlineId)
     .eq("organization_id", organization.organizationId);
-  if (error) throw new Error(error.message);
+  if (error) throw new Error(traduireRefus(error));
 
   await flash("success", "Échéance supprimée.");
   if (id) revalidatePath(`/materiel/${id}`);
@@ -428,7 +429,7 @@ export async function assignEquipment(formData: FormData) {
     started_on: today,
     notes: text(formData, "notes"),
   });
-  if (error) throw new Error(error.message);
+  if (error) throw new Error(traduireRefus(error));
 
   await flash("success", "Matériel affecté.");
   revalidatePath(`/materiel/${id}`);
@@ -448,7 +449,7 @@ export async function returnEquipment(formData: FormData) {
     .eq("equipment_id", id)
     .eq("organization_id", organization.organizationId)
     .is("ended_on", null);
-  if (error) throw new Error(error.message);
+  if (error) throw new Error(traduireRefus(error));
 
   await flash("success", "Matériel rentré au dépôt.");
   revalidatePath(`/materiel/${id}`);
@@ -485,7 +486,7 @@ export async function addMaintenance(formData: FormData) {
     deadline_id: text(formData, "deadline_id"),
     created_by: user.user?.id ?? null,
   });
-  if (error) throw new Error(error.message);
+  if (error) throw new Error(traduireRefus(error));
 
   await flash("success", "Intervention enregistrée.");
   revalidatePath(`/materiel/${id}`);
@@ -513,7 +514,7 @@ export async function deleteMaintenance(formData: FormData) {
     .delete()
     .eq("id", maintenanceId)
     .eq("organization_id", organization.organizationId);
-  if (error) throw new Error(error.message);
+  if (error) throw new Error(traduireRefus(error));
 
   await flash("success", "Intervention supprimée.");
   if (id) revalidatePath(`/materiel/${id}`);

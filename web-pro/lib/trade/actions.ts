@@ -8,6 +8,7 @@ import { flash } from "@/lib/ui/flash";
 import {
   inputToCents, parseQuantity, parseQuantityOr, parseVatRate,
 } from "@/lib/quotes/types";
+import { traduireRefus } from "@/lib/peage/messages";
 
 /**
  * §11M achats, §11N commandes clients.
@@ -48,7 +49,7 @@ export async function createSupplier(formData: FormData) {
     city: text(formData, "city"),
     payment_terms: text(formData, "payment_terms"),
   });
-  if (error) throw new Error(error.message);
+  if (error) throw new Error(traduireRefus(error));
 
   revalidatePath("/fournisseurs");
 }
@@ -67,7 +68,7 @@ export async function updateSupplier(formData: FormData) {
 
   const supabase = await createClient();
   const { error } = await supabase.from("suppliers").update(patch).eq("id", id);
-  if (error) throw new Error(error.message);
+  if (error) throw new Error(traduireRefus(error));
 
   revalidatePath("/fournisseurs");
 }
@@ -83,7 +84,7 @@ export async function archiveSupplier(formData: FormData) {
     .from("suppliers")
     .update({ archived_at: new Date().toISOString() })
     .eq("id", id);
-  if (error) throw new Error(error.message);
+  if (error) throw new Error(traduireRefus(error));
 
   revalidatePath("/fournisseurs");
 }
@@ -117,7 +118,7 @@ export async function createPurchaseOrder(formData: FormData) {
     })
     .select("id")
     .single();
-  if (error) throw new Error(error.message);
+  if (error) throw new Error(traduireRefus(error));
 
   revalidatePath("/achats");
   redirect(`/achats/${data.id}`);
@@ -143,7 +144,7 @@ export async function updatePurchaseOrder(formData: FormData) {
 
   const supabase = await createClient();
   const { error } = await supabase.from("purchase_orders").update(patch).eq("id", id);
-  if (error) throw new Error(error.message);
+  if (error) throw new Error(traduireRefus(error));
 
   revalidatePath(`/achats/${id}`);
   revalidatePath("/achats");
@@ -183,7 +184,7 @@ export async function addPurchaseLine(formData: FormData) {
     cultivar: isPlant ? text(formData, "cultivar") : null,
     container_size: isPlant ? text(formData, "container_size") : null,
   });
-  if (error) throw new Error(error.message);
+  if (error) throw new Error(traduireRefus(error));
 
   revalidatePath(`/achats/${orderId}`);
   revalidatePath("/pepiniere/stock");
@@ -196,7 +197,7 @@ export async function deletePurchaseLine(formData: FormData) {
 
   const supabase = await createClient();
   const { error } = await supabase.from("purchase_order_lines").delete().eq("id", lineId);
-  if (error) throw new Error(error.message);
+  if (error) throw new Error(traduireRefus(error));
 
   revalidatePath(`/achats/${orderId}`);
   revalidatePath("/pepiniere/stock");
@@ -250,7 +251,7 @@ export async function receiveGoods(formData: FormData) {
     // Les refus de la fonction sont écrits pour être lus : « il ne
     // reste que 40 à recevoir », « seule une ligne de végétaux peut
     // donner un lot ». On les laisse remonter tels quels.
-    if (error) throw new Error(error.message);
+    if (error) throw new Error(traduireRefus(error));
   }
 
   revalidatePath(`/achats/${orderId}`);
@@ -287,7 +288,7 @@ export async function createSalesOrder(formData: FormData) {
     })
     .select("id")
     .single();
-  if (error) throw new Error(error.message);
+  if (error) throw new Error(traduireRefus(error));
 
   revalidatePath("/pepiniere/commandes");
   redirect(`/pepiniere/commandes/${data.id}`);
@@ -311,7 +312,7 @@ export async function updateSalesOrder(formData: FormData) {
 
   const supabase = await createClient();
   const { error } = await supabase.from("sales_orders").update(patch).eq("id", id);
-  if (error) throw new Error(error.message);
+  if (error) throw new Error(traduireRefus(error));
 
   revalidatePath(`/pepiniere/commandes/${id}`);
   revalidatePath("/pepiniere/commandes");
@@ -344,7 +345,7 @@ export async function addSalesLine(formData: FormData) {
       p_quantity: Math.round(quantity),
       p_reason: "Commande client",
     });
-    if (error) throw new Error(error.message);
+    if (error) throw new Error(traduireRefus(error));
   }
 
   const { data: last } = await supabase
@@ -366,7 +367,7 @@ export async function addSalesLine(formData: FormData) {
     unit_sale_price_cents: inputToCents(String(formData.get("unit_sale_price") ?? "0")),
     vat_rate: parseVatRate(String(formData.get("vat_rate") ?? "20")),
   });
-  if (error) throw new Error(error.message);
+  if (error) throw new Error(traduireRefus(error));
 
   revalidatePath(`/pepiniere/commandes/${orderId}`);
   revalidatePath("/pepiniere/stock");
@@ -477,7 +478,7 @@ export async function createDelivery(formData: FormData) {
       p_sales_order_line_id: lineId,
       p_quantity: quantity,
     });
-    if (error) throw new Error(error.message);
+    if (error) throw new Error(traduireRefus(error));
   }
 
   revalidatePath(`/pepiniere/commandes/${orderId}`);

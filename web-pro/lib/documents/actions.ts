@@ -5,6 +5,7 @@ import { createClient } from "@/lib/supabase/server";
 import { requireOrganization } from "@/lib/auth/organization";
 import { flash } from "@/lib/ui/flash";
 import { DOCUMENT_ENTITY_KINDS, DOCUMENT_TYPES, parseTags } from "./types";
+import { traduireRefus } from "@/lib/peage/messages";
 
 /**
  * §21 DOCUMENTS — déposer une pièce, la supprimer.
@@ -140,7 +141,7 @@ export async function deleteDocument(formData: FormData) {
     .maybeSingle();
 
   const { error } = await supabase.from("documents").delete().eq("id", id);
-  if (error) throw new Error(error.message);
+  if (error) throw new Error(traduireRefus(error));
 
   // Le fichier APRÈS la ligne. Dans l'ordre inverse, un échec
   // laisserait une ligne qui pointe vers un fichier disparu, et l'écran

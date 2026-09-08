@@ -8,6 +8,7 @@ import type {
   TwinDocument, TwinObject, TwinArea, TwinPipe, TwinCable,
   RevisionState, RevisionSummary, LinkablePlant,
 } from "./types";
+import { traduireRefus } from "@/lib/peage/messages";
 
 /**
  * Lecture et écriture du Digital Twin.
@@ -482,6 +483,6 @@ export async function createGarden(formData: FormData) {
     workspace_id: organization.workspaceId,
     name,
   });
-  if (error) throw new Error(error.message);
+  if (error) throw new Error(traduireRefus(error));
   revalidatePath("/digital-twin");
 }

@@ -150,12 +150,38 @@ insert into public.workspace_members (workspace_id, user_id, role)
 select set_config('request.jwt.claims',
   json_build_object('sub', (select v from ids where k='Dir'))::text, true);
 insert into ids select 'org', public.create_professional_organization('Laboratoire Alocasia','horticulturalProducer');
+
+-- LE CONTRAT — sans lui, le péage (0092) refuse tout (voir 0092 § 5).
+-- « created_at >= now() » : now() est l'heure de DÉBUT DE TRANSACTION et
+-- la colonne a now() pour défaut, donc ce filtre ne prend QUE les
+-- entreprises nées ici. Un jeu d'essai ne signe pas de contrat pour de
+-- vrais clients.
+insert into public.organization_subscriptions
+  (organization_id, plan, status, provider, billing_cycle)
+select o.id, 'business', 'active', 'manual', 'monthly'
+  from public.business_organizations o
+ where o.created_at >= now()
+on conflict (organization_id) do nothing;
+
 insert into ids select 'ws_org', o.workspace_id
   from public.business_organizations o where o.id = (select v from ids where k='org');
 
 select set_config('request.jwt.claims',
   json_build_object('sub', (select v from ids where k='ProB'))::text, true);
 insert into ids select 'orgB', public.create_professional_organization('Laboratoire Concurrent','horticulturalProducer');
+
+-- LE CONTRAT — sans lui, le péage (0092) refuse tout (voir 0092 § 5).
+-- « created_at >= now() » : now() est l'heure de DÉBUT DE TRANSACTION et
+-- la colonne a now() pour défaut, donc ce filtre ne prend QUE les
+-- entreprises nées ici. Un jeu d'essai ne signe pas de contrat pour de
+-- vrais clients.
+insert into public.organization_subscriptions
+  (organization_id, plan, status, provider, billing_cycle)
+select o.id, 'business', 'active', 'manual', 'monthly'
+  from public.business_organizations o
+ where o.created_at >= now()
+on conflict (organization_id) do nothing;
+
 
 select set_config('request.jwt.claims', '{}', true);
 

@@ -36,6 +36,7 @@ export type IconName =
   | "team"
   | "receipt"
   | "lifebuoy"
+  | "envelope"
   | "list";
 
 const PATHS: Record<IconName, string> = {
@@ -78,6 +79,10 @@ const PATHS: Record<IconName, string> = {
   // personne ne décroche encore — le canal d'entrée n'existe pas.
   lifebuoy:
     "M12 20a8 8 0 1 0 0-16 8 8 0 0 0 0 16Zm0-4.5a3.5 3.5 0 1 0 0-7 3.5 3.5 0 0 0 0 7ZM6.4 6.4l3.1 3.1m5 5 3.1 3.1m0-11.2-3.1 3.1m-5 5-3.1 3.1",
+  // Une enveloppe fermée, rabat visible. Pas un « @ », qui dirait
+  // « adresse » : ces écrans-là parlent de MESSAGES qui partent, de ce
+  // qui arrive et de ce qui rebondit.
+  envelope: "M3.5 6.5h17v11h-17v-11Zm0 .5 8.5 6.5L20.5 7",
   // Des lignes horodatées : un journal se lit ligne à ligne, dans
   // l'ordre, et c'est ce que le dessin doit dire.
   list: "M4 6h1m3 0h12M4 12h1m3 0h12M4 18h1m3 0h12",

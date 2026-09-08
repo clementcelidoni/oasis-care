@@ -50,6 +50,19 @@ values ('d0c00003-0000-4000-8000-000000000003','00000000-0000-0000-0000-00000000
 select set_config('request.jwt.claims',
   json_build_object('sub','d0c00001-0000-4000-8000-000000000001')::text, true);
 insert into ids select 'orgA', public.create_professional_organization('Paysages A','landscaper');
+
+-- LE CONTRAT — sans lui, le péage (0092) refuse tout (voir 0092 § 5).
+-- « created_at >= now() » : now() est l'heure de DÉBUT DE TRANSACTION et
+-- la colonne a now() pour défaut, donc ce filtre ne prend QUE les
+-- entreprises nées ici. Un jeu d'essai ne signe pas de contrat pour de
+-- vrais clients.
+insert into public.organization_subscriptions
+  (organization_id, plan, status, provider, billing_cycle)
+select o.id, 'business', 'active', 'manual', 'monthly'
+  from public.business_organizations o
+ where o.created_at >= now()
+on conflict (organization_id) do nothing;
+
 insert into ids select 'wsA', workspace_id from public.business_organizations
   where id = (select v from ids where k='orgA');
 
@@ -93,6 +106,19 @@ reset role;
 select set_config('request.jwt.claims',
   json_build_object('sub','d0c00002-0000-4000-8000-000000000002')::text, true);
 insert into ids select 'orgB', public.create_professional_organization('Paysages B','landscaper');
+
+-- LE CONTRAT — sans lui, le péage (0092) refuse tout (voir 0092 § 5).
+-- « created_at >= now() » : now() est l'heure de DÉBUT DE TRANSACTION et
+-- la colonne a now() pour défaut, donc ce filtre ne prend QUE les
+-- entreprises nées ici. Un jeu d'essai ne signe pas de contrat pour de
+-- vrais clients.
+insert into public.organization_subscriptions
+  (organization_id, plan, status, provider, billing_cycle)
+select o.id, 'business', 'active', 'manual', 'monthly'
+  from public.business_organizations o
+ where o.created_at >= now()
+on conflict (organization_id) do nothing;
+
 set local role authenticated;
 
 insert into ids select 'clientB', gen_random_uuid();

@@ -6,6 +6,7 @@ import {
   type DocumentEntityKind,
   type DocumentRow,
 } from "./types";
+import { traduireRefus } from "@/lib/peage/messages";
 
 /**
  * Les lectures de l'écran Documents.
@@ -99,7 +100,7 @@ export async function listDocuments(
   }
 
   const { data, error } = await request;
-  if (error) throw new Error(error.message);
+  if (error) throw new Error(traduireRefus(error));
   return (data ?? []) as DocumentRow[];
 }
 

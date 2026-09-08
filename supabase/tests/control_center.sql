@@ -478,12 +478,17 @@ insert into res select 'Aucune vue security definer n''a été créée pour l''a
 -- son travail. La liste ci-dessous est celle d'APRÈS 0081 et 0083, et
 -- elle est recopiée mot pour mot dans `web-admin/lib/auth/roles.ts`.
 --
+-- 0084 EN A AJOUTÉ SIX, POUR LE COURRIER SORTANT. Le test a rougi une
+-- troisième fois, et c'est encore son travail : il a obligé à recopier
+-- les six clés dans `roles.ts`, sans quoi les écrans du courrier
+-- auraient existé sans qu'aucune barre latérale n'y mène.
+--
 -- CONSÉQUENCE À CONNAÎTRE AVANT DE DÉPLOYER : cette assertion suppose
--- que les migrations 0081 À 0083 sont appliquées ENSEMBLE. Jouée sur une
+-- que les migrations 0081 À 0084 sont appliquées ENSEMBLE. Jouée sur une
 -- base qui n'en a qu'une partie, elle rougira — et ce sera vrai, pas un
 -- faux positif.
 insert into res select 'Le catalogue de permissions est exactement celui que recopie roles.ts',
-  'ai.config.read, ai.costLimits.write, ai.models.write, billing.invoices.read, billing.invoices.write, billing.issuer.write, billing.payments.write, billing.plans.read, billing.plans.write, billing.providers.read, billing.providers.write, billing.subscriptions.read, billing.subscriptions.write, customer.data.read, platform.admins.manage, platform.admins.read, platform.audit.read, platform.dashboard.read, platform.organizations.read, platform.search, platform.security.write, platform.users.read, product.flags.read, product.flags.write, support.sessions.manage, support.sessions.read, support.tickets.read, support.tickets.write',
+  'ai.config.read, ai.costLimits.write, ai.models.write, billing.invoices.read, billing.invoices.write, billing.issuer.write, billing.payments.write, billing.plans.read, billing.plans.write, billing.providers.read, billing.providers.write, billing.subscriptions.read, billing.subscriptions.write, customer.data.read, emails.campaigns.read, emails.campaigns.send, emails.log.read, emails.sending.suspend, emails.suppression.manage, emails.suppression.read, platform.admins.manage, platform.admins.read, platform.audit.read, platform.dashboard.read, platform.organizations.read, platform.search, platform.security.write, platform.users.read, product.flags.read, product.flags.write, support.sessions.manage, support.sessions.read, support.tickets.read, support.tickets.write',
   (select string_agg(key, ', ' order by key) from public.platform_admin_permissions);
 
 -- Le super-administrateur porte TOUT le catalogue : c'est sa

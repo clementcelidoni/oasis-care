@@ -3,6 +3,7 @@
 import { revalidatePath } from "next/cache";
 import { createClient } from "@/lib/supabase/server";
 import { requireOrganization } from "@/lib/auth/organization";
+import { traduireRefus } from "@/lib/peage/messages";
 
 /**
  * §41 NOTIFICATIONS — les deux seules écritures du centre.
@@ -79,7 +80,7 @@ export async function markNotificationRead(formData: FormData) {
       // second ne doit rien casser ni écraser la date du premier.
       { onConflict: "notification_id,user_id", ignoreDuplicates: true },
     );
-  if (error) throw new Error(error.message);
+  if (error) throw new Error(traduireRefus(error));
 
   revalidateNotificationSurfaces();
 }
@@ -112,7 +113,7 @@ export async function markAllNotificationsRead() {
     unread.map((row) => ({ notification_id: row.id as string, user_id: userId })),
     { onConflict: "notification_id,user_id", ignoreDuplicates: true },
   );
-  if (error) throw new Error(error.message);
+  if (error) throw new Error(traduireRefus(error));
 
   revalidateNotificationSurfaces();
 }

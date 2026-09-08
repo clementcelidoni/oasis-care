@@ -139,3 +139,44 @@ test("chaque module est dans le plan, ou explicitement hors plan", () => {
   // Et le marqueur doit rester hors d'atteinte du compteur.
   assert.ok(UNSCHEDULED > REFONTE);
 });
+
+/**
+ * §7 BIOLAB. Le module a passé tout un chantier dans l'état le plus
+ * trompeur qui soit : seize pages construites, zéro lien vers elles, et
+ * une case « BioLab » dans Paramètres › Modules qui proposait
+ * d'éteindre un menu inexistant. Ces trois contrôles empêchent le
+ * retour de chacun des trois symptômes.
+ */
+test("§7 — les écrans BioLab sont atteignables depuis le menu", () => {
+  const biolab = allNavItems().filter((i) => i.href.startsWith("/biolab"));
+  assert.ok(biolab.length >= 10, `Seulement ${biolab.length} entrées BioLab.`);
+
+  // Toutes portent le module débrayable : sans lui, éteindre BioLab
+  // dans les réglages laisserait le groupe en place.
+  for (const item of biolab) {
+    assert.equal(item.module, "biolab", `${item.href} n'est pas rattaché au module biolab`);
+    // La permission d'une entrée est celle qui ouvre SA table. Les
+    // vingt et une tables du laboratoire s'ouvrent toutes avec
+    // `biolab.read` (migration 0087, §2).
+    assert.equal(item.permission, "biolab.read", `${item.href} demande la mauvaise permission`);
+  }
+});
+
+test("§7 — la lecture seule voit le laboratoire, l'ouvrier de terrain non", () => {
+  const lecture = allNavItems(visibleNavigation("nursery", ["biolab.read"])).map((i) => i.href);
+  assert.ok(lecture.includes("/biolab"));
+  assert.ok(lecture.includes("/biolab/lots"));
+
+  // L'ouvrier de terrain n'a que `projects.read` : c'est la case qui
+  // justifie tout le §2 de la migration 0087.
+  const terrain = allNavItems(visibleNavigation("nursery", ["projects.read"])).map((i) => i.href);
+  assert.deepEqual(terrain.filter((h) => h.startsWith("/biolab")), []);
+});
+
+test("§43 — éteindre BioLab fait disparaître son groupe entier", () => {
+  const avec = visibleNavigation("nursery", ["biolab.read"]);
+  assert.ok(avec.some((g) => g.label === "BioLab"));
+
+  const sans = visibleNavigation("nursery", ["biolab.read"], ["biolab"]);
+  assert.equal(sans.some((g) => g.label === "BioLab"), false);
+});

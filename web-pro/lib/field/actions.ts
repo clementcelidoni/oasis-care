@@ -8,6 +8,7 @@ import {
   inputToCents, parseQuantity, parseQuantityOr,
 } from "@/lib/quotes/types";
 import { keepScheduleOrdered, moveToDayParis, verdictDeNote } from "./types";
+import { traduireRefus } from "@/lib/peage/messages";
 
 /**
  * §11G planning, §11H équipes.
@@ -43,7 +44,7 @@ export async function createEmployee(formData: FormData) {
     phone: text(formData, "phone"),
     hourly_cost_cents: inputToCents(String(formData.get("hourly_cost") ?? "0")),
   });
-  if (error) throw new Error(error.message);
+  if (error) throw new Error(traduireRefus(error));
 
   revalidatePath("/equipes");
 }
@@ -62,7 +63,7 @@ export async function updateEmployee(formData: FormData) {
 
   const supabase = await createClient();
   const { error } = await supabase.from("employees").update(patch).eq("id", id);
-  if (error) throw new Error(error.message);
+  if (error) throw new Error(traduireRefus(error));
 
   revalidatePath("/equipes");
 }
@@ -82,7 +83,7 @@ export async function archiveEmployee(formData: FormData) {
     .from("employees")
     .update({ archived_at: new Date().toISOString() })
     .eq("id", id);
-  if (error) throw new Error(error.message);
+  if (error) throw new Error(traduireRefus(error));
 
   revalidatePath("/equipes");
 }
@@ -145,7 +146,7 @@ export async function linkEmployeeAccount(formData: FormData) {
       .update({ user_id: memberUserId, updated_at: new Date().toISOString() })
       .eq("id", employeeId)
       .eq("organization_id", organization.organizationId);
-    if (error) throw new Error(error.message);
+    if (error) throw new Error(traduireRefus(error));
   }
 
   revalidatePath("/entreprise/equipe");
@@ -209,7 +210,7 @@ export async function deleteEmployee(formData: FormData) {
     .delete()
     .eq("id", id)
     .eq("organization_id", organization.organizationId);
-  if (error) throw new Error(error.message);
+  if (error) throw new Error(traduireRefus(error));
 
   revalidatePath("/equipes");
 }
@@ -225,7 +226,7 @@ export async function createTeam(formData: FormData) {
     name,
     color: text(formData, "color") ?? "#15654a",
   });
-  if (error) throw new Error(error.message);
+  if (error) throw new Error(traduireRefus(error));
 
   revalidatePath("/equipes");
   revalidatePath("/planning");
@@ -242,7 +243,7 @@ export async function updateTeam(formData: FormData) {
 
   const supabase = await createClient();
   const { error } = await supabase.from("teams").update(patch).eq("id", id);
-  if (error) throw new Error(error.message);
+  if (error) throw new Error(traduireRefus(error));
 
   revalidatePath("/equipes");
   revalidatePath("/planning");
@@ -268,7 +269,7 @@ export async function setTeamMembership(formData: FormData) {
         organization_id: organization.organizationId,
       })),
     );
-    if (error) throw new Error(error.message);
+    if (error) throw new Error(traduireRefus(error));
   }
 
   revalidatePath("/equipes");
@@ -289,7 +290,7 @@ export async function addSkill(formData: FormData) {
       { organization_id: organization.organizationId, name },
       { onConflict: "organization_id,name", ignoreDuplicates: true },
     );
-  if (error) throw new Error(error.message);
+  if (error) throw new Error(traduireRefus(error));
 
   revalidatePath("/equipes");
 }
@@ -315,7 +316,7 @@ export async function setEmployeeSkill(formData: FormData) {
       organization_id: organization.organizationId,
       level: Math.min(3, Math.max(1, level)),
     });
-    if (error) throw new Error(error.message);
+    if (error) throw new Error(traduireRefus(error));
   }
 
   revalidatePath("/equipes");
@@ -355,7 +356,7 @@ export async function createIntervention(formData: FormData) {
     })
     .select("id")
     .single();
-  if (error) throw new Error(error.message);
+  if (error) throw new Error(traduireRefus(error));
 
   revalidatePath("/planning");
   revalidatePath("/projets/interventions");
@@ -405,7 +406,7 @@ export async function updateIntervention(formData: FormData) {
   }
 
   const { error } = await supabase.from("field_interventions").update(patch).eq("id", id);
-  if (error) throw new Error(error.message);
+  if (error) throw new Error(traduireRefus(error));
 
   revalidatePath(`/projets/interventions/${id}`);
   revalidatePath("/planning");
@@ -471,7 +472,7 @@ export async function moveIntervention(formData: FormData) {
     .update(patch)
     .eq("id", id)
     .eq("organization_id", organization.organizationId);
-  if (error) throw new Error(error.message);
+  if (error) throw new Error(traduireRefus(error));
 
   revalidatePath("/planning");
 }
@@ -521,7 +522,7 @@ export async function saveDayNote(formData: FormData) {
         .delete()
         .eq("id", id)
         .eq("organization_id", cetteEntreprise);
-      if (error) throw new Error(error.message);
+      if (error) throw new Error(traduireRefus(error));
     }
     revalidatePath("/planning");
     return;
@@ -542,7 +543,7 @@ export async function saveDayNote(formData: FormData) {
       .update({ body: verdict.body, team_id: text(formData, "team_id") })
       .eq("id", id)
       .eq("organization_id", cetteEntreprise);
-    if (error) throw new Error(error.message);
+    if (error) throw new Error(traduireRefus(error));
   } else {
     const { error } = await supabase.from("planning_day_notes").insert({
       organization_id: organization.organizationId,
@@ -550,7 +551,7 @@ export async function saveDayNote(formData: FormData) {
       team_id: text(formData, "team_id"),
       body: verdict.body,
     });
-    if (error) throw new Error(error.message);
+    if (error) throw new Error(traduireRefus(error));
   }
 
   revalidatePath("/planning");
@@ -577,7 +578,7 @@ export async function addInterventionTask(formData: FormData) {
     title,
     position: (last?.position ?? -1) + 1,
   });
-  if (error) throw new Error(error.message);
+  if (error) throw new Error(traduireRefus(error));
 
   revalidatePath(`/projets/interventions/${interventionId}`);
 }
@@ -593,7 +594,7 @@ export async function toggleInterventionTask(formData: FormData) {
     .from("intervention_tasks")
     .update({ done, done_at: done ? new Date().toISOString() : null })
     .eq("id", taskId);
-  if (error) throw new Error(error.message);
+  if (error) throw new Error(traduireRefus(error));
 
   revalidatePath(`/projets/interventions/${interventionId}`);
 }
@@ -612,7 +613,7 @@ export async function addInterventionMaterial(formData: FormData) {
     quantity: parseQuantityOr(String(formData.get("quantity") ?? "1"), 1),
     unit: text(formData, "unit") ?? "u",
   });
-  if (error) throw new Error(error.message);
+  if (error) throw new Error(traduireRefus(error));
 
   revalidatePath(`/projets/interventions/${interventionId}`);
 }
@@ -645,7 +646,7 @@ export async function signIntervention(formData: FormData) {
     .from("field_interventions")
     .update({ signed_by_name: name, signed_at: new Date().toISOString() })
     .eq("id", id);
-  if (error) throw new Error(error.message);
+  if (error) throw new Error(traduireRefus(error));
 
   revalidatePath(`/projets/interventions/${id}`);
 }
@@ -666,7 +667,7 @@ export async function logTeamTime(formData: FormData) {
     p_hours: hours,
     p_worked_on: String(formData.get("worked_on") ?? "") || new Date().toISOString().slice(0, 10),
   });
-  if (error) throw new Error(error.message);
+  if (error) throw new Error(traduireRefus(error));
 
   revalidatePath(`/projets/interventions/${interventionId}`);
 }
@@ -708,7 +709,7 @@ export async function logTime(formData: FormData) {
     kind: text(formData, "kind") ?? "work",
     notes: text(formData, "notes"),
   });
-  if (error) throw new Error(error.message);
+  if (error) throw new Error(traduireRefus(error));
 
   if (interventionId) revalidatePath(`/projets/interventions/${interventionId}`);
   if (projectId) revalidatePath(`/projets/${projectId}`);
@@ -739,7 +740,7 @@ export async function setTimeEntryValidation(formData: FormData) {
     .eq("id", entryId)
     .select("project_id, intervention_id")
     .maybeSingle();
-  if (error) throw new Error(error.message);
+  if (error) throw new Error(traduireRefus(error));
 
   if (data?.intervention_id) revalidatePath(`/projets/interventions/${data.intervention_id}`);
   if (data?.project_id) revalidatePath(`/projets/${data.project_id}`);
@@ -789,7 +790,7 @@ export async function validateAllTime(formData: FormData) {
     .eq("intervention_id", interventionId)
     .eq("validated", false)
     .select("project_id");
-  if (error) throw new Error(error.message);
+  if (error) throw new Error(traduireRefus(error));
 
   revalidatePath(`/projets/interventions/${interventionId}`);
   for (const id of new Set((data ?? []).map((r) => r.project_id).filter(Boolean))) {

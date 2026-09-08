@@ -1140,7 +1140,16 @@ values
  ('c9890023-0000-4000-8000-000000000089','00000000-0000-0000-0000-000000000000',
   'authenticated','authenticated','cy-ownerR@test.invalid','',now(),now(),now(),now(),'{}','{}'),
  ('c9890024-0000-4000-8000-000000000089','00000000-0000-0000-0000-000000000000',
-  'authenticated','authenticated','cy-ownerS@test.invalid','',now(),now(),now(),now(),'{}','{}');
+  'authenticated','authenticated','cy-ownerS@test.invalid','',now(),now(),now(),now(),'{}','{}'),
+ -- UN DIRIGEANT PROPRE À orgT, ET NON CELUI D'orgP.
+ -- orgT réutilisait le compte d'orgP, qui a déjà consommé son mois
+ -- d'essai plus haut. Depuis 0092 § 9, l'essai se compte PAR
+ -- DIRIGEANT : le second aurait été refusé, et à juste titre —
+ -- fonder une société de plus pour redemander un mois gratuit est
+ -- précisément le contournement qu'on ferme. Ce fichier éprouve
+ -- l'ancre de facturation, pas la réutilisation d'un essai.
+ ('c9890025-0000-4000-8000-000000000089','00000000-0000-0000-0000-000000000000',
+  'authenticated','authenticated','cy-ownerT@test.invalid','',now(),now(),now(),now(),'{}','{}');
 
 select set_config('request.jwt.claims',
   json_build_object('sub','c9890021-0000-4000-8000-000000000089')::text, true);
@@ -1460,7 +1469,7 @@ insert into res select 'ET LA FACTURE LES PORTE : le client paie ce qu''il a ét
 -- prestataire qui débite, à la date annoncée au client. Un recalcul
 -- fixait une ancre différente, donc décalait TOUS les mois suivants.
 select set_config('request.jwt.claims',
-  json_build_object('sub','c9890021-0000-4000-8000-000000000089')::text, true);
+  json_build_object('sub','c9890025-0000-4000-8000-000000000089')::text, true);
 insert into ids select 'orgT', public.create_professional_organization('Cycle T Ancre','landscaper');
 select set_config('request.jwt.claims', null, true);
 

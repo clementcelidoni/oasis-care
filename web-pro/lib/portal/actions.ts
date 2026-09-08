@@ -3,6 +3,7 @@
 import { revalidatePath } from "next/cache";
 import { redirect } from "next/navigation";
 import { createClient, getCurrentUser } from "@/lib/supabase/server";
+import { traduireRefus } from "@/lib/peage/messages";
 
 /**
  * §11S côté CLIENT.
@@ -31,7 +32,7 @@ export async function acceptInvitation(formData: FormData) {
 
   const supabase = await createClient();
   const { error } = await supabase.rpc("accept_client_invitation", { p_token: token });
-  if (error) throw new Error(error.message);
+  if (error) throw new Error(traduireRefus(error));
 
   revalidatePath("/portail", "layout");
   redirect("/portail");
@@ -59,7 +60,7 @@ export async function revokeProfessionalAccess(formData: FormData) {
     p_garden_id: gardenId,
     p_user_id: userId,
   });
-  if (error) throw new Error(error.message);
+  if (error) throw new Error(traduireRefus(error));
 
   revalidatePath("/portail/jardins");
 }

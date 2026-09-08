@@ -6,6 +6,7 @@ import { getActiveOrganization, requireOrganization } from "@/lib/auth/organizat
 import {
   inputToCents, type CatalogItem, parseVatRate,
 } from "./types";
+import { traduireRefus } from "@/lib/peage/messages";
 
 /**
  * §11D — bibliothèque de prix.
@@ -131,7 +132,7 @@ export async function createCatalogItem(formData: FormData) {
     })
     .select("id")
     .single();
-  if (error) throw new Error(error.message);
+  if (error) throw new Error(traduireRefus(error));
 
   // Un article sans prix n'est pas chiffrable : si l'utilisateur en a
   // saisi un, on l'enregistre dans la foulée plutôt que de le renvoyer
@@ -168,7 +169,7 @@ export async function setCatalogPrice(formData: FormData) {
     p_sale_price_cents: inputToCents(String(formData.get("sale_price") ?? "0")),
     p_vat_rate: parseVatRate(String(formData.get("vat_rate") ?? "20")),
   });
-  if (error) throw new Error(error.message);
+  if (error) throw new Error(traduireRefus(error));
 
   revalidatePath("/catalogue");
 }
@@ -190,7 +191,7 @@ export async function archiveCatalogItem(formData: FormData) {
     .from("catalog_items")
     .update({ archived_at: new Date().toISOString() })
     .eq("id", id);
-  if (error) throw new Error(error.message);
+  if (error) throw new Error(traduireRefus(error));
 
   revalidatePath("/catalogue");
 }

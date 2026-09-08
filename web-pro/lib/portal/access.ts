@@ -58,6 +58,10 @@ export async function requirePortal(): Promise<PortalCompany[]> {
   if (!user) redirect("/login");
 
   const companies = await getPortalCompanies();
-  if (companies.length === 0) redirect("/bienvenue");
+  // Aucun accès au portail : ce compte n'est le client de personne. La
+  // seule chose qu'il puisse faire ici est de fonder son entreprise —
+  // donc le tunnel, et non l'installation du logiciel, qui suppose
+  // qu'une société existe déjà.
+  if (companies.length === 0) redirect("/inscription");
   return companies;
 }

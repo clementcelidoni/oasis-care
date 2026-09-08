@@ -22,7 +22,8 @@ export type IconName =
   | "stock" | "locations" | "orders" | "invoice" | "purchase" | "supplier"
   | "equipment" | "document" | "analytics" | "ai" | "company" | "team"
   | "subscription" | "settings" | "logout" | "search" | "bell" | "help"
-  | "chevron" | "plus" | "check" | "close" | "collapse" | "expand" | "portal";
+  | "chevron" | "plus" | "check" | "close" | "collapse" | "expand" | "portal"
+  | "tag";
 
 const PATHS: Record<IconName, string> = {
   dashboard: "M4 13h6V4H4v9Zm0 7h6v-5H4v5Zm10 0h6v-9h-6v9Zm0-16v5h6V4h-6Z",
@@ -36,6 +37,10 @@ const PATHS: Record<IconName, string> = {
   nursery: "M12 21v-7m0 0c0-3.9 3-7 7-7 0 3.9-3.1 7-7 7Zm0 0C12 10.1 9 7 5 7c0 3.9 3.1 7 7 7Z",
   production: "M3 20h18M6 20V9l5 3V9l5 3V4l3 2v14",
   lots: "M4 8.5 12 4l8 4.5v7L12 20l-8-4.5v-7Zm0 0 8 4.5 8-4.5M12 13v7",
+  // Un QR : trois repères d'angle et un module. C'est le dessin que
+  // tout le monde reconnaît, et une étiquette sans QR n'existe pas
+  // dans ce module.
+  tag: "M4 4h5v5H4V4Zm11 0h5v5h-5V4ZM4 15h5v5H4v-5Zm11 4h5m-5-4h2m3 0v2M13 11h-2m0 2v-2m0-2V4m0 16v-3",
   stock: "M4 7h16v13H4V7Zm-1-3h18v3H3V4Zm6 8h6",
   locations: "M4 4h7v7H4V4Zm9 0h7v7h-7V4ZM4 13h7v7H4v-7Zm9 0h7v7h-7v-7Z",
   orders: "M6 4h12l1.5 16H4.5L6 4Zm3 4a3 3 0 0 0 6 0",

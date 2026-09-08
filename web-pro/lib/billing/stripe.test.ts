@@ -216,6 +216,15 @@ type OptionsBase = {
   email?: string | null;
   /** La fiche société, telle que `business_organizations` la porte. */
   identite?: Record<string, string | null> | null;
+  /**
+   * L'état rendu par `peage_situation()` (migration 0092).
+   *
+   * `undefined` — le défaut — simule une installation où la migration
+   * N'EST PAS ENCORE PASSÉE : la fonction n'existe pas, la RPC échoue,
+   * et le tunnel doit retomber sur son ancien contrôle. Les tests qui
+   * ne parlent pas du péage restent donc exactement ce qu'ils étaient.
+   */
+  peage?: "ouvert" | "sursis" | "restreint" | "transit";
 };
 
 function supabaseSimule(options: OptionsBase) {
@@ -251,7 +260,25 @@ function supabaseSimule(options: OptionsBase) {
 
   return {
     from: (table: string) => requete(table),
-    rpc: async () => ({ data: null, error: new Error("rpc non simulé") }),
+    rpc: async (nom: string) => {
+      if (nom === "peage_situation" && options.peage !== undefined) {
+        return {
+          data: {
+            etat: options.peage,
+            peutExploiter: options.peage === "ouvert" || options.peage === "sursis",
+            peutGrandir: options.peage === "ouvert",
+            impayeDepuis: options.peage === "ouvert" || options.peage === "transit" ? null : "2026-03-03",
+            facturesEchues: options.peage === "ouvert" || options.peage === "transit" ? 0 : 1,
+            montantDuCents: options.peage === "ouvert" || options.peage === "transit" ? 0 : 16788,
+            joursDeSursisRestants: options.peage === "sursis" ? 20 : null,
+            finEssai: null,
+            finPeriode: null,
+          },
+          error: null,
+        };
+      }
+      return { data: null, error: new Error("rpc non simulé") };
+    },
     auth: {
       getUser: async () => ({
         data: { user: options.email === null ? null : { email: options.email ?? "chef@exemple.fr" } },
@@ -433,6 +460,69 @@ test("LE RÉSUMÉ REFUSE CE QUE LA CAISSE REFUSERAIT — il ne chiffre pas dans 
   const resume = await provider.previewCheckout({ organizationId: ORG, planKey: "business" });
   assert.equal(resume.jouable, false);
   assert.ok(resume.jouable === false && resume.code === "dejaAbonne");
+});
+
+// ══════════════════════════════════════════════════════════════════
+// LA CAISSE ET LE PÉAGE — QUI PEUT ENCORE PAYER
+// ══════════════════════════════════════════════════════════════════
+//
+// CE QUI SE JOUE ICI EST LA MOITIÉ MANQUANTE DU PÉAGE. La migration
+// 0092 ferme la production d'une entreprise qui ne paie plus ; si la
+// caisse lui reste fermée elle aussi, on l'a enfermée dehors avec ses
+// données à l'intérieur. Ces quatre tests fixent exactement qui passe.
+
+test("UNE ENTREPRISE FERMÉE PEUT REPASSER À LA CAISSE — sinon le péage est une prison", async () => {
+  // Le cas le plus important du fichier. Une ligne d'abonnement EXISTE
+  // (résiliée, ou suspendue pour impayé) et l'ancien contrôle refusait
+  // net toute entreprise en portant une. Le client payait… non : il ne
+  // pouvait même pas payer.
+  const api = new ApiSimulee();
+  const provider = fournisseur(api, new SourceSimulee({ sieges: 1 }), {
+    peage: "restreint",
+    abonnement: { plan: "team", provider: "web", status: "cancelled", started_at: "2026-01-01" },
+  });
+
+  const resume = await provider.previewCheckout({ organizationId: ORG, planKey: "team" });
+  assert.equal(resume.jouable, true, "Une entreprise fermée doit pouvoir se réabonner.");
+
+  await provider.startCheckout({ organizationId: ORG, planKey: "team" });
+  assert.equal(api.demandes.length, 1, "Et le paiement doit partir pour de bon.");
+});
+
+test("UN CONTRAT QUI COURT FERME LA CAISSE — le péage tranche, pas le statut", async () => {
+  const api = new ApiSimulee();
+  const provider = fournisseur(api, new SourceSimulee({ sieges: 1 }), {
+    peage: "ouvert",
+    abonnement: { plan: "team", provider: "web", status: "active", started_at: "2026-01-01" },
+  });
+
+  const resume = await provider.previewCheckout({ organizationId: ORG, planKey: "business" });
+  assert.ok(resume.jouable === false && resume.code === "dejaAbonne");
+  assert.equal(api.demandes.length, 0);
+});
+
+test("EN SURSIS, ON NE VEND PAS UN SECOND CONTRAT À QUI DOIT DÉJÀ DE L'ARGENT", async () => {
+  // Il a un abonnement en cours et une facture impayée. Lui ouvrir une
+  // seconde souscription lui ferait payer deux fois sans solder la
+  // première : ce qu'il lui faut, c'est régler, pas racheter.
+  const api = new ApiSimulee();
+  const provider = fournisseur(api, new SourceSimulee({ sieges: 1 }), {
+    peage: "sursis",
+    abonnement: { plan: "team", provider: "web", status: "active", started_at: "2026-01-01" },
+  });
+
+  const resume = await provider.previewCheckout({ organizationId: ORG, planKey: "team" });
+  assert.ok(resume.jouable === false && resume.code === "reglementEnAttente");
+  assert.match(resume.motif, /régler/i);
+  assert.equal(api.demandes.length, 0);
+});
+
+test("EN TRANSIT, LA PREMIÈRE SOUSCRIPTION PASSE COMME AVANT", async () => {
+  const api = new ApiSimulee();
+  const provider = fournisseur(api, new SourceSimulee({ sieges: 1 }), { peage: "transit" });
+
+  const resume = await provider.previewCheckout({ organizationId: ORG, planKey: "team" });
+  assert.equal(resume.jouable, true);
 });
 
 test("LE NAVIGATEUR NE PEUT PAS PROPOSER UN PRIX : le champ n'existe pas", async () => {

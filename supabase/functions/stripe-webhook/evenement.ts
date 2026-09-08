@@ -114,6 +114,42 @@ export type Intention =
       readonly clientPrestataire: string;
       readonly organisationDemandee: string | null;
     }
+  /**
+   * OUVRIR L'ABONNEMENT — ET C'EST CE QUI MANQUAIT À TOUT LE CHANTIER.
+   *
+   * `saas_start_subscription` (0089 § 4) n'avait AUCUN appelant : six
+   * occurrences dans le dépôt, toutes en commentaire. Conséquence
+   * mesurée, et elle n'était pas passagère : le prestataire encaissait,
+   * le webhook cherchait une facture ÉMISE à rapprocher par le montant,
+   * n'en trouvait aucune — puisque personne n'en avait créé — et
+   * tombait en rapprochement manuel. À chaque prélèvement, de chaque
+   * client.
+   *
+   * L'abonnement s'ouvre donc ICI, sur `checkout.session.completed`,
+   * AVANT que l'`invoice.paid` n'arrive avec l'argent. C'est la règle
+   * que 0089 s'était donnée en tête de fichier : « La facture PRÉCÈDE
+   * l'encaissement, jamais l'inverse. »
+   *
+   * TOUT CE QUI SUIT VIENT DES MÉTADONNÉES DE LA SESSION SIGNÉE, et
+   * aucun montant n'en fait partie : le prix est allé chercher
+   * `organization_plans` côté base. Le navigateur a envoyé une
+   * intention, jamais un prix.
+   */
+  | {
+      readonly genre: "ouvrirAbonnement";
+      readonly clientPrestataire: string;
+      readonly organisationDemandee: string;
+      readonly plan: string;
+      readonly cycle: string;
+      readonly mode: string;
+      readonly avecEssai: boolean;
+      /** Le `trial_end` que le prestataire tiendra. Fait foi. */
+      readonly finEssaiLe: string | null;
+      /** Le jour du mois annoncé au client. Fait foi, et ne se déduit pas. */
+      readonly jourAnniversaire: number | null;
+      /** Les sièges que la CAISSE a facturés, pas un recomptage. */
+      readonly siegesFacturables: number | null;
+    }
   /** Poser un encaissement sur une de NOS factures. */
   | {
       readonly genre: "encaisser";
@@ -181,10 +217,51 @@ function intentionPour(type: string, objet: Record<string, unknown> | null): Int
       if (client === null) {
         return { genre: "constater", motif: "Session terminée sans client Stripe : rien à rattacher." };
       }
+
+      const organisation = chercherOrganisation(objet);
+      const plan = chercherMetadonnee(objet, "planKey");
+      const cycle = chercherMetadonnee(objet, "billingCycle");
+      const mode = chercherMetadonnee(objet, "mode");
+
+      // ------------------------------------------------------------
+      // LE CONTRAT DE MÉTADONNÉES, EXIGÉ EN ENTIER OU PAS DU TOUT.
+      // ------------------------------------------------------------
+      // Quatre clés sont indispensables pour ouvrir un abonnement.
+      // Quand l'une manque — une session créée à la main dans le
+      // tableau de bord du prestataire, une session d'avant ce
+      // chantier — on RETOMBE sur le simple rattachement, qui était le
+      // comportement d'hier. On n'invente pas d'abonnement à partir
+      // d'une session dont on ne sait pas ce qu'elle vendait.
+      if (organisation === null || plan === null || cycle === null || mode === null) {
+        return {
+          genre: "rattacherClient",
+          clientPrestataire: client,
+          organisationDemandee: organisation,
+        };
+      }
+
+      // « true » EXPLICITE, ET RIEN D'AUTRE NE VAUT ESSAI. Une clé
+      // absente ou mal orthographiée doit faire payer, pas offrir un
+      // mois : c'est le sens de l'erreur qui coûte le moins.
+      const avecEssai = chercherMetadonnee(objet, "avecEssai") === "true";
+      const finEssai = chercherMetadonnee(objet, "finEssaiLe");
+      const ancre = entierDeMetadonnee(objet, "jourAnniversaire");
+      const sieges = entierDeMetadonnee(objet, "siegesFacturables");
+
       return {
-        genre: "rattacherClient",
+        genre: "ouvrirAbonnement",
         clientPrestataire: client,
-        organisationDemandee: chercherOrganisation(objet),
+        organisationDemandee: organisation,
+        plan,
+        cycle,
+        mode,
+        avecEssai,
+        // La date d'essai n'a de sens que s'il y a un essai. La
+        // transmettre sans essai ferait ouvrir un essai en base pendant
+        // que le prestataire débite : le pire des deux mondes.
+        finEssaiLe: avecEssai ? finEssai : null,
+        jourAnniversaire: ancre,
+        siegesFacturables: sieges,
       };
     }
 
@@ -382,6 +459,23 @@ function chercherParmi(objet: Record<string, unknown>, cles: readonly string[]):
     if (valeur !== null) return valeur;
   }
   return null;
+}
+
+/**
+ * Une métadonnée qui doit être un entier positif ou nul.
+ *
+ * Les métadonnées de Stripe sont TOUJOURS des chaînes, même quand on y
+ * a écrit un nombre. Et une chaîne qui n'est pas un entier ne vaut PAS
+ * zéro : « zéro siège supplémentaire » et « je n'ai pas su lire » sont
+ * deux réponses différentes, et la seconde doit laisser la base
+ * recompter plutôt que de facturer un chiffre inventé. D'où `null`, et
+ * jamais de `|| 0`.
+ */
+function entierDeMetadonnee(objet: Record<string, unknown>, cle: string): number | null {
+  const brut = chercherMetadonnee(objet, cle);
+  if (brut === null) return null;
+  if (!/^\d{1,9}$/.test(brut.trim())) return null;
+  return Number.parseInt(brut.trim(), 10);
 }
 
 export function chercherMetadonnee(objet: Record<string, unknown>, cle: string): string | null {

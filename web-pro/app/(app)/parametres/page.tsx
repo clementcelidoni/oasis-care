@@ -72,6 +72,17 @@ const PERMISSION_LABELS: Record<Permission, string> = {
   "nursery.stock.manage": "Gérer la pépinière, la production et les stocks",
   "invoice.create": "Émettre des factures et enregistrer des règlements",
   "organization.manageUsers": "Administrer l'entreprise, ses comptes et ses droits",
+  // §7 BioLab. Le découpage suit les commandes SQL — lire, saisir,
+  // supprimer — et non une liste de tables, qui divergerait au premier
+  // ajout.
+  "biolab.read": "Consulter le laboratoire : lots, milieux, relevés, statistiques",
+  "biolab.write": "Saisir au laboratoire : inspections, comptages, préparations",
+  "biolab.manage": "Supprimer au laboratoire et rapatrier un laboratoire personnel",
+  // §15-§18 Les étiquettes. Deux droits : scanner est un geste de
+  // terrain, poser une étiquette engage un rouleau et peut ouvrir une
+  // fiche à un passant.
+  "etiquettes.read": "Consulter les étiquettes et scanner un QR",
+  "etiquettes.manage": "Composer, poser et imprimer les étiquettes",
 };
 
 type MemberRow = {
