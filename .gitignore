@@ -25,3 +25,9 @@ Carthage/Build/
 
 # Supabase CLI local state (project ref cache, no secrets — but not repo content)
 supabase/.temp/
+
+# Documentation Stripe rapatriée automatiquement par l'outillage : ce ne sont
+# pas nos fichiers, ils se retéléchargent, et ils noyaient « git status ».
+.agents/
+.claude/skills/
+skills-lock.json

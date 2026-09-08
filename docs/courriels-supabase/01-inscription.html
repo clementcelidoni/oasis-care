@@ -1,0 +1,101 @@
+<!doctype html>
+<html lang="fr">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <meta name="color-scheme" content="light dark">
+  <meta name="supported-color-schemes" content="light dark">
+  <title>Bienvenue chez Oasis Care</title>
+  <style>
+    @media (prefers-color-scheme: dark) {
+      .fond   { background:#0d1512 !important; }
+      .carte  { background:#141f1a !important; border-color:#25332c !important; }
+      .titre  { color:#eef4f0 !important; }
+      .code   { color:#eef4f0 !important; }
+      .texte  { color:#b9c8c0 !important; }
+      .faible { color:#85988f !important; }
+      .boite  { background:#10312a !important; border-color:#1d4a3c !important; }
+      .alerte { background:#33260f !important; border-color:#5a441a !important; }
+      .titrealerte { color:#e8c98a !important; }
+      .trait  { border-color:#25332c !important; }
+    }
+    @media (max-width:620px) {
+      .marge { padding-left:22px !important; padding-right:22px !important; }
+      .code  { font-size:26px !important; letter-spacing:5px !important; text-indent:5px !important; }
+      .titre { font-size:20px !important; }
+    }
+  </style>
+</head>
+<body style="margin:0;padding:0;background:#f6f8f6;">
+  <!-- La ligne d'aperçu : ce que la messagerie affiche sous l'objet, et
+       que personne ne voit dans le message lui-même. -->
+  <span style="display:none;font-size:1px;color:#f6f8f6;line-height:1px;max-height:0;max-width:0;opacity:0;overflow:hidden;">Votre code de vérification Oasis Care&#847;&zwnj;&nbsp;&#847;&zwnj;&nbsp;&#847;&zwnj;&nbsp;&#847;&zwnj;&nbsp;&#847;&zwnj;&nbsp;&#847;&zwnj;&nbsp;&#847;&zwnj;&nbsp;&#847;&zwnj;&nbsp;</span>
+
+  <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0" class="fond" style="background:#f6f8f6;">
+    <tr>
+      <td align="center" style="padding:32px 12px 40px;">
+        <table role="presentation" cellpadding="0" cellspacing="0" border="0" width="600" style="width:600px;max-width:100%;">
+
+          <tr>
+            <td class="marge" style="padding:0 10px 18px;">
+              <span style="font:600 12px/1 -apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif;letter-spacing:2.4px;text-transform:uppercase;color:#15654a;">Oasis&nbsp;Care</span>
+            </td>
+          </tr>
+
+          <tr>
+            <td class="carte" style="background:#ffffff;border:1px solid #e4eae5;border-radius:14px;">
+              <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0">
+
+                <tr>
+                  <td class="marge" style="padding:36px 40px 0;">
+                    <h1 class="titre" style="margin:0 0 14px;font:600 22px/1.35 -apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif;color:#10201a;">Bienvenue chez Oasis Care</h1>
+                    <p class="texte" style="margin:0 0 14px;font:400 15px/1.65 -apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif;color:#46584f;">Il ne manque qu'une étape&nbsp;: saisissez ce code pour confirmer votre adresse et choisir votre mot de passe.</p>
+                  </td>
+                </tr>
+
+                <tr>
+                  <td class="marge" style="padding:10px 40px 0;">
+              <table role="presentation" width="100%" cellpadding="0" cellspacing="0" border="0">
+                <tr>
+                  <td class="boite" align="center" style="background:#e8f2ed;border:1px solid #cfe3d9;border-radius:12px;padding:24px 12px;">
+                    <div class="faible" style="font:600 11px/1 -apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif;letter-spacing:1.6px;text-transform:uppercase;color:#15654a;padding-bottom:14px;">Votre code</div>
+                    <div class="code" style="font:700 34px/1.1 ui-monospace,SFMono-Regular,Menlo,Consolas,'Courier New',monospace;letter-spacing:8px;text-indent:8px;color:#10201a;">{{ .Token }}</div>
+                  </td>
+                </tr>
+              </table>
+                  </td>
+                </tr>
+
+                <tr>
+                  <td class="marge" style="padding:22px 40px 0;">
+                    <p class="texte" style="margin:0;font:400 15px/1.65 -apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif;color:#46584f;">Recopiez-le sur la page qui vous l'a demandé. Vous choisirez ensuite votre mot de passe, et vous n'aurez plus besoin de courriel pour entrer.</p>
+                  </td>
+                </tr>
+
+                <tr>
+                  <td class="marge" style="padding:26px 40px 34px;">
+                    <div class="trait" style="border-top:1px solid #e4eae5;padding-top:18px;">
+                      <p class="faible" style="margin:0;font:400 13px/1.6 -apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif;color:#7c8b83;">Ce code est valable <strong style="font-weight:600;">une heure</strong>. Passé ce délai, il ne fonctionnera plus&nbsp;: demandez-en simplement un nouveau.<br><br>Si vous n'êtes pas à l'origine de cette demande, ignorez ce message&nbsp;: aucun compte ne sera créé. Personne ne peut s'en servir sans ce code.</p>
+                    </div>
+                  </td>
+                </tr>
+
+              </table>
+            </td>
+          </tr>
+
+          <tr>
+            <td class="marge" align="center" style="padding:22px 10px 0;">
+              <p class="faible" style="margin:0;font:400 12px/1.7 -apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif;color:#7c8b83;">
+                Oasis&nbsp;Care — le logiciel des paysagistes et des pépiniéristes.<br>
+                Une question&nbsp;? Écrivez à <a href="mailto:support@oasisrarecare.com" style="color:#15654a;text-decoration:none;">support@oasisrarecare.com</a>
+              </p>
+            </td>
+          </tr>
+
+        </table>
+      </td>
+    </tr>
+  </table>
+</body>
+</html>
