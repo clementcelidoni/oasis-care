@@ -44,8 +44,30 @@ struct RootContainerView: View {
             // keeping full local functionality.
             StoreKitService.shared.start()
         }
-        .onChange(of: authState.status) { _, newStatus in
-            guard case .authenticated = newStatus else { return }
+        // ON OBSERVE LE COMPTE, PAS L'ÉTAT DE CONNEXION.
+        //
+        // `status` reste `.authenticated` quand on passe d'un compte à un
+        // autre : la valeur ne change pas, donc rien ne se déclenchait.
+        // C'est ce silence qui a laissé les végétaux d'un compte
+        // s'afficher sous un autre. L'identifiant du compte, lui, change.
+        //
+        // Le lancement est couvert de la même façon — la session passe de
+        // « aucune » à « celle-ci », donc l'identifiant change aussi.
+        .onChange(of: authState.session?.user.id) { _, nouveauCompte in
+            guard nouveauCompte != nil else { return }
+
+            // AVANT TOUTE SYNCHRONISATION, et l'ordre est la sécurité :
+            // si la copie locale appartient à quelqu'un d'autre, elle
+            // part maintenant. Lancer la synchronisation d'abord
+            // renverrait ses lignes au serveur estampillées au nom du
+            // compte courant — la fuite d'affichage deviendrait une
+            // copie réelle de données d'une personne chez une autre.
+            //
+            // Si l'effacement échoue, on ne bloque pas ici : le
+            // propriétaire inscrit reste l'ancien compte, et la
+            // synchronisation refusera de partir d'elle-même.
+            authState.adopterOuNettoyer(context: modelContext)
+
             Task { await syncEngine.syncIfPossible(context: modelContext) }
             deepLinkRouter.retryPendingTokenIfNeeded(context: modelContext)
             Task { await CommercialConfigService.refresh() }

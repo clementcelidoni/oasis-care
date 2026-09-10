@@ -20,6 +20,12 @@ struct SettingsView: View {
     @State private var isDeleteAccountConfirmationPresented = false
     @State private var isDeletingAccount = false
     @State private var deleteAccountError: String?
+    /// Ce que l'effacement local a rendu quand il n'a pas tout retiré.
+    /// L'écran promet « vos données seront retirées de cet appareil » :
+    /// si ce n'est pas vrai, il doit le dire. L'ancienne version avalait
+    /// l'échec en silence, et c'est ce silence qui a permis à un compte
+    /// d'afficher les végétaux d'un autre pendant des jours.
+    @State private var nettoyageIncomplet: String?
 
     var body: some View {
         Form {
@@ -52,6 +58,7 @@ struct SettingsView: View {
                             .font(.caption)
                             .foregroundStyle(.red)
                     }
+
                 case .guest, .loading:
                     Text("Non connecté — vos données restent uniquement sur cet appareil.")
                         .font(.caption)
@@ -60,6 +67,17 @@ struct SettingsView: View {
                         isSignInPresented = true
                     }
                     .accessibilityIdentifier("settingsSignInButton")
+                }
+
+                // HORS DU SWITCH, ET C'EST VOULU : au moment où ce
+                // message a quelque chose à dire, la déconnexion vient
+                // d'avoir lieu et l'état est passé à « invité ». Le
+                // placer dans la branche « connecté » l'aurait rendu
+                // invisible exactement quand il compte.
+                if let nettoyageIncomplet {
+                    Text(nettoyageIncomplet)
+                        .font(.caption)
+                        .foregroundStyle(.red)
                 }
             }
 
@@ -145,7 +163,7 @@ struct SettingsView: View {
             titleVisibility: .visible
         ) {
             Button("Se déconnecter", role: .destructive) {
-                Task { await authState.signOutClearingLocalData(context: modelContext) }
+                Task { await seDeconnecter() }
             }
             Button("Annuler", role: .cancel) {}
         } message: {
@@ -175,6 +193,25 @@ struct SettingsView: View {
                 Text("Cela supprimera définitivement : vos jardins, vos végétaux, vos historiques, vos photos cloud et vos paramètres cloud. Cette action est irréversible.")
             }
         }
+    }
+
+    /// La déconnexion, et ce qu'on en dit quand elle n'a pas tout retiré.
+    private func seDeconnecter() async {
+        nettoyageIncomplet = nil
+        let resultat = await authState.signOutClearingLocalData(context: modelContext)
+        guard !resultat.estComplet else { return }
+
+        // On nomme ce qui reste plutôt que de s'excuser vaguement, et on
+        // dit quoi faire. Un utilisateur qui lit « il reste 25 éléments »
+        // sait qu'il ne doit pas prêter son téléphone ; un utilisateur à
+        // qui on n'a rien dit croit que c'est propre.
+        nettoyageIncomplet = """
+            Attention : \(resultat.restants) élément\(resultat.restants > 1 ? "s" : "") \
+            n'\(resultat.restants > 1 ? "ont" : "a") pas pu être retiré\
+            \(resultat.restants > 1 ? "s" : "") de cet appareil. \
+            Réessayez, et si cela persiste, désinstallez puis réinstallez \
+            l'application avant de la prêter.
+            """
     }
 
     private func deleteAccount() async {

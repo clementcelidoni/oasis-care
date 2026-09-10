@@ -31,6 +31,33 @@ final class SyncEngine: ObservableObject {
 
     func syncIfPossible(context: ModelContext) async {
         guard case .authenticated = AuthState.shared.status else { return }
+
+        // LE GARDE-FOU : on n'envoie pas la copie locale de quelqu'un
+        // d'autre.
+        //
+        // Aucun modèle local ne porte d'espace de travail — l'espace est
+        // décidé ICI, à l'envoi, et appliqué à tout ce qui n'est pas
+        // encore synchronisé. Une ligne restée d'un compte précédent est
+        // donc indiscernable d'une ligne légitime, et `pushPlants` la
+        // ré-estampillerait au nom du compte courant, photo comprise :
+        // les végétaux d'une personne recopiés pour de vrai chez une
+        // autre. C'est arrivé à un clic près.
+        //
+        // Le nettoyage au changement de compte est la première défense.
+        // Celle-ci est la seconde, et elle existe parce que la première
+        // peut échouer : si l'effacement n'a pas abouti, le propriétaire
+        // inscrit reste l'ancien compte, et rien ne part.
+        if let proprietaire = IdentiteLocale.proprietaire,
+           let compte = AuthState.shared.session?.user.id,
+           proprietaire != compte {
+            lastSyncError = """
+                Synchronisation suspendue : les données de cet appareil \
+                appartiennent à un autre compte. Déconnectez-vous depuis \
+                Réglages pour les retirer, puis reconnectez-vous.
+                """
+            return
+        }
+
         guard !isSyncing else { return }
         isSyncing = true
         defer { isSyncing = false }

@@ -10,8 +10,18 @@ import SwiftData
 /// or from whichever App Intent runs first if Siri invokes one while
 /// the app isn't already open.
 enum SharedModelContainer {
-    static let shared: ModelContainer = {
-        let schema = Schema([
+    /// TOUT CE QUI VIT SUR L'APPAREIL, DÉCLARÉ UNE SEULE FOIS.
+    ///
+    /// Cette liste servait uniquement à construire le `Schema`. La
+    /// déconnexion, elle, en tenait une SECONDE, écrite à la main, qui
+    /// n'a jamais suivi : sept modèles sur cinquante-sept. Un appareil
+    /// « déconnecté » gardait donc les étiquettes, les inspections, les
+    /// capteurs, l'irrigation et tout BioLab du compte précédent.
+    ///
+    /// Deux listes pour une même vérité, c'est une liste qui ment. Il
+    /// n'y en a plus qu'une : ajouter un modèle au conteneur l'ajoute
+    /// désormais au nettoyage, sans que personne ait à y penser.
+    static let modeles: [any PersistentModel.Type] = [
             Plant.self,
             Garden.self,
             GardenZone.self,
@@ -68,7 +78,10 @@ enum SharedModelContainer {
             StockSolution.self,
             InventoryLot.self,
             BioLabAuditEntry.self
-        ])
+    ]
+
+    static let shared: ModelContainer = {
+        let schema = Schema(modeles)
         let configuration = ModelConfiguration(schema: schema)
 
         do {
